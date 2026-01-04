@@ -482,23 +482,23 @@ function TicketsPage({ currentUser, onOpenTicket }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Select value={filter.status} onValueChange={(v) => setFilter(f => ({ ...f, status: v }))}>
+          <Select value={filter.status || 'all'} onValueChange={(v) => setFilter(f => ({ ...f, status: v === 'all' ? '' : v }))}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Alle Status</SelectItem>
+              <SelectItem value="all">Alle Status</SelectItem>
               {Object.entries(STATUS_LABELS).map(([key, label]) => (
                 <SelectItem key={key} value={key}>{label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Select value={filter.priority} onValueChange={(v) => setFilter(f => ({ ...f, priority: v }))}>
+          <Select value={filter.priority || 'all'} onValueChange={(v) => setFilter(f => ({ ...f, priority: v === 'all' ? '' : v }))}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="Priorität" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Alle Prioritäten</SelectItem>
+              <SelectItem value="all">Alle Prioritäten</SelectItem>
               {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
                 <SelectItem key={key} value={key}>{label}</SelectItem>
               ))}

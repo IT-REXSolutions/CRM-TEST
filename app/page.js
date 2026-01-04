@@ -1036,12 +1036,12 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                 
                 <div>
                   <Label className="text-slate-500">Zugewiesen an</Label>
-                  <Select value={ticket.assignee_id || ''} onValueChange={handleAssigneeChange}>
+                  <Select value={ticket.assignee_id || 'none'} onValueChange={(v) => handleAssigneeChange(v === 'none' ? null : v)}>
                     <SelectTrigger className="mt-1">
                       <SelectValue placeholder="Nicht zugewiesen" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Nicht zugewiesen</SelectItem>
+                      <SelectItem value="none">Nicht zugewiesen</SelectItem>
                       {users.map((user) => (
                         <SelectItem key={user.id} value={user.id}>
                           {user.first_name} {user.last_name}

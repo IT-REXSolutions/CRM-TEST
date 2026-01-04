@@ -23,39 +23,106 @@ export async function OPTIONS() {
 }
 
 // ============================================
-// API HANDLERS
+// AUTH HANDLERS
 // ============================================
 
-// --- INIT: Create Database Schema ---
-async function handleInit() {
-  try {
-    // Import schema SQL
-    const { default: SCHEMA_SQL } = await import('@/lib/schema.js')
-    
-    // Execute schema (split by statements)
-    const statements = SCHEMA_SQL.split(';').filter(s => s.trim())
-    
-    for (const stmt of statements) {
-      if (stmt.trim()) {
-        const { error } = await supabaseAdmin.rpc('exec_sql', { sql: stmt + ';' }).catch(() => ({ error: 'RPC not available' }))
-        // We'll try direct query method instead
-      }
-    }
-    
-    // For now, return instructions to run SQL manually
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Schema bereit. Bitte führen Sie das SQL-Schema in Supabase SQL Editor aus.',
-      schemaUrl: 'Gehen Sie zu Supabase Dashboard -> SQL Editor'
-    })
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+async function handleRegister(body) {
+  const { email, password, first_name, last_name, user_type, organization_id } = body
+  
+  if (!email || !password || !first_name || !last_name) {
+    return NextResponse.json({ error: 'email, password, first_name, last_name sind erforderlich' }, { status: 400 })
   }
+  
+  // Create user in our users table
+  const userId = uuidv4()
+  const userData = {
+    id: userId,
+    email,
+    first_name,
+    last_name,
+    user_type: user_type || 'internal',
+    is_active: true,
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .insert([userData])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Assign default role based on user_type
+  const roleMap = {
+    internal: 'agent',
+    customer: 'customer',
+    external: 'customer'
+  }
+  
+  const { data: role } = await supabaseAdmin
+    .from('roles')
+    .select('id')
+    .eq('name', roleMap[user_type] || 'agent')
+    .single()
+  
+  if (role) {
+    await supabaseAdmin.from('user_roles').insert([{ user_id: userId, role_id: role.id }])
+  }
+  
+  // Link to organization if customer
+  if (user_type === 'customer' && organization_id) {
+    await supabaseAdmin.from('contacts').insert([{
+      id: uuidv4(),
+      organization_id,
+      user_id: userId,
+      first_name,
+      last_name,
+      email,
+    }])
+  }
+  
+  return NextResponse.json({ success: true, user: data })
 }
 
-// --- USERS ---
-async function handleGetUsers() {
-  const { data, error } = await supabaseAdmin
+async function handleLogin(body) {
+  const { email, password } = body
+  
+  if (!email) {
+    return NextResponse.json({ error: 'email ist erforderlich' }, { status: 400 })
+  }
+  
+  // For demo purposes, we just check if user exists
+  const { data: user, error } = await supabaseAdmin
+    .from('users')
+    .select(`
+      *,
+      user_roles (
+        roles (name, display_name)
+      )
+    `)
+    .eq('email', email)
+    .eq('is_active', true)
+    .single()
+  
+  if (error || !user) {
+    return NextResponse.json({ error: 'Benutzer nicht gefunden' }, { status: 401 })
+  }
+  
+  // Update last login
+  await supabaseAdmin
+    .from('users')
+    .update({ last_login: new Date().toISOString() })
+    .eq('id', user.id)
+  
+  return NextResponse.json({ success: true, user })
+}
+
+// ============================================
+// USERS HANDLERS
+// ============================================
+
+async function handleGetUsers(params) {
+  let query = supabaseAdmin
     .from('users')
     .select(`
       *,
@@ -64,7 +131,12 @@ async function handleGetUsers() {
         roles (name, display_name)
       )
     `)
-    .order('created_at', { ascending: false })
+  
+  if (params.user_type) {
+    query = query.eq('user_type', params.user_type)
+  }
+  
+  const { data, error } = await query.order('created_at', { ascending: false })
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data || [])
@@ -94,11 +166,8 @@ async function handleCreateUser(body) {
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   
-  // Assign role if provided
   if (role_id) {
-    await supabaseAdmin
-      .from('user_roles')
-      .insert([{ user_id: data.id, role_id }])
+    await supabaseAdmin.from('user_roles').insert([{ user_id: data.id, role_id }])
   }
   
   return NextResponse.json(data)
@@ -114,7 +183,20 @@ async function handleUpdateUser(id, body) {
   return NextResponse.json({ success: true })
 }
 
-// --- ROLES ---
+async function handleDeleteUser(id) {
+  const { error } = await supabaseAdmin
+    .from('users')
+    .update({ is_active: false })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// ROLES HANDLERS
+// ============================================
+
 async function handleGetRoles() {
   const { data, error } = await supabaseAdmin
     .from('roles')
@@ -125,7 +207,10 @@ async function handleGetRoles() {
   return NextResponse.json(data || [])
 }
 
-// --- ORGANIZATIONS ---
+// ============================================
+// ORGANIZATIONS HANDLERS
+// ============================================
+
 async function handleGetOrganizations() {
   const { data, error } = await supabaseAdmin
     .from('organizations')
@@ -192,14 +277,18 @@ async function handleDeleteOrganization(id) {
   return NextResponse.json({ success: true })
 }
 
-// --- CONTACTS ---
+// ============================================
+// CONTACTS HANDLERS
+// ============================================
+
 async function handleGetContacts(orgId) {
   let query = supabaseAdmin
     .from('contacts')
     .select(`
       *,
       organizations (name),
-      locations (name)
+      locations (name),
+      users (email)
     `)
   
   if (orgId) {
@@ -213,7 +302,7 @@ async function handleGetContacts(orgId) {
 }
 
 async function handleCreateContact(body) {
-  const { organization_id, first_name, last_name, email, phone, position } = body
+  const { organization_id, first_name, last_name, email, phone, position, mobile } = body
   
   if (!organization_id || !first_name || !last_name) {
     return NextResponse.json({ error: 'organization_id, first_name, last_name sind erforderlich' }, { status: 400 })
@@ -226,6 +315,7 @@ async function handleCreateContact(body) {
     last_name,
     email: email || null,
     phone: phone || null,
+    mobile: mobile || null,
     position: position || null,
   }
   
@@ -239,9 +329,12 @@ async function handleCreateContact(body) {
   return NextResponse.json(data)
 }
 
-// --- LOCATIONS ---
+// ============================================
+// LOCATIONS HANDLERS
+// ============================================
+
 async function handleCreateLocation(body) {
-  const { organization_id, name, address_line1, postal_code, city } = body
+  const { organization_id, name, address_line1, postal_code, city, phone } = body
   
   if (!organization_id || !name) {
     return NextResponse.json({ error: 'organization_id, name sind erforderlich' }, { status: 400 })
@@ -254,6 +347,7 @@ async function handleCreateLocation(body) {
     address_line1: address_line1 || null,
     postal_code: postal_code || null,
     city: city || null,
+    phone: phone || null,
   }
   
   const { data, error } = await supabaseAdmin
@@ -266,7 +360,10 @@ async function handleCreateLocation(body) {
   return NextResponse.json(data)
 }
 
-// --- SLA PROFILES ---
+// ============================================
+// SLA PROFILES HANDLERS
+// ============================================
+
 async function handleGetSLAProfiles() {
   const { data, error } = await supabaseAdmin
     .from('sla_profiles')
@@ -277,7 +374,10 @@ async function handleGetSLAProfiles() {
   return NextResponse.json(data || [])
 }
 
-// --- TICKETS ---
+// ============================================
+// TICKETS HANDLERS
+// ============================================
+
 async function handleGetTickets(params) {
   let query = supabaseAdmin
     .from('tickets')
@@ -290,15 +390,15 @@ async function handleGetTickets(params) {
       sla_profiles (name, response_time_minutes, resolution_time_minutes),
       ticket_tag_relations (
         ticket_tags (id, name, color)
-      ),
-      ticket_comments (count)
+      )
     `)
   
-  // Apply filters
   if (params.status) query = query.eq('status', params.status)
   if (params.priority) query = query.eq('priority', params.priority)
   if (params.assignee_id) query = query.eq('assignee_id', params.assignee_id)
   if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+  if (params.created_by_id) query = query.eq('created_by_id', params.created_by_id)
+  if (params.contact_id) query = query.eq('contact_id', params.contact_id)
   
   const { data, error } = await query.order('created_at', { ascending: false })
   
@@ -340,28 +440,55 @@ async function handleCreateTicket(body) {
   const { 
     subject, description, priority, status, category, type,
     organization_id, contact_id, assignee_id, created_by_id,
-    sla_profile_id, tags
+    sla_profile_id, tags, source
   } = body
   
   if (!subject || !created_by_id) {
     return NextResponse.json({ error: 'subject, created_by_id sind erforderlich' }, { status: 400 })
   }
   
-  // Calculate SLA due dates if SLA profile provided
+  // Calculate SLA due dates if SLA profile provided or from organization's contract
   let sla_response_due = null
   let sla_resolution_due = null
+  let effectiveSlaId = sla_profile_id
   
-  if (sla_profile_id) {
+  // Try to get SLA from organization's contract if not specified
+  if (!effectiveSlaId && organization_id) {
+    const { data: contract } = await supabaseAdmin
+      .from('contracts')
+      .select('sla_profile_id')
+      .eq('organization_id', organization_id)
+      .eq('is_active', true)
+      .single()
+    
+    if (contract?.sla_profile_id) {
+      effectiveSlaId = contract.sla_profile_id
+    }
+  }
+  
+  // Use default SLA if still not set
+  if (!effectiveSlaId) {
+    const { data: defaultSla } = await supabaseAdmin
+      .from('sla_profiles')
+      .select('id')
+      .eq('is_default', true)
+      .single()
+    
+    if (defaultSla) effectiveSlaId = defaultSla.id
+  }
+  
+  if (effectiveSlaId) {
     const { data: slaProfile } = await supabaseAdmin
       .from('sla_profiles')
       .select('*')
-      .eq('id', sla_profile_id)
+      .eq('id', effectiveSlaId)
       .single()
     
     if (slaProfile) {
       const now = new Date()
-      sla_response_due = new Date(now.getTime() + slaProfile.response_time_minutes * 60000).toISOString()
-      sla_resolution_due = new Date(now.getTime() + slaProfile.resolution_time_minutes * 60000).toISOString()
+      const priorityMultiplier = slaProfile.priority_multipliers?.[priority || 'medium'] || 1
+      sla_response_due = new Date(now.getTime() + slaProfile.response_time_minutes * priorityMultiplier * 60000).toISOString()
+      sla_resolution_due = new Date(now.getTime() + slaProfile.resolution_time_minutes * priorityMultiplier * 60000).toISOString()
     }
   }
   
@@ -377,9 +504,10 @@ async function handleCreateTicket(body) {
     contact_id: contact_id || null,
     assignee_id: assignee_id || null,
     created_by_id,
-    sla_profile_id: sla_profile_id || null,
+    sla_profile_id: effectiveSlaId || null,
     sla_response_due,
     sla_resolution_due,
+    source: source || 'web',
   }
   
   const { data, error } = await supabaseAdmin
@@ -412,14 +540,12 @@ async function handleCreateTicket(body) {
 }
 
 async function handleUpdateTicket(id, body, userId) {
-  // Get current ticket for history
   const { data: currentTicket } = await supabaseAdmin
     .from('tickets')
     .select('*')
     .eq('id', id)
     .single()
   
-  // Track changes for history
   const changes = []
   const fieldsToTrack = ['status', 'priority', 'assignee_id', 'subject']
   
@@ -460,7 +586,6 @@ async function handleUpdateTicket(id, body, userId) {
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   
-  // Insert history entries
   if (changes.length > 0) {
     await supabaseAdmin.from('ticket_history').insert(changes)
   }
@@ -478,7 +603,10 @@ async function handleDeleteTicket(id) {
   return NextResponse.json({ success: true })
 }
 
-// --- TICKET COMMENTS ---
+// ============================================
+// TICKET COMMENTS HANDLERS
+// ============================================
+
 async function handleCreateComment(body) {
   const { ticket_id, user_id, content, is_internal } = body
   
@@ -497,15 +625,11 @@ async function handleCreateComment(body) {
   const { data, error } = await supabaseAdmin
     .from('ticket_comments')
     .insert([commentData])
-    .select(`
-      *,
-      users (id, first_name, last_name)
-    `)
+    .select(`*, users (id, first_name, last_name)`)
     .single()
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   
-  // Add history entry
   await supabaseAdmin.from('ticket_history').insert([{
     id: uuidv4(),
     ticket_id,
@@ -517,7 +641,10 @@ async function handleCreateComment(body) {
   return NextResponse.json(data)
 }
 
-// --- TICKET TAGS ---
+// ============================================
+// TICKET TAGS HANDLERS
+// ============================================
+
 async function handleGetTags() {
   const { data, error } = await supabaseAdmin
     .from('ticket_tags')
@@ -528,7 +655,10 @@ async function handleGetTags() {
   return NextResponse.json(data || [])
 }
 
-// --- BOARDS & TASKS ---
+// ============================================
+// BOARDS & TASKS HANDLERS
+// ============================================
+
 async function handleGetBoards() {
   const { data, error } = await supabaseAdmin
     .from('boards')
@@ -547,7 +677,6 @@ async function handleGetBoards() {
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   
-  // Sort columns and tasks by position
   const boards = (data || []).map(board => ({
     ...board,
     board_columns: (board.board_columns || []).sort((a, b) => a.position - b.position).map(col => ({
@@ -570,18 +699,12 @@ async function handleCreateBoard(body) {
   
   const { data, error } = await supabaseAdmin
     .from('boards')
-    .insert([{
-      id: boardId,
-      name,
-      description: description || null,
-      owner_id,
-    }])
+    .insert([{ id: boardId, name, description: description || null, owner_id }])
     .select()
     .single()
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   
-  // Create default columns
   const defaultColumns = [
     { name: 'Backlog', position: 0, color: '#6B7280' },
     { name: 'To Do', position: 1, color: '#3B82F6' },
@@ -608,7 +731,6 @@ async function handleCreateTask(body) {
     return NextResponse.json({ error: 'board_id, column_id, title, created_by_id sind erforderlich' }, { status: 400 })
   }
   
-  // Get max position in column
   const { data: existingTasks } = await supabaseAdmin
     .from('tasks')
     .select('position')
@@ -635,10 +757,7 @@ async function handleCreateTask(body) {
   const { data, error } = await supabaseAdmin
     .from('tasks')
     .insert([taskData])
-    .select(`
-      *,
-      assignee:users (id, first_name, last_name)
-    `)
+    .select()
     .single()
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -646,9 +765,15 @@ async function handleCreateTask(body) {
 }
 
 async function handleUpdateTask(id, body) {
+  const updateData = { ...body, updated_at: new Date().toISOString() }
+  
+  if (body.completed && !body.completed_at) {
+    updateData.completed_at = new Date().toISOString()
+  }
+  
   const { error } = await supabaseAdmin
     .from('tasks')
-    .update({ ...body, updated_at: new Date().toISOString() })
+    .update(updateData)
     .eq('id', id)
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -664,18 +789,27 @@ async function handleMoveTask(body) {
   
   const { error } = await supabaseAdmin
     .from('tasks')
-    .update({ 
-      column_id, 
-      position,
-      updated_at: new Date().toISOString()
-    })
+    .update({ column_id, position, updated_at: new Date().toISOString() })
     .eq('id', task_id)
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })
 }
 
-// --- ASSETS ---
+async function handleDeleteTask(id) {
+  const { error } = await supabaseAdmin
+    .from('tasks')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// ASSETS HANDLERS
+// ============================================
+
 async function handleGetAssets(params) {
   let query = supabaseAdmin
     .from('assets')
@@ -683,11 +817,16 @@ async function handleGetAssets(params) {
       *,
       asset_types (name, icon),
       organizations (name),
-      locations (name)
+      locations (name),
+      asset_values (
+        value,
+        asset_fields (name, field_type)
+      )
     `)
   
   if (params.organization_id) query = query.eq('organization_id', params.organization_id)
   if (params.type_id) query = query.eq('asset_type_id', params.type_id)
+  if (params.status) query = query.eq('status', params.status)
   
   const { data, error } = await query.order('name')
   
@@ -695,13 +834,32 @@ async function handleGetAssets(params) {
   return NextResponse.json(data || [])
 }
 
+async function handleGetAsset(id) {
+  const { data, error } = await supabaseAdmin
+    .from('assets')
+    .select(`
+      *,
+      asset_types (name, icon, asset_fields (*)),
+      organizations (name),
+      locations (name),
+      asset_values (
+        id,
+        value,
+        field_id,
+        asset_fields (name, field_type, is_required)
+      )
+    `)
+    .eq('id', id)
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
 async function handleGetAssetTypes() {
   const { data, error } = await supabaseAdmin
     .from('asset_types')
-    .select(`
-      *,
-      asset_fields (*)
-    `)
+    .select(`*, asset_fields (*)`)
     .order('name')
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -711,15 +869,17 @@ async function handleGetAssetTypes() {
 async function handleCreateAsset(body) {
   const { 
     asset_type_id, organization_id, location_id, name, asset_tag,
-    serial_number, manufacturer, model, purchase_date, warranty_until, notes
+    serial_number, manufacturer, model, purchase_date, warranty_until, notes, status,
+    custom_fields
   } = body
   
   if (!asset_type_id || !name) {
     return NextResponse.json({ error: 'asset_type_id, name sind erforderlich' }, { status: 400 })
   }
   
+  const assetId = uuidv4()
   const assetData = {
-    id: uuidv4(),
+    id: assetId,
     asset_type_id,
     organization_id: organization_id || null,
     location_id: location_id || null,
@@ -731,6 +891,7 @@ async function handleCreateAsset(body) {
     purchase_date: purchase_date || null,
     warranty_until: warranty_until || null,
     notes: notes || null,
+    status: status || 'active',
   }
   
   const { data, error } = await supabaseAdmin
@@ -740,10 +901,62 @@ async function handleCreateAsset(body) {
     .single()
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Save custom field values
+  if (custom_fields && Object.keys(custom_fields).length > 0) {
+    const fieldValues = Object.entries(custom_fields).map(([field_id, value]) => ({
+      id: uuidv4(),
+      asset_id: assetId,
+      field_id,
+      value: String(value),
+    }))
+    await supabaseAdmin.from('asset_values').insert(fieldValues)
+  }
+  
   return NextResponse.json(data)
 }
 
-// --- TIME ENTRIES ---
+async function handleUpdateAsset(id, body) {
+  const { custom_fields, ...assetData } = body
+  
+  const { error } = await supabaseAdmin
+    .from('assets')
+    .update({ ...assetData, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Update custom fields
+  if (custom_fields) {
+    for (const [field_id, value] of Object.entries(custom_fields)) {
+      await supabaseAdmin
+        .from('asset_values')
+        .upsert({ 
+          id: uuidv4(),
+          asset_id: id, 
+          field_id, 
+          value: String(value) 
+        }, { onConflict: 'asset_id,field_id' })
+    }
+  }
+  
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteAsset(id) {
+  const { error } = await supabaseAdmin
+    .from('assets')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// TIME ENTRIES HANDLERS
+// ============================================
+
 async function handleGetTimeEntries(params) {
   let query = supabaseAdmin
     .from('time_entries')
@@ -757,7 +970,10 @@ async function handleGetTimeEntries(params) {
   if (params.user_id) query = query.eq('user_id', params.user_id)
   if (params.ticket_id) query = query.eq('ticket_id', params.ticket_id)
   if (params.organization_id) query = query.eq('organization_id', params.organization_id)
-  if (params.is_billable !== undefined) query = query.eq('is_billable', params.is_billable)
+  if (params.is_billable !== undefined) query = query.eq('is_billable', params.is_billable === 'true')
+  if (params.is_invoiced !== undefined) query = query.eq('is_invoiced', params.is_invoiced === 'true')
+  if (params.from_date) query = query.gte('created_at', params.from_date)
+  if (params.to_date) query = query.lte('created_at', params.to_date)
   
   const { data, error } = await query.order('created_at', { ascending: false })
   
@@ -766,10 +982,25 @@ async function handleGetTimeEntries(params) {
 }
 
 async function handleCreateTimeEntry(body) {
-  const { user_id, ticket_id, task_id, organization_id, description, duration_minutes, is_billable, hourly_rate } = body
+  const { user_id, ticket_id, task_id, organization_id, description, duration_minutes, is_billable, hourly_rate, started_at, ended_at } = body
   
   if (!user_id || !description || !duration_minutes) {
     return NextResponse.json({ error: 'user_id, description, duration_minutes sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get hourly rate from organization's contract if not specified
+  let effectiveHourlyRate = hourly_rate
+  if (!effectiveHourlyRate && organization_id) {
+    const { data: contract } = await supabaseAdmin
+      .from('contracts')
+      .select('hourly_rate')
+      .eq('organization_id', organization_id)
+      .eq('is_active', true)
+      .single()
+    
+    if (contract?.hourly_rate) {
+      effectiveHourlyRate = contract.hourly_rate
+    }
   }
   
   const entryData = {
@@ -781,20 +1012,50 @@ async function handleCreateTimeEntry(body) {
     description,
     duration_minutes,
     is_billable: is_billable !== false,
-    hourly_rate: hourly_rate || null,
+    hourly_rate: effectiveHourlyRate || null,
+    started_at: started_at || null,
+    ended_at: ended_at || null,
   }
   
   const { data, error } = await supabaseAdmin
     .from('time_entries')
     .insert([entryData])
-    .select()
+    .select(`
+      *,
+      users (first_name, last_name),
+      tickets (ticket_number, subject),
+      organizations (name)
+    `)
     .single()
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
 }
 
-// --- REPORTS / STATISTICS ---
+async function handleUpdateTimeEntry(id, body) {
+  const { error } = await supabaseAdmin
+    .from('time_entries')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteTimeEntry(id) {
+  const { error } = await supabaseAdmin
+    .from('time_entries')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// REPORTS & STATISTICS HANDLERS
+// ============================================
+
 async function handleGetStats() {
   // Ticket statistics
   const { data: tickets } = await supabaseAdmin
@@ -810,13 +1071,11 @@ async function handleGetStats() {
   }
   
   if (tickets) {
-    // Count by status
     tickets.forEach(t => {
       ticketStats.byStatus[t.status] = (ticketStats.byStatus[t.status] || 0) + 1
       ticketStats.byPriority[t.priority] = (ticketStats.byPriority[t.priority] || 0) + 1
     })
     
-    // Calculate SLA rates
     const withSlaResponse = tickets.filter(t => t.sla_response_met !== null)
     const withSlaResolution = tickets.filter(t => t.sla_resolution_met !== null)
     
@@ -851,25 +1110,223 @@ async function handleGetStats() {
     })
   }
   
-  // Organization count
   const { count: orgCount } = await supabaseAdmin
     .from('organizations')
     .select('*', { count: 'exact', head: true })
   
-  // Asset count
   const { count: assetCount } = await supabaseAdmin
     .from('assets')
     .select('*', { count: 'exact', head: true })
+  
+  const { count: userCount } = await supabaseAdmin
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_active', true)
   
   return NextResponse.json({
     tickets: ticketStats,
     time: timeStats,
     organizations: orgCount || 0,
     assets: assetCount || 0,
+    users: userCount || 0,
   })
 }
 
-// --- AI FEATURES ---
+async function handleGetReports(params) {
+  const { type, from_date, to_date, organization_id, user_id } = params
+  
+  let report = {}
+  
+  switch (type) {
+    case 'tickets':
+      // Ticket report by status over time
+      let ticketQuery = supabaseAdmin
+        .from('tickets')
+        .select('id, status, priority, created_at, resolved_at, organization_id, assignee_id')
+      
+      if (from_date) ticketQuery = ticketQuery.gte('created_at', from_date)
+      if (to_date) ticketQuery = ticketQuery.lte('created_at', to_date)
+      if (organization_id) ticketQuery = ticketQuery.eq('organization_id', organization_id)
+      
+      const { data: ticketData } = await ticketQuery
+      
+      report = {
+        type: 'tickets',
+        total: ticketData?.length || 0,
+        byStatus: {},
+        byPriority: {},
+        avgResolutionTime: 0,
+        data: ticketData || []
+      }
+      
+      if (ticketData) {
+        ticketData.forEach(t => {
+          report.byStatus[t.status] = (report.byStatus[t.status] || 0) + 1
+          report.byPriority[t.priority] = (report.byPriority[t.priority] || 0) + 1
+        })
+        
+        const resolved = ticketData.filter(t => t.resolved_at)
+        if (resolved.length > 0) {
+          const totalTime = resolved.reduce((sum, t) => {
+            return sum + (new Date(t.resolved_at) - new Date(t.created_at))
+          }, 0)
+          report.avgResolutionTime = totalTime / resolved.length / (1000 * 60 * 60) // hours
+        }
+      }
+      break
+    
+    case 'time':
+      // Time tracking report
+      let timeQuery = supabaseAdmin
+        .from('time_entries')
+        .select(`
+          *,
+          users (first_name, last_name),
+          organizations (name)
+        `)
+      
+      if (from_date) timeQuery = timeQuery.gte('created_at', from_date)
+      if (to_date) timeQuery = timeQuery.lte('created_at', to_date)
+      if (organization_id) timeQuery = timeQuery.eq('organization_id', organization_id)
+      if (user_id) timeQuery = timeQuery.eq('user_id', user_id)
+      
+      const { data: timeData } = await timeQuery
+      
+      let totalMinutes = 0
+      let billableMinutes = 0
+      let totalRevenue = 0
+      const byUser = {}
+      const byOrganization = {}
+      
+      if (timeData) {
+        timeData.forEach(t => {
+          totalMinutes += t.duration_minutes
+          if (t.is_billable) {
+            billableMinutes += t.duration_minutes
+            if (t.hourly_rate) {
+              totalRevenue += (t.duration_minutes / 60) * t.hourly_rate
+            }
+          }
+          
+          const userName = t.users ? `${t.users.first_name} ${t.users.last_name}` : 'Unknown'
+          byUser[userName] = (byUser[userName] || 0) + t.duration_minutes
+          
+          const orgName = t.organizations?.name || 'Nicht zugeordnet'
+          byOrganization[orgName] = (byOrganization[orgName] || 0) + t.duration_minutes
+        })
+      }
+      
+      report = {
+        type: 'time',
+        totalHours: totalMinutes / 60,
+        billableHours: billableMinutes / 60,
+        totalRevenue,
+        byUser,
+        byOrganization,
+        entries: timeData || []
+      }
+      break
+    
+    case 'sla':
+      // SLA compliance report
+      let slaQuery = supabaseAdmin
+        .from('tickets')
+        .select(`
+          id, ticket_number, subject, status, priority,
+          sla_response_due, sla_resolution_due, sla_response_met, sla_resolution_met,
+          first_response_at, resolved_at, created_at,
+          organizations (name)
+        `)
+        .not('sla_profile_id', 'is', null)
+      
+      if (from_date) slaQuery = slaQuery.gte('created_at', from_date)
+      if (to_date) slaQuery = slaQuery.lte('created_at', to_date)
+      if (organization_id) slaQuery = slaQuery.eq('organization_id', organization_id)
+      
+      const { data: slaData } = await slaQuery
+      
+      let responseMet = 0
+      let responseMissed = 0
+      let resolutionMet = 0
+      let resolutionMissed = 0
+      
+      if (slaData) {
+        slaData.forEach(t => {
+          if (t.sla_response_met === true) responseMet++
+          else if (t.sla_response_met === false) responseMissed++
+          
+          if (t.sla_resolution_met === true) resolutionMet++
+          else if (t.sla_resolution_met === false) resolutionMissed++
+        })
+      }
+      
+      report = {
+        type: 'sla',
+        total: slaData?.length || 0,
+        responseCompliance: responseMet + responseMissed > 0 
+          ? (responseMet / (responseMet + responseMissed)) * 100 
+          : 100,
+        resolutionCompliance: resolutionMet + resolutionMissed > 0 
+          ? (resolutionMet / (resolutionMet + resolutionMissed)) * 100 
+          : 100,
+        responseMet,
+        responseMissed,
+        resolutionMet,
+        resolutionMissed,
+        tickets: slaData || []
+      }
+      break
+    
+    case 'assets':
+      // Asset report
+      let assetQuery = supabaseAdmin
+        .from('assets')
+        .select(`
+          *,
+          asset_types (name),
+          organizations (name)
+        `)
+      
+      if (organization_id) assetQuery = assetQuery.eq('organization_id', organization_id)
+      
+      const { data: assetData } = await assetQuery
+      
+      const byType = {}
+      const byStatus = {}
+      const byOrg = {}
+      
+      if (assetData) {
+        assetData.forEach(a => {
+          const typeName = a.asset_types?.name || 'Unknown'
+          byType[typeName] = (byType[typeName] || 0) + 1
+          byStatus[a.status] = (byStatus[a.status] || 0) + 1
+          
+          const orgName = a.organizations?.name || 'Nicht zugeordnet'
+          byOrg[orgName] = (byOrg[orgName] || 0) + 1
+        })
+      }
+      
+      report = {
+        type: 'assets',
+        total: assetData?.length || 0,
+        byType,
+        byStatus,
+        byOrganization: byOrg,
+        assets: assetData || []
+      }
+      break
+    
+    default:
+      report = { error: 'Unknown report type' }
+  }
+  
+  return NextResponse.json(report)
+}
+
+// ============================================
+// AI FEATURES HANDLERS
+// ============================================
+
 async function handleAISummarize(body) {
   const { content, comments } = body
   
@@ -918,19 +1375,24 @@ async function handleRoute(request, { params }) {
     if ((route === '/' || route === '/root') && method === 'GET') {
       return handleCORS(NextResponse.json({ 
         message: 'ServiceDesk Pro API',
-        version: '1.0.0',
+        version: '2.0.0',
         status: 'running'
       }))
     }
     
-    // Init database
-    if (route === '/init' && method === 'POST') {
-      return handleCORS(await handleInit())
+    // --- AUTH ---
+    if (route === '/auth/register' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleRegister(body))
+    }
+    if (route === '/auth/login' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleLogin(body))
     }
     
     // --- USERS ---
     if (route === '/users' && method === 'GET') {
-      return handleCORS(await handleGetUsers())
+      return handleCORS(await handleGetUsers(searchParams))
     }
     if (route === '/users' && method === 'POST') {
       const body = await request.json()
@@ -940,6 +1402,10 @@ async function handleRoute(request, { params }) {
       const id = path[1]
       const body = await request.json()
       return handleCORS(await handleUpdateUser(id, body))
+    }
+    if (route.match(/^\/users\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteUser(id))
     }
     
     // --- ROLES ---
@@ -1037,6 +1503,10 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       return handleCORS(await handleUpdateTask(id, body))
     }
+    if (route.match(/^\/tasks\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTask(id))
+    }
     if (route === '/tasks/move' && method === 'POST') {
       const body = await request.json()
       return handleCORS(await handleMoveTask(body))
@@ -1050,6 +1520,19 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       return handleCORS(await handleCreateAsset(body))
     }
+    if (route.match(/^\/assets\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      return handleCORS(await handleGetAsset(id))
+    }
+    if (route.match(/^\/assets\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateAsset(id, body))
+    }
+    if (route.match(/^\/assets\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteAsset(id))
+    }
     if (route === '/asset-types' && method === 'GET') {
       return handleCORS(await handleGetAssetTypes())
     }
@@ -1062,10 +1545,22 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       return handleCORS(await handleCreateTimeEntry(body))
     }
+    if (route.match(/^\/time-entries\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateTimeEntry(id, body))
+    }
+    if (route.match(/^\/time-entries\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTimeEntry(id))
+    }
     
-    // --- STATISTICS ---
+    // --- STATISTICS & REPORTS ---
     if (route === '/stats' && method === 'GET') {
       return handleCORS(await handleGetStats())
+    }
+    if (route === '/reports' && method === 'GET') {
+      return handleCORS(await handleGetReports(searchParams))
     }
     
     // --- AI FEATURES ---

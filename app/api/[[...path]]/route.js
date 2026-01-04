@@ -538,11 +538,9 @@ async function handleGetBoards() {
         *,
         tasks (
           *,
-          assignee:users (id, first_name, last_name),
           tickets (id, ticket_number, subject)
         )
-      ),
-      owner:users (id, first_name, last_name)
+      )
     `)
     .eq('is_active', true)
     .order('created_at', { ascending: false })

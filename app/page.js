@@ -488,13 +488,7 @@ function CreateInvoiceDialog({ organizationId, open, onClose, onCreated }) {
   const [timeEntries, setTimeEntries] = useState([])
   const [selectedEntries, setSelectedEntries] = useState([])
   
-  useEffect(() => {
-    if (open && organizationId) {
-      loadTimeEntries()
-    }
-  }, [open, organizationId])
-  
-  const loadTimeEntries = async () => {
+  const loadTimeEntries = useCallback(async () => {
     try {
       const entries = await api.getTimeEntries({ 
         organization_id: organizationId,
@@ -506,7 +500,13 @@ function CreateInvoiceDialog({ organizationId, open, onClose, onCreated }) {
     } catch (error) {
       toast.error('Fehler beim Laden der Zeiteinträge')
     }
-  }
+  }, [organizationId])
+  
+  useEffect(() => {
+    if (open && organizationId) {
+      loadTimeEntries()
+    }
+  }, [open, organizationId, loadTimeEntries])
   
   const handleCreate = async () => {
     if (selectedEntries.length === 0) {

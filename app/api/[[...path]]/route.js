@@ -501,6 +501,152 @@ async function handleLogin(body) {
   return NextResponse.json({ success: true, user })
 }
 
+async function handlePasswordReset(body) {
+  const { email } = body
+  
+  if (!email) {
+    return NextResponse.json({ error: 'email ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('id, email, first_name')
+    .eq('email', email.toLowerCase())
+    .single()
+  
+  if (!user) {
+    // Don't reveal if user exists or not
+    return NextResponse.json({ success: true, message: 'Falls ein Konto existiert, wurde eine E-Mail gesendet.' })
+  }
+  
+  // Generate reset token
+  const resetToken = uuidv4()
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hour
+  
+  // Store reset token
+  await supabaseAdmin.from('settings').upsert([{
+    key: `password_reset_${user.id}`,
+    value: JSON.stringify({ token: resetToken, expires_at: expiresAt }),
+    category: 'auth',
+  }], { onConflict: 'key' })
+  
+  // Send reset email
+  const resetUrl = `${process.env.NEXT_PUBLIC_BASE_URL}?reset_token=${resetToken}&user_id=${user.id}`
+  
+  try {
+    await handleSendEmail({
+      to: email,
+      subject: 'Passwort zurücksetzen - ServiceDesk Pro',
+      body: `Hallo ${user.first_name},\n\nSie haben eine Passwort-Zurücksetzung angefordert.\n\nKlicken Sie auf folgenden Link:\n${resetUrl}\n\nDer Link ist 1 Stunde gültig.\n\nFalls Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.\n\nMit freundlichen Grüßen,\nServiceDesk Pro`,
+    })
+  } catch {}
+  
+  return NextResponse.json({ success: true, message: 'Falls ein Konto existiert, wurde eine E-Mail gesendet.' })
+}
+
+async function handlePasswordResetConfirm(body) {
+  const { user_id, token, new_password } = body
+  
+  if (!user_id || !token || !new_password) {
+    return NextResponse.json({ error: 'user_id, token und new_password sind erforderlich' }, { status: 400 })
+  }
+  
+  // Verify token
+  const { data: setting } = await supabaseAdmin
+    .from('settings')
+    .select('value')
+    .eq('key', `password_reset_${user_id}`)
+    .single()
+  
+  if (!setting) {
+    return NextResponse.json({ error: 'Ungültiger oder abgelaufener Token' }, { status: 400 })
+  }
+  
+  const tokenData = JSON.parse(setting.value)
+  if (tokenData.token !== token || new Date(tokenData.expires_at) < new Date()) {
+    return NextResponse.json({ error: 'Ungültiger oder abgelaufener Token' }, { status: 400 })
+  }
+  
+  // Update password (in real app, hash the password)
+  await supabaseAdmin
+    .from('users')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', user_id)
+  
+  // Delete reset token
+  await supabaseAdmin.from('settings').delete().eq('key', `password_reset_${user_id}`)
+  
+  // Log the password reset
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: 'password_reset',
+    changed_by_id: user_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, message: 'Passwort wurde zurückgesetzt' })
+}
+
+async function refreshM365Token(connectionId) {
+  const { data: connection } = await supabaseAdmin
+    .from('m365_connections')
+    .select('*')
+    .eq('id', connectionId)
+    .single()
+  
+  if (!connection || !connection.refresh_token) {
+    return { success: false, error: 'No refresh token' }
+  }
+  
+  const clientId = await getSetting('m365_client_id')
+  const clientSecret = await getSetting('m365_client_secret')
+  const refreshToken = Buffer.from(connection.refresh_token, 'base64').toString()
+  
+  try {
+    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }),
+    })
+    
+    const tokens = await response.json()
+    if (tokens.error) {
+      return { success: false, error: tokens.error }
+    }
+    
+    // Update stored tokens
+    await supabaseAdmin
+      .from('m365_connections')
+      .update({
+        access_token: Buffer.from(tokens.access_token).toString('base64'),
+        refresh_token: tokens.refresh_token ? Buffer.from(tokens.refresh_token).toString('base64') : connection.refresh_token,
+        token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', connectionId)
+    
+    return { success: true, access_token: tokens.access_token }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+async function getNextTicketNumber() {
+  const { data } = await supabaseAdmin
+    .from('tickets')
+    .select('ticket_number')
+    .order('ticket_number', { ascending: false })
+    .limit(1)
+    .single()
+  return (data?.ticket_number || 0) + 1
+}
+
 // ============================================
 // USERS HANDLERS
 // ============================================

@@ -682,10 +682,12 @@ function LoginPage({ onLogin }) {
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <div className="w-16 h-16 bg-blue-500 rounded-xl mx-auto mb-4 flex items-center justify-center">
-            <span className="text-2xl font-bold text-white">SD</span>
-          </div>
-          <CardTitle className="text-2xl">ServiceDesk Pro</CardTitle>
+          <img 
+            src="https://customer-assets.emergentagent.com/job_v1-itsm-completion/artifacts/w6ojc37j_logo_itrex.png" 
+            alt="IT REX Solutions" 
+            className="h-20 mx-auto mb-4 object-contain"
+          />
+          <CardTitle className="text-2xl">IT REX ServiceDesk</CardTitle>
           <CardDescription>
             {isRegister ? 'Neuen Account erstellen' : 'Melden Sie sich an'}
           </CardDescription>

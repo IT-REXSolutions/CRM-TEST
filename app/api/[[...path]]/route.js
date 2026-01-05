@@ -5398,6 +5398,597 @@ async function handleCreateOnboardingRequest(body) {
 }
 
 // ============================================
+// EMAIL SERVICE
+// ============================================
+
+async function getEmailTransporter() {
+  const smtpHost = await getSetting('smtp_host')
+  const smtpPort = await getSetting('smtp_port', 587)
+  const smtpUser = await getSetting('smtp_user')
+  const smtpPass = await getSetting('smtp_password')
+  const smtpSecure = await getSetting('smtp_secure', false)
+  
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    return null
+  }
+  
+  return nodemailer.createTransport({
+    host: smtpHost,
+    port: parseInt(smtpPort),
+    secure: smtpSecure === 'true' || smtpSecure === true,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  })
+}
+
+function replaceTemplateVariables(text, variables) {
+  if (!text) return ''
+  let result = text
+  for (const [key, value] of Object.entries(variables)) {
+    const regex = new RegExp(`\\{\\{${key.replace('.', '\\.')}\\}\\}`, 'g')
+    result = result.replace(regex, value || '')
+  }
+  return result
+}
+
+async function handleSendEmail(body) {
+  const { 
+    to, subject, body: emailBody, body_html,
+    template_id, variables,
+    ticket_id, onboarding_id,
+    from_name
+  } = body
+  
+  if (!to || (!emailBody && !template_id)) {
+    return NextResponse.json({ error: 'to und body oder template_id sind erforderlich' }, { status: 400 })
+  }
+  
+  const transporter = await getEmailTransporter()
+  if (!transporter) {
+    return NextResponse.json({ error: 'SMTP nicht konfiguriert. Bitte prüfen Sie die E-Mail-Einstellungen.' }, { status: 400 })
+  }
+  
+  let finalSubject = subject
+  let finalBody = emailBody
+  let finalHtml = body_html
+  let templateUsed = null
+  
+  // Load template if specified
+  if (template_id) {
+    const { data: template } = await supabaseAdmin
+      .from('comm_templates')
+      .select('*')
+      .eq('id', template_id)
+      .single()
+    
+    if (template) {
+      templateUsed = template.id
+      finalSubject = template.subject || subject
+      finalBody = template.body || emailBody
+      finalHtml = template.body_html || body_html
+    }
+  }
+  
+  // Replace variables
+  if (variables) {
+    finalSubject = replaceTemplateVariables(finalSubject, variables)
+    finalBody = replaceTemplateVariables(finalBody, variables)
+    if (finalHtml) {
+      finalHtml = replaceTemplateVariables(finalHtml, variables)
+    }
+  }
+  
+  const companyName = await getSetting('company_name', 'ServiceDesk Pro')
+  const senderEmail = await getSetting('smtp_from_email') || await getSetting('smtp_user')
+  
+  try {
+    const info = await transporter.sendMail({
+      from: `"${from_name || companyName}" <${senderEmail}>`,
+      to: to,
+      subject: finalSubject,
+      text: finalBody,
+      html: finalHtml || finalBody.replace(/\n/g, '<br>'),
+    })
+    
+    // Log the email
+    await supabaseAdmin.from('comm_log').insert([{
+      id: uuidv4(),
+      template_id: templateUsed,
+      recipient_email: to,
+      subject: finalSubject,
+      body: finalBody,
+      ticket_id,
+      onboarding_id,
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+    }])
+    
+    return NextResponse.json({ 
+      success: true, 
+      message_id: info.messageId,
+      accepted: info.accepted
+    })
+  } catch (error) {
+    // Log the failed attempt
+    await supabaseAdmin.from('comm_log').insert([{
+      id: uuidv4(),
+      template_id: templateUsed,
+      recipient_email: to,
+      subject: finalSubject,
+      body: finalBody,
+      ticket_id,
+      onboarding_id,
+      status: 'failed',
+      error_message: error.message,
+    }])
+    
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleSendOnboardingWelcome(body) {
+  const { onboarding_id, employee_email, password_reset_link } = body
+  
+  if (!onboarding_id) {
+    return NextResponse.json({ error: 'onboarding_id ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get onboarding request
+  const { data: request, error } = await supabaseAdmin
+    .from('onboarding_requests')
+    .select('*, organizations(name)')
+    .eq('id', onboarding_id)
+    .single()
+  
+  if (error || !request) {
+    return NextResponse.json({ error: 'Onboarding-Anfrage nicht gefunden' }, { status: 404 })
+  }
+  
+  const toEmail = employee_email || request.personal_email || request.email
+  if (!toEmail) {
+    return NextResponse.json({ error: 'Keine E-Mail-Adresse vorhanden' }, { status: 400 })
+  }
+  
+  // Get welcome template
+  const { data: template } = await supabaseAdmin
+    .from('comm_templates')
+    .select('*')
+    .eq('trigger_event', 'onboarding.completed')
+    .eq('is_active', true)
+    .single()
+  
+  const companyName = request.organizations?.name || await getSetting('company_name', 'ServiceDesk Pro')
+  const agentName = await getSetting('support_team_name', 'IT-Support')
+  
+  const variables = {
+    'employee.first_name': request.first_name,
+    'employee.last_name': request.last_name,
+    'employee.email': request.email,
+    'employee.username': request.email?.split('@')[0] || request.first_name.toLowerCase(),
+    'company.name': companyName,
+    'agent.name': agentName,
+    'password_reset_link': password_reset_link || 'https://portal.office.com',
+  }
+  
+  return handleSendEmail({
+    to: toEmail,
+    template_id: template?.id,
+    subject: template?.subject || `Willkommen bei ${companyName} - Ihre IT-Zugangsdaten`,
+    body: template?.body || `Hallo ${request.first_name},\n\nwillkommen bei ${companyName}!\n\nIhre IT-Zugänge wurden eingerichtet.\n\nMit freundlichen Grüßen,\n${agentName}`,
+    variables,
+    onboarding_id,
+  })
+}
+
+async function handleSendTicketNotification(body) {
+  const { ticket_id, event, recipient_email } = body
+  
+  if (!ticket_id || !event) {
+    return NextResponse.json({ error: 'ticket_id und event sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get ticket with contact
+  const { data: ticket, error } = await supabaseAdmin
+    .from('tickets')
+    .select('*, contacts(first_name, last_name, email), organizations(name)')
+    .eq('id', ticket_id)
+    .single()
+  
+  if (error || !ticket) {
+    return NextResponse.json({ error: 'Ticket nicht gefunden' }, { status: 404 })
+  }
+  
+  const toEmail = recipient_email || ticket.contacts?.email
+  if (!toEmail) {
+    return NextResponse.json({ error: 'Keine Empfänger-E-Mail vorhanden' }, { status: 400 })
+  }
+  
+  // Get template for event
+  const { data: template } = await supabaseAdmin
+    .from('comm_templates')
+    .select('*')
+    .eq('trigger_event', event)
+    .eq('is_active', true)
+    .single()
+  
+  const companyName = ticket.organizations?.name || await getSetting('company_name', 'ServiceDesk Pro')
+  const contactName = ticket.contacts 
+    ? `${ticket.contacts.first_name || ''} ${ticket.contacts.last_name || ''}`.trim()
+    : 'Kunde'
+  
+  const variables = {
+    'ticket.number': ticket.ticket_number,
+    'ticket.subject': ticket.subject,
+    'ticket.priority': ticket.priority,
+    'ticket.status': ticket.status,
+    'ticket.resolution_summary': ticket.resolution_summary || '',
+    'contact.name': contactName,
+    'company.name': companyName,
+    'agent.name': await getSetting('support_team_name', 'IT-Support'),
+  }
+  
+  const defaultSubjects = {
+    'ticket.created': `Ihr Ticket #${ticket.ticket_number} wurde erstellt`,
+    'ticket.updated': `Update zu Ihrem Ticket #${ticket.ticket_number}`,
+    'ticket.resolved': `Ihr Ticket #${ticket.ticket_number} wurde gelöst`,
+    'ticket.closed': `Ihr Ticket #${ticket.ticket_number} wurde geschlossen`,
+  }
+  
+  const defaultBodies = {
+    'ticket.created': `Sehr geehrte/r ${contactName},\n\nvielen Dank für Ihre Anfrage. Wir haben Ihr Ticket erstellt:\n\nTicket-Nr: #${ticket.ticket_number}\nBetreff: ${ticket.subject}\n\nUnser Team wird sich schnellstmöglich bei Ihnen melden.\n\nMit freundlichen Grüßen,\n${companyName} IT-Support`,
+    'ticket.resolved': `Sehr geehrte/r ${contactName},\n\nIhr Ticket #${ticket.ticket_number} wurde erfolgreich bearbeitet.\n\n${ticket.resolution_summary ? `Lösung: ${ticket.resolution_summary}\n\n` : ''}Falls Sie weitere Fragen haben, antworten Sie einfach auf diese E-Mail.\n\nMit freundlichen Grüßen,\n${companyName} IT-Support`,
+  }
+  
+  return handleSendEmail({
+    to: toEmail,
+    template_id: template?.id,
+    subject: template?.subject || defaultSubjects[event] || `Ticket #${ticket.ticket_number}`,
+    body: template?.body || defaultBodies[event] || `Update zu Ihrem Ticket #${ticket.ticket_number}`,
+    variables,
+    ticket_id,
+  })
+}
+
+async function handleGetEmailLog(params) {
+  const { ticket_id, onboarding_id, status, limit } = params
+  
+  let query = supabaseAdmin
+    .from('comm_log')
+    .select('*, comm_templates(name)')
+    .order('created_at', { ascending: false })
+    .limit(parseInt(limit) || 50)
+  
+  if (ticket_id) query = query.eq('ticket_id', ticket_id)
+  if (onboarding_id) query = query.eq('onboarding_id', onboarding_id)
+  if (status) query = query.eq('status', status)
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+// ============================================
+// ADVANCED REPORTING
+// ============================================
+
+async function handleGetOnboardingReport(params) {
+  const { start_date, end_date, organization_id, group_by } = params
+  
+  let query = supabaseAdmin
+    .from('onboarding_requests')
+    .select('*, organizations(name)')
+  
+  if (start_date) query = query.gte('created_at', start_date)
+  if (end_date) query = query.lte('created_at', end_date)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  
+  const { data: onboardings, error } = await query
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  
+  // Also get offboardings
+  let offQuery = supabaseAdmin
+    .from('offboarding_requests')
+    .select('*, organizations(name)')
+  
+  if (start_date) offQuery = offQuery.gte('created_at', start_date)
+  if (end_date) offQuery = offQuery.lte('created_at', end_date)
+  if (organization_id) offQuery = offQuery.eq('organization_id', organization_id)
+  
+  const { data: offboardings } = await offQuery
+  
+  // Calculate statistics
+  const stats = {
+    total_onboardings: onboardings?.length || 0,
+    total_offboardings: offboardings?.length || 0,
+    onboarding_by_status: {},
+    offboarding_by_status: {},
+    onboarding_by_month: {},
+    offboarding_by_month: {},
+    onboarding_by_organization: {},
+    offboarding_by_organization: {},
+    onboarding_by_department: {},
+    avg_onboarding_completion_days: 0,
+    license_distribution: {},
+    location_distribution: {},
+    upcoming_starts: [],
+    upcoming_exits: [],
+  }
+  
+  // Process onboardings
+  let totalCompletionDays = 0
+  let completedCount = 0
+  
+  for (const ob of (onboardings || [])) {
+    // By status
+    stats.onboarding_by_status[ob.status] = (stats.onboarding_by_status[ob.status] || 0) + 1
+    
+    // By month
+    const month = ob.created_at?.substring(0, 7)
+    if (month) {
+      stats.onboarding_by_month[month] = (stats.onboarding_by_month[month] || 0) + 1
+    }
+    
+    // By organization
+    const orgName = ob.organizations?.name || 'Unbekannt'
+    stats.onboarding_by_organization[orgName] = (stats.onboarding_by_organization[orgName] || 0) + 1
+    
+    // By department
+    const dept = ob.department || 'Keine Abteilung'
+    stats.onboarding_by_department[dept] = (stats.onboarding_by_department[dept] || 0) + 1
+    
+    // License distribution
+    const license = ob.m365_license_type?.toUpperCase() || 'Keine'
+    stats.license_distribution[license] = (stats.license_distribution[license] || 0) + 1
+    
+    // Location distribution
+    const location = ob.location || 'office'
+    stats.location_distribution[location] = (stats.location_distribution[location] || 0) + 1
+    
+    // Completion time
+    if (ob.status === 'completed' && ob.completed_at) {
+      const days = Math.ceil((new Date(ob.completed_at) - new Date(ob.created_at)) / (1000 * 60 * 60 * 24))
+      totalCompletionDays += days
+      completedCount++
+    }
+    
+    // Upcoming starts (next 30 days)
+    const startDate = new Date(ob.start_date)
+    const now = new Date()
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    if (startDate >= now && startDate <= in30Days && ob.status !== 'completed') {
+      stats.upcoming_starts.push({
+        id: ob.id,
+        name: `${ob.first_name} ${ob.last_name}`,
+        start_date: ob.start_date,
+        organization: orgName,
+        department: ob.department,
+        status: ob.status,
+      })
+    }
+  }
+  
+  if (completedCount > 0) {
+    stats.avg_onboarding_completion_days = Math.round(totalCompletionDays / completedCount)
+  }
+  
+  // Process offboardings
+  for (const off of (offboardings || [])) {
+    // By status
+    stats.offboarding_by_status[off.status] = (stats.offboarding_by_status[off.status] || 0) + 1
+    
+    // By month
+    const month = off.created_at?.substring(0, 7)
+    if (month) {
+      stats.offboarding_by_month[month] = (stats.offboarding_by_month[month] || 0) + 1
+    }
+    
+    // By organization
+    const orgName = off.organizations?.name || 'Unbekannt'
+    stats.offboarding_by_organization[orgName] = (stats.offboarding_by_organization[orgName] || 0) + 1
+    
+    // Upcoming exits (next 30 days)
+    const lastDay = new Date(off.last_day)
+    const now = new Date()
+    const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    if (lastDay >= now && lastDay <= in30Days && off.status !== 'completed') {
+      stats.upcoming_exits.push({
+        id: off.id,
+        name: off.employee_name,
+        last_day: off.last_day,
+        organization: orgName,
+        status: off.status,
+      })
+    }
+  }
+  
+  // Sort upcoming by date
+  stats.upcoming_starts.sort((a, b) => new Date(a.start_date) - new Date(b.start_date))
+  stats.upcoming_exits.sort((a, b) => new Date(a.last_day) - new Date(b.last_day))
+  
+  return NextResponse.json(stats)
+}
+
+async function handleGetTicketReport(params) {
+  const { start_date, end_date, organization_id, group_by } = params
+  
+  let query = supabaseAdmin
+    .from('tickets')
+    .select('*, organizations(name), users!tickets_assigned_to_id_fkey(name)')
+  
+  if (start_date) query = query.gte('created_at', start_date)
+  if (end_date) query = query.lte('created_at', end_date)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  
+  const { data: tickets, error } = await query
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  
+  const stats = {
+    total_tickets: tickets?.length || 0,
+    by_status: {},
+    by_priority: {},
+    by_type: {},
+    by_month: {},
+    by_organization: {},
+    by_assignee: {},
+    by_resolution_category: {},
+    avg_resolution_hours: 0,
+    sla_compliance: { met: 0, breached: 0, rate: 0 },
+    first_response_avg_hours: 0,
+  }
+  
+  let totalResolutionHours = 0
+  let resolvedCount = 0
+  
+  for (const ticket of (tickets || [])) {
+    // By status
+    stats.by_status[ticket.status] = (stats.by_status[ticket.status] || 0) + 1
+    
+    // By priority
+    stats.by_priority[ticket.priority] = (stats.by_priority[ticket.priority] || 0) + 1
+    
+    // By type
+    const type = ticket.ticket_type_code || 'support'
+    stats.by_type[type] = (stats.by_type[type] || 0) + 1
+    
+    // By month
+    const month = ticket.created_at?.substring(0, 7)
+    if (month) {
+      stats.by_month[month] = (stats.by_month[month] || 0) + 1
+    }
+    
+    // By organization
+    const orgName = ticket.organizations?.name || 'Keine Organisation'
+    stats.by_organization[orgName] = (stats.by_organization[orgName] || 0) + 1
+    
+    // By assignee
+    const assignee = ticket.users?.name || 'Nicht zugewiesen'
+    stats.by_assignee[assignee] = (stats.by_assignee[assignee] || 0) + 1
+    
+    // By resolution category
+    if (ticket.resolution_category) {
+      stats.by_resolution_category[ticket.resolution_category] = 
+        (stats.by_resolution_category[ticket.resolution_category] || 0) + 1
+    }
+    
+    // Resolution time
+    if ((ticket.status === 'resolved' || ticket.status === 'closed') && ticket.closed_at) {
+      const hours = Math.round((new Date(ticket.closed_at) - new Date(ticket.created_at)) / (1000 * 60 * 60))
+      totalResolutionHours += hours
+      resolvedCount++
+    }
+    
+    // SLA compliance
+    if (ticket.sla_breached === true) {
+      stats.sla_compliance.breached++
+    } else if (ticket.sla_breached === false) {
+      stats.sla_compliance.met++
+    }
+  }
+  
+  if (resolvedCount > 0) {
+    stats.avg_resolution_hours = Math.round(totalResolutionHours / resolvedCount)
+  }
+  
+  const totalSLA = stats.sla_compliance.met + stats.sla_compliance.breached
+  if (totalSLA > 0) {
+    stats.sla_compliance.rate = Math.round((stats.sla_compliance.met / totalSLA) * 100)
+  }
+  
+  return NextResponse.json(stats)
+}
+
+async function handleGetTimeReport(params) {
+  const { start_date, end_date, user_id, organization_id, is_billable } = params
+  
+  let query = supabaseAdmin
+    .from('time_entries')
+    .select('*, users(name), tickets(ticket_number, subject), organizations(name)')
+  
+  if (start_date) query = query.gte('date', start_date)
+  if (end_date) query = query.lte('date', end_date)
+  if (user_id) query = query.eq('user_id', user_id)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  if (is_billable !== undefined) query = query.eq('is_billable', is_billable === 'true')
+  
+  const { data: entries, error } = await query
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  
+  const stats = {
+    total_entries: entries?.length || 0,
+    total_minutes: 0,
+    billable_minutes: 0,
+    non_billable_minutes: 0,
+    invoiced_minutes: 0,
+    by_user: {},
+    by_organization: {},
+    by_month: {},
+    by_ticket: {},
+    estimated_revenue: 0,
+  }
+  
+  const defaultRate = 95 // €/hour
+  
+  for (const entry of (entries || [])) {
+    const minutes = entry.duration_minutes || 0
+    stats.total_minutes += minutes
+    
+    if (entry.is_billable) {
+      stats.billable_minutes += minutes
+      const rate = entry.hourly_rate || defaultRate
+      stats.estimated_revenue += (minutes / 60) * rate
+    } else {
+      stats.non_billable_minutes += minutes
+    }
+    
+    if (entry.is_invoiced) {
+      stats.invoiced_minutes += minutes
+    }
+    
+    // By user
+    const userName = entry.users?.name || 'Unbekannt'
+    if (!stats.by_user[userName]) {
+      stats.by_user[userName] = { total: 0, billable: 0 }
+    }
+    stats.by_user[userName].total += minutes
+    if (entry.is_billable) stats.by_user[userName].billable += minutes
+    
+    // By organization
+    const orgName = entry.organizations?.name || 'Keine Organisation'
+    if (!stats.by_organization[orgName]) {
+      stats.by_organization[orgName] = { total: 0, billable: 0 }
+    }
+    stats.by_organization[orgName].total += minutes
+    if (entry.is_billable) stats.by_organization[orgName].billable += minutes
+    
+    // By month
+    const month = entry.date?.substring(0, 7)
+    if (month) {
+      if (!stats.by_month[month]) {
+        stats.by_month[month] = { total: 0, billable: 0 }
+      }
+      stats.by_month[month].total += minutes
+      if (entry.is_billable) stats.by_month[month].billable += minutes
+    }
+  }
+  
+  stats.estimated_revenue = Math.round(stats.estimated_revenue * 100) / 100
+  
+  return NextResponse.json(stats)
+}
+
+// ============================================
 // MAIN ROUTE HANDLER
 // ============================================
 

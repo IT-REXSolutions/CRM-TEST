@@ -3486,48 +3486,48 @@ function InboxPage({ currentUser }) {
                           <Inbox className="w-12 h-12 mx-auto mb-2 opacity-50" />
                           <p>Keine Nachrichten vorhanden</p>
                           <p className="text-sm mt-2">Neue E-Mails und Anfragen erscheinen hier</p>
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {conversations.map((conv) => (
-                      <div
-                        key={conv.id}
-                        className={`p-3 cursor-pointer hover:bg-slate-50 transition-colors ${
-                          selectedConversation?.id === conv.id ? 'bg-slate-100' : ''
-                        } ${conv.status === 'new' ? 'bg-blue-50' : ''}`}
-                        onClick={() => setSelectedConversation(conv)}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="mt-1">{getChannelIcon(conv.channel)}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium truncate">{conv.from_name || conv.from_address || 'Unbekannt'}</span>
-                              {conv.status === 'new' && <Badge className="bg-blue-500 text-white text-xs">Neu</Badge>}
-                            </div>
-                            <p className="text-sm font-medium truncate">{conv.subject || '(Kein Betreff)'}</p>
-                            <p className="text-xs text-muted-foreground truncate">{conv.body?.substring(0, 80)}...</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              {conv.ai_classification?.type && (
-                                <Badge className={`text-xs ${getTypeColor(conv.ai_classification.type)}`}>
-                                  {conv.ai_classification.type}
-                                </Badge>
-                              )}
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(conv.created_at).toLocaleString('de-DE')}
-                              </span>
-                            </div>
-                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        </div>
-        
-        {/* Conversation Detail */}
+                      ) : (
+                        <div className="divide-y">
+                          {conversations.map((conv) => (
+                            <div
+                              key={conv.id}
+                              className={`p-3 cursor-pointer hover:bg-slate-50 transition-colors ${
+                                selectedConversation?.id === conv.id ? 'bg-slate-100' : ''
+                              } ${conv.status === 'new' ? 'bg-blue-50' : ''}`}
+                              onClick={() => setSelectedConversation(conv)}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="mt-1">{getChannelIcon(conv.channel)}</div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium truncate">{conv.from_name || conv.from_address || 'Unbekannt'}</span>
+                                    {conv.status === 'new' && <Badge className="bg-blue-500 text-white text-xs">Neu</Badge>}
+                                  </div>
+                                  <p className="text-sm font-medium truncate">{conv.subject || '(Kein Betreff)'}</p>
+                                  <p className="text-xs text-muted-foreground truncate">{conv.body?.substring(0, 80)}...</p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    {conv.ai_classification?.type && (
+                                      <Badge className={`text-xs ${getTypeColor(conv.ai_classification.type)}`}>
+                                        {conv.ai_classification.type}
+                                      </Badge>
+                                    )}
+                                    <span className="text-xs text-muted-foreground">
+                                      {new Date(conv.created_at).toLocaleString('de-DE')}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              </div>
+              
+              {/* Conversation Detail */}
         <div className="lg:col-span-2">
           {selectedConversation ? (
             <Card>

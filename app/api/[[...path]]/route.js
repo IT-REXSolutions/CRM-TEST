@@ -5821,7 +5821,7 @@ async function handleGetTicketReport(params) {
   
   let query = supabaseAdmin
     .from('tickets')
-    .select('*, organizations(name), users!tickets_assigned_to_id_fkey(name)')
+    .select('*, organizations(name)')
   
   if (start_date) query = query.gte('created_at', start_date)
   if (end_date) query = query.lte('created_at', end_date)

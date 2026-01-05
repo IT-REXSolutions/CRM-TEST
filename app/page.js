@@ -166,6 +166,18 @@ const api = {
   // Contacts
   getContacts: (orgId) => api.fetch(`/contacts${orgId ? `?organization_id=${orgId}` : ''}`),
   createContact: (data) => api.fetch('/contacts', { method: 'POST', body: JSON.stringify(data) }),
+  updateContact: (id, data) => api.fetch(`/contacts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteContact: (id) => api.fetch(`/contacts/${id}`, { method: 'DELETE' }),
+  
+  // Locations
+  createLocation: (data) => api.fetch('/locations', { method: 'POST', body: JSON.stringify(data) }),
+  updateLocation: (id, data) => api.fetch(`/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteLocation: (id) => api.fetch(`/locations/${id}`, { method: 'DELETE' }),
+  
+  // Comments
+  createComment: (data) => api.fetch('/comments', { method: 'POST', body: JSON.stringify(data) }),
+  updateComment: (id, data, userId) => api.fetch(`/comments/${id}?user_id=${userId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteComment: (id, userId) => api.fetch(`/comments/${id}?user_id=${userId}`, { method: 'DELETE' }),
   
   // Tickets
   getTickets: (params = {}) => {

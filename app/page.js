@@ -5063,6 +5063,19 @@ function SettingsPage() {
                       {testingConnection === 'smtp' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
                       Verbindung testen
                     </Button>
+                    <Button onClick={() => saveAllSettings('smtp')}>
+                      <Save className="h-4 w-4 mr-2" />
+                      Speichern
+                    </Button>
+                  </div>
+                  <div className="bg-blue-50 p-3 rounded-lg mt-4">
+                    <h4 className="font-medium text-sm text-blue-800 mb-2">💡 SMTP-Einstellungen für Microsoft 365:</h4>
+                    <ul className="text-xs text-blue-700 space-y-1">
+                      <li>• Server: <code className="bg-white px-1 rounded">smtp.office365.com</code></li>
+                      <li>• Port: <code className="bg-white px-1 rounded">587</code></li>
+                      <li>• Benutzername: Ihre vollständige E-Mail-Adresse</li>
+                      <li>• Passwort: App-Passwort (nicht Ihr normales Passwort!)</li>
+                    </ul>
                   </div>
                 </CardContent>
               </Card>

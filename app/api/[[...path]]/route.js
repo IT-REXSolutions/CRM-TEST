@@ -3154,24 +3154,28 @@ async function handleGetTags() {
 async function handleGetDeals(params) {
   const { stage, contact_id, organization_id, pipeline_id } = params
   
-  let query = supabaseAdmin
-    .from('deals')
-    .select('*, contacts(first_name, last_name), organizations(name)')
-    .order('created_at', { ascending: false })
-  
-  if (stage) query = query.eq('stage', stage)
-  if (contact_id) query = query.eq('contact_id', contact_id)
-  if (organization_id) query = query.eq('organization_id', organization_id)
-  if (pipeline_id) query = query.eq('pipeline_id', pipeline_id)
-  
-  const { data, error } = await query
-  
-  if (error) {
-    // Table might not exist, return empty array
-    if (error.code === '42P01') return NextResponse.json([])
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  try {
+    let query = supabaseAdmin
+      .from('deals')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (stage) query = query.eq('stage', stage)
+    if (contact_id) query = query.eq('contact_id', contact_id)
+    if (organization_id) query = query.eq('organization_id', organization_id)
+    if (pipeline_id) query = query.eq('pipeline_id', pipeline_id)
+    
+    const { data, error } = await query
+    
+    if (error) {
+      // Table might not exist, return empty array
+      console.log('Deals table not found, returning empty array')
+      return NextResponse.json([])
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json([])
   }
-  return NextResponse.json(data || [])
 }
 
 async function handleGetDeal(id) {

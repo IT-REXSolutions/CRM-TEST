@@ -812,6 +812,11 @@ function LoginPage({ onLogin }) {
 
 function Sidebar({ currentPage, setCurrentPage, collapsed, setCollapsed, user, isCustomerPortal }) {
   const navItems = isCustomerPortal ? CUSTOMER_NAV_ITEMS : NAV_ITEMS
+  const [expandedMenus, setExpandedMenus] = useState({})
+  
+  const toggleSubmenu = (id) => {
+    setExpandedMenus(prev => ({ ...prev, [id]: !prev[id] }))
+  }
   
   return (
     <div className={`${collapsed ? 'w-16' : 'w-64'} bg-slate-900 text-white flex flex-col transition-all duration-300`}>
@@ -836,21 +841,56 @@ function Sidebar({ currentPage, setCurrentPage, collapsed, setCollapsed, user, i
         </Button>
       </div>
       
-      <nav className="flex-1 p-2">
+      <nav className="flex-1 p-2 overflow-y-auto">
         {navItems.map((item) => (
-          <Button
-            key={item.id}
-            variant={currentPage === item.id ? 'secondary' : 'ghost'}
-            className={`w-full justify-start mb-1 ${collapsed ? 'px-2' : ''} ${
-              currentPage === item.id 
-                ? 'bg-blue-600 text-white hover:bg-blue-700' 
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-            onClick={() => setCurrentPage(item.id)}
-          >
-            <item.icon className={`h-5 w-5 ${collapsed ? '' : 'mr-3'}`} />
-            {!collapsed && item.label}
-          </Button>
+          <div key={item.id}>
+            <Button
+              variant={currentPage === item.id || (item.submenu && item.submenu.some(s => currentPage === s.id)) ? 'secondary' : 'ghost'}
+              className={`w-full justify-start mb-1 ${collapsed ? 'px-2' : ''} ${
+                item.highlight 
+                  ? 'bg-orange-500 text-white hover:bg-orange-600 font-semibold'
+                  : currentPage === item.id || (item.submenu && item.submenu.some(s => currentPage === s.id))
+                    ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              onClick={() => {
+                if (item.submenu && !collapsed) {
+                  toggleSubmenu(item.id)
+                } else {
+                  setCurrentPage(item.id)
+                }
+              }}
+            >
+              <item.icon className={`h-5 w-5 ${collapsed ? '' : 'mr-3'}`} />
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">{item.label}</span>
+                  {item.submenu && (
+                    <ChevronDown className={`h-4 w-4 transition-transform ${expandedMenus[item.id] ? 'rotate-180' : ''}`} />
+                  )}
+                </>
+              )}
+            </Button>
+            {/* Submenu */}
+            {!collapsed && item.submenu && expandedMenus[item.id] && (
+              <div className="ml-4 pl-4 border-l border-slate-700 mb-2">
+                {item.submenu.map((subItem) => (
+                  <Button
+                    key={subItem.id}
+                    variant={currentPage === subItem.id ? 'secondary' : 'ghost'}
+                    className={`w-full justify-start mb-1 text-sm ${
+                      currentPage === subItem.id 
+                        ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                    onClick={() => setCurrentPage(subItem.id)}
+                  >
+                    {subItem.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
       </nav>
       

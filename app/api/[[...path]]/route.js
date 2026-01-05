@@ -2027,7 +2027,7 @@ async function handleCreateBoard(body) {
   return NextResponse.json(data)
 }
 
-async function handleCreateTask(body) {
+async function handleCreateBoardTask(body) {
   const { board_id, column_id, title, description, priority, assignee_id, created_by_id, due_date, ticket_id } = body
   
   if (!board_id || !column_id || !title || !created_by_id) {
@@ -2067,7 +2067,7 @@ async function handleCreateTask(body) {
   return NextResponse.json(data)
 }
 
-async function handleUpdateTask(id, body) {
+async function handleUpdateBoardTask(id, body) {
   const updateData = { ...body, updated_at: new Date().toISOString() }
   
   if (body.completed && !body.completed_at) {
@@ -2083,7 +2083,7 @@ async function handleUpdateTask(id, body) {
   return NextResponse.json({ success: true })
 }
 
-async function handleMoveTask(body) {
+async function handleMoveBoardTask(body) {
   const { task_id, column_id, position } = body
   
   if (!task_id || !column_id || position === undefined) {
@@ -2099,7 +2099,7 @@ async function handleMoveTask(body) {
   return NextResponse.json({ success: true })
 }
 
-async function handleDeleteTask(id) {
+async function handleDeleteBoardTask(id) {
   const { error } = await supabaseAdmin
     .from('tasks')
     .delete()

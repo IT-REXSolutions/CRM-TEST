@@ -6664,7 +6664,7 @@ async function handleN8nTicketCreated(body) {
         status: 'new',
         organization_id: organization_id || null,
         contact_id: contact_id || null,
-        source: source || 'n8n',
+        source: source || 'web',
         created_by_id: creatorId,
       }])
       .select()

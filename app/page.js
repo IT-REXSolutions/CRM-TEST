@@ -4894,6 +4894,93 @@ function SettingsPage() {
                   </div>
                 </CardContent>
               </Card>
+              
+              {/* Microsoft 365 OAuth Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-100 rounded-lg">
+                        <Cloud className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">Microsoft 365 OAuth</CardTitle>
+                        <CardDescription>OAuth-Login für Kunden und E-Mail-Integration</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.m365_oauth_enabled === true || settings.m365_oauth_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('m365_oauth_enabled', v)
+                        saveSetting('m365_oauth_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Application (Client) ID</Label>
+                    <Input
+                      value={settings.m365_client_id || ''}
+                      onChange={(e) => updateSetting('m365_client_id', e.target.value)}
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client Secret</Label>
+                    <div className="relative">
+                      <Input
+                        type={showPassword.m365 ? 'text' : 'password'}
+                        value={settings.m365_client_secret || ''}
+                        onChange={(e) => updateSetting('m365_client_secret', e.target.value)}
+                        placeholder="Client Secret..."
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(p => ({ ...p, m365: !p.m365 }))}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        {showPassword.m365 ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Tenant ID (optional)</Label>
+                    <Input
+                      value={settings.m365_tenant_id || ''}
+                      onChange={(e) => updateSetting('m365_tenant_id', e.target.value)}
+                      placeholder="common (für Multi-Tenant)"
+                    />
+                    <p className="text-xs text-slate-500">Leer lassen oder "common" für Multi-Tenant Apps</p>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-lg">
+                    <h4 className="font-medium text-sm mb-2">Redirect URIs für Azure App:</h4>
+                    <code className="text-xs bg-white p-1 rounded block mb-1">{process.env.NEXT_PUBLIC_BASE_URL}/api/auth/m365/callback</code>
+                    <code className="text-xs bg-white p-1 rounded block">{process.env.NEXT_PUBLIC_BASE_URL}/api/m365/email/callback</code>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button 
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const { url } = await api.fetch('/m365/email/connect', {
+                            method: 'POST',
+                            body: JSON.stringify({ organization_id: null, user_id: null })
+                          })
+                          if (url) window.location.href = url
+                        } catch { toast.error('Verbindung fehlgeschlagen') }
+                      }}
+                    >
+                      <Mail className="h-4 w-4 mr-2" />
+                      E-Mail-Konto verbinden
+                    </Button>
+                    <Button onClick={() => saveAllSettings('m365')} size="sm">
+                      <Save className="h-4 w-4 mr-2" />
+                      Speichern
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           )}
           

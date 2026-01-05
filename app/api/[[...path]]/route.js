@@ -1390,10 +1390,19 @@ async function handleGetSettings(category) {
 }
 
 async function handleUpdateSetting(body) {
-  const { key, value, userId } = body
+  const { key, value, userId, category } = body
   
   if (!key) {
     return NextResponse.json({ error: 'key ist erforderlich' }, { status: 400 })
+  }
+  
+  // Determine category from key prefix if not provided
+  let settingCategory = category || 'general'
+  if (!category) {
+    if (key.startsWith('smtp_') || key.startsWith('imap_') || key.includes('email')) settingCategory = 'email'
+    else if (key.includes('openai') || key.includes('placetel') || key.includes('lexoffice')) settingCategory = 'integrations'
+    else if (key.includes('ticket')) settingCategory = 'tickets'
+    else if (key.includes('backup') || key.includes('log_')) settingCategory = 'audit'
   }
   
   const { data, error } = await supabaseAdmin
@@ -1401,6 +1410,7 @@ async function handleUpdateSetting(body) {
     .upsert({
       key,
       value: typeof value === 'string' ? value : JSON.stringify(value),
+      category: settingCategory,
       updated_at: new Date().toISOString(),
       updated_by_id: userId || null,
     }, { onConflict: 'key' })

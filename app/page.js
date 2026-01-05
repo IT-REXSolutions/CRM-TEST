@@ -10,7 +10,11 @@ import {
   Trash2, LogOut, LogIn, Play, Pause, StopCircle,
   FileText, Download, BarChart3, PieChart, Monitor,
   Laptop, Server, Printer, Phone, Box, ChevronDown,
-  ExternalLink, RefreshCw
+  ExternalLink, RefreshCw, Save, Key, Globe, Mail,
+  Shield, Database, Zap, ToggleLeft, ToggleRight,
+  AlertTriangle, Check, X, Eye, EyeOff, Copy,
+  Webhook, Cloud, CreditCard, PhoneCall, HelpCircle,
+  History, Archive, Repeat
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

@@ -3252,6 +3252,1157 @@ async function handleTestConnection(body) {
   }
 }
 
+// =============================================
+// A) TICKET KANBAN VIEWS HANDLERS
+// =============================================
+
+async function handleGetTicketKanbanViews(params) {
+  const { user_id } = params
+  
+  let query = supabaseAdmin
+    .from('ticket_kanban_views')
+    .select('*')
+    .order('name')
+  
+  // Filter by access (public or owned by user)
+  if (user_id) {
+    query = query.or(`is_public.eq.true,owner_id.eq.${user_id}`)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateTicketKanbanView(body) {
+  const { name, description, filters, columns, is_public, owner_id, shared_with_roles, card_fields, sort_by, sort_order } = body
+  
+  if (!name) {
+    return NextResponse.json({ error: 'name ist erforderlich' }, { status: 400 })
+  }
+  
+  const viewData = {
+    id: uuidv4(),
+    name,
+    description: description || null,
+    filters: filters || {},
+    columns: columns || null,
+    is_public: is_public || false,
+    owner_id: owner_id || null,
+    shared_with_roles: shared_with_roles || [],
+    card_fields: card_fields || null,
+    sort_by: sort_by || 'created_at',
+    sort_order: sort_order || 'desc',
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_kanban_views')
+    .insert([viewData])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleGetTicketKanbanView(id) {
+  const { data, error } = await supabaseAdmin
+    .from('ticket_kanban_views')
+    .select('*')
+    .eq('id', id)
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateTicketKanbanView(id, body) {
+  const { data, error } = await supabaseAdmin
+    .from('ticket_kanban_views')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteTicketKanbanView(id) {
+  const { error } = await supabaseAdmin
+    .from('ticket_kanban_views')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleGetTicketKanbanData(params) {
+  const { view_id, status, priority, organization_id, assignee_id, tag_id, category } = params
+  
+  // Get view configuration if provided
+  let viewConfig = null
+  if (view_id) {
+    const { data } = await supabaseAdmin
+      .from('ticket_kanban_views')
+      .select('*')
+      .eq('id', view_id)
+      .single()
+    viewConfig = data
+  }
+  
+  // Default columns
+  const columns = viewConfig?.columns || [
+    { id: 'open', name: 'Offen', status: 'open' },
+    { id: 'pending', name: 'Wartend', status: 'pending' },
+    { id: 'in_progress', name: 'In Bearbeitung', status: 'in_progress' },
+    { id: 'resolved', name: 'Gelöst', status: 'resolved' },
+    { id: 'closed', name: 'Geschlossen', status: 'closed' },
+  ]
+  
+  // Build query with filters
+  let query = supabaseAdmin
+    .from('tickets')
+    .select(`
+      id, ticket_number, subject, description, status, priority, category, source,
+      created_at, updated_at, sla_response_due, sla_resolution_due, sla_response_met,
+      organization_id, assignee_id,
+      organizations (id, name),
+      assignee:users!tickets_assignee_id_fkey (id, first_name, last_name)
+    `)
+    .order(viewConfig?.sort_by || 'created_at', { ascending: viewConfig?.sort_order === 'asc' })
+  
+  // Apply filters from view or params
+  const filters = viewConfig?.filters || {}
+  
+  if (status || filters.status) {
+    const statusFilter = status || filters.status
+    if (Array.isArray(statusFilter)) {
+      query = query.in('status', statusFilter)
+    } else {
+      query = query.eq('status', statusFilter)
+    }
+  }
+  
+  if (priority || filters.priority) {
+    const priorityFilter = priority || filters.priority
+    if (Array.isArray(priorityFilter)) {
+      query = query.in('priority', priorityFilter)
+    } else {
+      query = query.eq('priority', priorityFilter)
+    }
+  }
+  
+  if (organization_id || filters.organization_id) {
+    query = query.eq('organization_id', organization_id || filters.organization_id)
+  }
+  
+  if (assignee_id || filters.assignee_id) {
+    query = query.eq('assignee_id', assignee_id || filters.assignee_id)
+  }
+  
+  if (category || filters.category) {
+    query = query.eq('category', category || filters.category)
+  }
+  
+  const { data: tickets, error } = await query
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Group tickets by status into columns
+  const kanbanData = columns.map(col => ({
+    ...col,
+    tickets: (tickets || []).filter(t => t.status === col.status),
+  }))
+  
+  return NextResponse.json({
+    view: viewConfig,
+    columns: kanbanData,
+    totalTickets: tickets?.length || 0,
+  })
+}
+
+async function handleMoveTicketStatus(body) {
+  const { ticket_id, new_status, user_id, old_status } = body
+  
+  if (!ticket_id || !new_status) {
+    return NextResponse.json({ error: 'ticket_id und new_status sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get current ticket
+  const { data: ticket } = await supabaseAdmin
+    .from('tickets')
+    .select('status')
+    .eq('id', ticket_id)
+    .single()
+  
+  const previousStatus = old_status || ticket?.status
+  
+  // Update ticket status
+  const { data, error } = await supabaseAdmin
+    .from('tickets')
+    .update({ 
+      status: new_status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', ticket_id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Create audit log entry
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id,
+    user_id: user_id || null,
+    action: 'status_changed',
+    field_name: 'status',
+    old_value: previousStatus,
+    new_value: new_status,
+    metadata: { source: 'kanban_drag' },
+  }])
+  
+  // Trigger automation
+  await handleRunAutomations({
+    trigger_type: 'status_changed',
+    trigger_data: { ticket_id, old_status: previousStatus, new_status },
+  })
+  
+  // Trigger webhooks
+  await triggerWebhooks('ticket.updated', { ticket: data, changes: { status: { from: previousStatus, to: new_status } } })
+  
+  return NextResponse.json(data)
+}
+
+// =============================================
+// B) TICKET CLOSE FLOW HANDLERS
+// =============================================
+
+async function handleGetTicketTodos(ticketId) {
+  const { data, error } = await supabaseAdmin
+    .from('ticket_todos')
+    .select('*, completed_by:users!ticket_todos_completed_by_id_fkey (first_name, last_name)')
+    .eq('ticket_id', ticketId)
+    .order('position')
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateTicketTodo(ticketId, body) {
+  const { title, description, position, created_by_id } = body
+  
+  if (!title) {
+    return NextResponse.json({ error: 'title ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_todos')
+    .insert([{
+      id: uuidv4(),
+      ticket_id: ticketId,
+      title,
+      description: description || null,
+      position: position || 0,
+      created_by_id: created_by_id || null,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateTicketTodo(id, body) {
+  const updateData = { ...body, updated_at: new Date().toISOString() }
+  
+  // Handle completion
+  if (body.is_completed === true && !body.completed_at) {
+    updateData.completed_at = new Date().toISOString()
+  } else if (body.is_completed === false) {
+    updateData.completed_at = null
+    updateData.completed_by_id = null
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_todos')
+    .update(updateData)
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteTicketTodo(id) {
+  const { error } = await supabaseAdmin
+    .from('ticket_todos')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleCloseTicket(ticketId, body) {
+  const { 
+    user_id, 
+    time_spent_minutes, 
+    is_billable,
+    hourly_rate,
+    internal_summary, 
+    customer_summary, 
+    resolution_category,
+    completed_todo_ids,
+    create_time_entry,
+    send_customer_email,
+  } = body
+  
+  // Get close flow config
+  const closeConfig = await getSetting('close_flow_config', {
+    time_required: true,
+    worklog_required: false,
+    todos_required: false,
+    customer_summary_required: false,
+    resolution_category_required: false,
+  })
+  
+  // Validate required fields
+  if (closeConfig.time_required && !time_spent_minutes && time_spent_minutes !== 0) {
+    return NextResponse.json({ error: 'Zeit ist erforderlich' }, { status: 400 })
+  }
+  if (closeConfig.customer_summary_required && !customer_summary) {
+    return NextResponse.json({ error: 'Kundenzusammenfassung ist erforderlich' }, { status: 400 })
+  }
+  if (closeConfig.resolution_category_required && !resolution_category) {
+    return NextResponse.json({ error: 'Lösungskategorie ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get ticket
+  const { data: ticket } = await supabaseAdmin
+    .from('tickets')
+    .select('*, organizations(name)')
+    .eq('id', ticketId)
+    .single()
+  
+  if (!ticket) {
+    return NextResponse.json({ error: 'Ticket nicht gefunden' }, { status: 404 })
+  }
+  
+  // Get completed todos
+  let completedTodos = []
+  if (completed_todo_ids && completed_todo_ids.length > 0) {
+    const { data: todos } = await supabaseAdmin
+      .from('ticket_todos')
+      .select('title, description')
+      .in('id', completed_todo_ids)
+    completedTodos = todos || []
+  }
+  
+  // Create worklog
+  const worklogId = uuidv4()
+  await supabaseAdmin.from('ticket_worklogs').insert([{
+    id: worklogId,
+    ticket_id: ticketId,
+    time_spent_minutes: time_spent_minutes || 0,
+    is_billable: is_billable !== false,
+    hourly_rate: hourly_rate || 85,
+    internal_summary: internal_summary || null,
+    customer_summary: customer_summary || null,
+    resolution_category: resolution_category || null,
+    completed_todos: completedTodos,
+    created_by_id: user_id,
+  }])
+  
+  // Create time entry if requested
+  if (create_time_entry && time_spent_minutes > 0) {
+    await supabaseAdmin.from('time_entries').insert([{
+      id: uuidv4(),
+      user_id,
+      ticket_id: ticketId,
+      organization_id: ticket.organization_id,
+      description: `Ticket #${ticket.ticket_number} - ${resolution_category || 'Geschlossen'}`,
+      duration_minutes: time_spent_minutes,
+      is_billable: is_billable !== false,
+      hourly_rate: hourly_rate || 85,
+      started_at: new Date().toISOString(),
+    }])
+  }
+  
+  // Update ticket
+  const { data: updatedTicket, error } = await supabaseAdmin
+    .from('tickets')
+    .update({
+      status: 'closed',
+      resolution_category,
+      resolution_summary: customer_summary || internal_summary,
+      closed_at: new Date().toISOString(),
+      closed_by_id: user_id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', ticketId)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Mark all todos as completed
+  if (completed_todo_ids && completed_todo_ids.length > 0) {
+    await supabaseAdmin
+      .from('ticket_todos')
+      .update({ is_completed: true, completed_at: new Date().toISOString(), completed_by_id: user_id })
+      .in('id', completed_todo_ids)
+  }
+  
+  // Add history entry
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: ticketId,
+    user_id,
+    action: 'closed',
+    field_name: 'status',
+    old_value: ticket.status,
+    new_value: 'closed',
+    metadata: { 
+      resolution_category, 
+      time_spent_minutes, 
+      worklog_id: worklogId,
+    },
+  }])
+  
+  // Add customer-facing comment if summary provided
+  if (customer_summary) {
+    await supabaseAdmin.from('ticket_comments').insert([{
+      id: uuidv4(),
+      ticket_id: ticketId,
+      user_id,
+      content: `**Lösung:**\n\n${customer_summary}`,
+      is_internal: false,
+    }])
+  }
+  
+  // Trigger webhooks
+  await triggerWebhooks('ticket.closed', { ticket: updatedTicket, worklog: { time_spent_minutes, resolution_category } })
+  
+  return NextResponse.json({
+    ticket: updatedTicket,
+    worklog_id: worklogId,
+  })
+}
+
+async function handleGetCloseFlowConfig() {
+  const config = await getSetting('close_flow_config', {
+    time_required: true,
+    worklog_required: false,
+    todos_required: false,
+    customer_summary_required: false,
+    resolution_category_required: false,
+    internal_note_required: false,
+  })
+  return NextResponse.json(config)
+}
+
+async function handleGetResolutionCategories() {
+  const categories = await getSetting('resolution_categories', [
+    'Problem gelöst',
+    'Workaround bereitgestellt',
+    'Kein Problem gefunden',
+    'Duplikat',
+    'Abgebrochen durch Kunde',
+    'Nicht reproduzierbar',
+    'Feature-Anfrage',
+    'Konfigurationsänderung',
+    'Sonstiges',
+  ])
+  return NextResponse.json(categories)
+}
+
+// =============================================
+// C) TEMPLATES HANDLERS
+// =============================================
+
+async function handleGetTemplates(params) {
+  const { type, category, organization_id, is_active } = params
+  
+  let query = supabaseAdmin
+    .from('templates')
+    .select('*, created_by:users!templates_created_by_id_fkey (first_name, last_name)')
+    .order('name')
+  
+  if (type) query = query.eq('type', type)
+  if (category) query = query.eq('category', category)
+  if (organization_id) query = query.or(`organization_id.eq.${organization_id},organization_id.is.null`)
+  if (is_active !== undefined) query = query.eq('is_active', is_active === 'true')
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateTemplate(body) {
+  const { name, type, subject, content, variables, category, organization_id, tags, created_by_id, editable_by_roles } = body
+  
+  if (!name || !type || !content) {
+    return NextResponse.json({ error: 'name, type und content sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('templates')
+    .insert([{
+      id: uuidv4(),
+      name,
+      type,
+      subject: subject || null,
+      content,
+      variables: variables || [],
+      category: category || null,
+      organization_id: organization_id || null,
+      tags: tags || [],
+      created_by_id: created_by_id || null,
+      editable_by_roles: editable_by_roles || ['admin'],
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleGetTemplate(id) {
+  const { data, error } = await supabaseAdmin
+    .from('templates')
+    .select('*')
+    .eq('id', id)
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateTemplate(id, body) {
+  // Get current template for versioning
+  const { data: current } = await supabaseAdmin
+    .from('templates')
+    .select('version')
+    .eq('id', id)
+    .single()
+  
+  const { data, error } = await supabaseAdmin
+    .from('templates')
+    .update({
+      ...body,
+      version: (current?.version || 0) + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteTemplate(id) {
+  const { error } = await supabaseAdmin
+    .from('templates')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleRenderTemplate(body) {
+  const { template_id, template_content, variables } = body
+  
+  let content = template_content
+  let subject = null
+  
+  // Get template if ID provided
+  if (template_id) {
+    const { data: template } = await supabaseAdmin
+      .from('templates')
+      .select('content, subject')
+      .eq('id', template_id)
+      .single()
+    
+    if (template) {
+      content = template.content
+      subject = template.subject
+    }
+  }
+  
+  if (!content) {
+    return NextResponse.json({ error: 'Template-Inhalt nicht gefunden' }, { status: 400 })
+  }
+  
+  // Replace variables
+  let rendered = content
+  let renderedSubject = subject
+  
+  for (const [key, value] of Object.entries(variables || {})) {
+    const pattern = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g')
+    rendered = rendered.replace(pattern, value || '')
+    if (renderedSubject) {
+      renderedSubject = renderedSubject.replace(pattern, value || '')
+    }
+  }
+  
+  return NextResponse.json({
+    content: rendered,
+    subject: renderedSubject,
+  })
+}
+
+async function handleLogTemplateUsage(body) {
+  const { template_id, used_by_id, used_in_ticket_id, context } = body
+  
+  await supabaseAdmin.from('template_usage_log').insert([{
+    id: uuidv4(),
+    template_id,
+    used_by_id: used_by_id || null,
+    used_in_ticket_id: used_in_ticket_id || null,
+    context: context || null,
+  }])
+  
+  return NextResponse.json({ success: true })
+}
+
+// =============================================
+// D) PUBLIC API HANDLERS
+// =============================================
+
+import crypto from 'crypto'
+
+function generateApiKey() {
+  const key = 'sk_' + crypto.randomBytes(32).toString('hex')
+  const hash = crypto.createHash('sha256').update(key).digest('hex')
+  const prefix = key.substring(0, 10)
+  return { key, hash, prefix }
+}
+
+async function handleGetApiKeys(params) {
+  const { organization_id } = params
+  
+  let query = supabaseAdmin
+    .from('api_keys')
+    .select('id, name, description, key_prefix, scopes, rate_limit_per_minute, rate_limit_per_day, is_active, expires_at, last_used_at, created_at, organization_id')
+    .order('created_at', { ascending: false })
+  
+  if (organization_id) {
+    query = query.eq('organization_id', organization_id)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateApiKey(body) {
+  const { name, description, scopes, rate_limit_per_minute, rate_limit_per_day, allowed_ips, expires_at, organization_id, created_by_id } = body
+  
+  if (!name) {
+    return NextResponse.json({ error: 'name ist erforderlich' }, { status: 400 })
+  }
+  
+  const { key, hash, prefix } = generateApiKey()
+  
+  const { data, error } = await supabaseAdmin
+    .from('api_keys')
+    .insert([{
+      id: uuidv4(),
+      name,
+      description: description || null,
+      key_hash: hash,
+      key_prefix: prefix,
+      scopes: scopes || [],
+      rate_limit_per_minute: rate_limit_per_minute || 60,
+      rate_limit_per_day: rate_limit_per_day || 10000,
+      allowed_ips: allowed_ips || null,
+      expires_at: expires_at || null,
+      organization_id: organization_id || null,
+      created_by_id: created_by_id || null,
+    }])
+    .select('id, name, key_prefix, scopes, created_at')
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Return the full key only on creation (never stored)
+  return NextResponse.json({
+    ...data,
+    api_key: key, // This is shown only once!
+  })
+}
+
+async function handleUpdateApiKey(id, body) {
+  const { data, error } = await supabaseAdmin
+    .from('api_keys')
+    .update({
+      ...body,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('id, name, description, key_prefix, scopes, is_active, expires_at')
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteApiKey(id) {
+  const { error } = await supabaseAdmin
+    .from('api_keys')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleRegenerateApiKey(body) {
+  const { id } = body
+  
+  if (!id) {
+    return NextResponse.json({ error: 'id ist erforderlich' }, { status: 400 })
+  }
+  
+  const { key, hash, prefix } = generateApiKey()
+  
+  const { data, error } = await supabaseAdmin
+    .from('api_keys')
+    .update({
+      key_hash: hash,
+      key_prefix: prefix,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select('id, name, key_prefix')
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  return NextResponse.json({
+    ...data,
+    api_key: key, // New key shown only once
+  })
+}
+
+async function handleGetApiScopes() {
+  const scopes = await getSetting('api_scopes', [
+    { id: 'tickets:read', name: 'Tickets lesen', description: 'Tickets abrufen' },
+    { id: 'tickets:write', name: 'Tickets schreiben', description: 'Tickets bearbeiten' },
+    { id: 'orgs:read', name: 'Organisationen lesen', description: 'Organisationen abrufen' },
+    { id: 'time:read', name: 'Zeiteinträge lesen', description: 'Zeiteinträge abrufen' },
+    { id: 'time:write', name: 'Zeiteinträge schreiben', description: 'Zeiteinträge bearbeiten' },
+  ])
+  return NextResponse.json(scopes)
+}
+
+// Webhook Handlers
+async function handleGetWebhookSubscriptions(params) {
+  const { api_key_id } = params
+  
+  let query = supabaseAdmin
+    .from('webhook_subscriptions')
+    .select('*')
+    .order('created_at', { ascending: false })
+  
+  if (api_key_id) {
+    query = query.eq('api_key_id', api_key_id)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateWebhookSubscription(body) {
+  const { name, url, secret, events, filters, max_retries, api_key_id, created_by_id } = body
+  
+  if (!name || !url || !events || events.length === 0) {
+    return NextResponse.json({ error: 'name, url und events sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('webhook_subscriptions')
+    .insert([{
+      id: uuidv4(),
+      name,
+      url,
+      secret: secret || crypto.randomBytes(32).toString('hex'),
+      events,
+      filters: filters || {},
+      max_retries: max_retries || 3,
+      api_key_id: api_key_id || null,
+      created_by_id: created_by_id || null,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateWebhookSubscription(id, body) {
+  const { data, error } = await supabaseAdmin
+    .from('webhook_subscriptions')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteWebhookSubscription(id) {
+  const { error } = await supabaseAdmin
+    .from('webhook_subscriptions')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleTestWebhook(id) {
+  const { data: subscription } = await supabaseAdmin
+    .from('webhook_subscriptions')
+    .select('*')
+    .eq('id', id)
+    .single()
+  
+  if (!subscription) {
+    return NextResponse.json({ error: 'Webhook nicht gefunden' }, { status: 404 })
+  }
+  
+  const testPayload = {
+    event: 'test',
+    timestamp: new Date().toISOString(),
+    data: { message: 'Dies ist ein Test-Webhook' },
+  }
+  
+  try {
+    const response = await fetch(subscription.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Secret': subscription.secret || '',
+        'X-Webhook-Event': 'test',
+      },
+      body: JSON.stringify(testPayload),
+    })
+    
+    return NextResponse.json({
+      success: response.ok,
+      status: response.status,
+      message: response.ok ? 'Webhook erfolgreich zugestellt' : 'Webhook-Zustellung fehlgeschlagen',
+    })
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      message: `Fehler: ${error.message}`,
+    })
+  }
+}
+
+// Trigger webhooks helper function
+async function triggerWebhooks(eventType, payload) {
+  try {
+    const { data: subscriptions } = await supabaseAdmin
+      .from('webhook_subscriptions')
+      .select('*')
+      .eq('is_active', true)
+      .contains('events', [eventType])
+    
+    if (!subscriptions || subscriptions.length === 0) return
+    
+    for (const subscription of subscriptions) {
+      // Check filters
+      if (subscription.filters && Object.keys(subscription.filters).length > 0) {
+        let match = true
+        for (const [key, value] of Object.entries(subscription.filters)) {
+          if (payload.ticket?.[key] !== value && payload[key] !== value) {
+            match = false
+            break
+          }
+        }
+        if (!match) continue
+      }
+      
+      // Create delivery log
+      const deliveryId = uuidv4()
+      await supabaseAdmin.from('webhook_delivery_log').insert([{
+        id: deliveryId,
+        subscription_id: subscription.id,
+        event_type: eventType,
+        payload,
+        status: 'pending',
+      }])
+      
+      // Send webhook (fire and forget for now)
+      fetch(subscription.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': subscription.secret || '',
+          'X-Webhook-Event': eventType,
+          'X-Webhook-Delivery': deliveryId,
+        },
+        body: JSON.stringify({
+          event: eventType,
+          timestamp: new Date().toISOString(),
+          data: payload,
+        }),
+      }).then(async (response) => {
+        await supabaseAdmin
+          .from('webhook_delivery_log')
+          .update({
+            status: response.ok ? 'success' : 'failed',
+            response_status: response.status,
+            delivered_at: new Date().toISOString(),
+            attempts: 1,
+          })
+          .eq('id', deliveryId)
+        
+        // Update subscription stats
+        await supabaseAdmin
+          .from('webhook_subscriptions')
+          .update({
+            last_triggered_at: new Date().toISOString(),
+            [response.ok ? 'success_count' : 'failure_count']: supabaseAdmin.raw(`${response.ok ? 'success_count' : 'failure_count'} + 1`),
+          })
+          .eq('id', subscription.id)
+      }).catch(async (error) => {
+        await supabaseAdmin
+          .from('webhook_delivery_log')
+          .update({
+            status: 'failed',
+            last_error: error.message,
+            attempts: 1,
+          })
+          .eq('id', deliveryId)
+      })
+    }
+  } catch (error) {
+    console.error('Webhook trigger error:', error)
+  }
+}
+
+async function handleGetApiAuditLogs(params) {
+  const { api_key_id, limit, offset } = params
+  
+  let query = supabaseAdmin
+    .from('api_audit_logs')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(parseInt(limit) || 100)
+  
+  if (api_key_id) {
+    query = query.eq('api_key_id', api_key_id)
+  }
+  
+  if (offset) {
+    query = query.range(parseInt(offset), parseInt(offset) + (parseInt(limit) || 100) - 1)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleGetOpenAPISpec() {
+  const spec = {
+    openapi: '3.0.0',
+    info: {
+      title: 'ServiceDesk Pro API',
+      version: '1.0.0',
+      description: 'Public API for ServiceDesk Pro - Helpdesk & Ticket Management System',
+    },
+    servers: [
+      { url: '/api', description: 'API Server' },
+    ],
+    security: [
+      { apiKey: [] },
+    ],
+    components: {
+      securitySchemes: {
+        apiKey: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key',
+        },
+      },
+      schemas: {
+        Ticket: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            ticket_number: { type: 'integer' },
+            subject: { type: 'string' },
+            description: { type: 'string' },
+            status: { type: 'string', enum: ['open', 'pending', 'in_progress', 'resolved', 'closed'] },
+            priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+            organization_id: { type: 'string', format: 'uuid' },
+            assignee_id: { type: 'string', format: 'uuid' },
+            created_at: { type: 'string', format: 'date-time' },
+          },
+        },
+        TimeEntry: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            ticket_id: { type: 'string', format: 'uuid' },
+            description: { type: 'string' },
+            duration_minutes: { type: 'integer' },
+            is_billable: { type: 'boolean' },
+          },
+        },
+        Organization: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            name: { type: 'string' },
+            email: { type: 'string' },
+          },
+        },
+      },
+    },
+    paths: {
+      '/tickets': {
+        get: {
+          summary: 'List tickets',
+          tags: ['Tickets'],
+          parameters: [
+            { name: 'status', in: 'query', schema: { type: 'string' } },
+            { name: 'priority', in: 'query', schema: { type: 'string' } },
+            { name: 'organization_id', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'List of tickets' },
+          },
+        },
+        post: {
+          summary: 'Create ticket',
+          tags: ['Tickets'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/Ticket' },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Created ticket' },
+          },
+        },
+      },
+      '/tickets/{id}': {
+        get: {
+          summary: 'Get ticket by ID',
+          tags: ['Tickets'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Ticket details' },
+          },
+        },
+        put: {
+          summary: 'Update ticket',
+          tags: ['Tickets'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Updated ticket' },
+          },
+        },
+      },
+      '/tickets/{id}/close': {
+        post: {
+          summary: 'Close ticket with worklog',
+          tags: ['Tickets'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    time_spent_minutes: { type: 'integer' },
+                    resolution_category: { type: 'string' },
+                    customer_summary: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Ticket closed' },
+          },
+        },
+      },
+      '/organizations': {
+        get: {
+          summary: 'List organizations',
+          tags: ['Organizations'],
+          responses: {
+            '200': { description: 'List of organizations' },
+          },
+        },
+      },
+      '/time-entries': {
+        get: {
+          summary: 'List time entries',
+          tags: ['Time Tracking'],
+          responses: {
+            '200': { description: 'List of time entries' },
+          },
+        },
+        post: {
+          summary: 'Create time entry',
+          tags: ['Time Tracking'],
+          responses: {
+            '200': { description: 'Created time entry' },
+          },
+        },
+      },
+    },
+  }
+  
+  return NextResponse.json(spec)
+}
+
 // ============================================
 // MAIN ROUTE HANDLER
 // ============================================

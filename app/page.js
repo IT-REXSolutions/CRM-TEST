@@ -4962,6 +4962,19 @@ function SettingsPage() {
                     <code className="text-xs bg-white p-1 rounded block mb-1">{process.env.NEXT_PUBLIC_BASE_URL}/api/auth/m365/callback</code>
                     <code className="text-xs bg-white p-1 rounded block">{process.env.NEXT_PUBLIC_BASE_URL}/api/m365/email/callback</code>
                   </div>
+                  <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                    <h4 className="font-medium text-sm text-amber-800 mb-2">📋 Azure App-Registrierung (Anleitung):</h4>
+                    <ol className="text-xs text-amber-700 space-y-1 list-decimal list-inside">
+                      <li>Gehen Sie zu <a href="https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" className="underline">Azure Portal → App-Registrierungen</a></li>
+                      <li>Klicken Sie auf "Neue Registrierung"</li>
+                      <li>Name: "IT REX ServiceDesk" (o.ä.)</li>
+                      <li>Unterstützte Kontotypen: "Konten in einem beliebigen Organisationsverzeichnis"</li>
+                      <li>Redirect URI: Kopieren Sie die obigen URIs</li>
+                      <li>Nach Erstellung: Kopieren Sie die "Anwendungs-ID (Client)" hier ein</li>
+                      <li>Unter "Zertifikate & Geheimnisse" → Neuer geheimer Clientschlüssel erstellen</li>
+                      <li>API-Berechtigungen hinzufügen: User.Read, Mail.Read, Mail.Send</li>
+                    </ol>
+                  </div>
                   <div className="flex justify-end gap-2 pt-2">
                     <Button 
                       variant="outline"

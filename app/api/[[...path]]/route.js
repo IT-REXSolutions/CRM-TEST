@@ -10676,26 +10676,137 @@ async function handleRoute(request, { params }) {
     
     // Knowledge Base
     if (route === '/kb-articles' && method === 'GET') {
-      const { data, error } = await supabaseAdmin
+      const user = await getUserFromRequest(request)
+      let query = supabaseAdmin
         .from('kb_articles')
-        .select('*')
+        .select('*, created_by:users!created_by_id(first_name, last_name), organization:organizations(name)')
         .order('created_at', { ascending: false })
+      
+      // Filter by organization visibility for customers
+      if (user?.user_type === 'customer') {
+        query = query.or(`is_internal.eq.false,organization_id.eq.${user.organization_id},organization_id.is.null`)
+      }
+      
+      const { data, error } = await query
       if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
       return handleCORS(NextResponse.json(data || []))
     }
     if (route === '/kb-articles' && method === 'POST') {
       const body = await request.json()
-      const { title, content, category, tags, ticket_type_code, is_internal, created_by_id } = body
+      const { title, content, category, tags, ticket_type_code, is_internal, created_by_id, organization_id, visibility } = body
       if (!title || !content) {
         return handleCORS(NextResponse.json({ error: 'title und content sind erforderlich' }, { status: 400 }))
       }
       const { data, error } = await supabaseAdmin
         .from('kb_articles')
-        .insert([{ id: uuidv4(), title, content, category, tags, ticket_type_code, is_internal, created_by_id }])
-        .select()
+        .insert([{ 
+          id: uuidv4(), 
+          title, 
+          content, 
+          category, 
+          tags, 
+          ticket_type_code, 
+          is_internal: is_internal || false, 
+          created_by_id,
+          organization_id: organization_id || null,
+          visibility: visibility || 'all',
+          version: 1
+        }])
+        .select('*, created_by:users!created_by_id(first_name, last_name)')
         .single()
       if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
       return handleCORS(NextResponse.json(data))
+    }
+    if (route.match(/^\/kb-articles\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      const { data, error } = await supabaseAdmin
+        .from('kb_articles')
+        .select('*, created_by:users!created_by_id(first_name, last_name), organization:organizations(name)')
+        .eq('id', id)
+        .single()
+      
+      if (error || !data) return handleCORS(NextResponse.json({ error: 'Artikel nicht gefunden' }, { status: 404 }))
+      
+      // Increment view count
+      await supabaseAdmin
+        .from('kb_articles')
+        .update({ views: (data.views || 0) + 1 })
+        .eq('id', id)
+      
+      return handleCORS(NextResponse.json(data))
+    }
+    if (route.match(/^\/kb-articles\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      const { title, content, category, tags, is_internal, organization_id, visibility, updated_by_id } = body
+      
+      // Get current article for versioning
+      const { data: currentArticle } = await supabaseAdmin
+        .from('kb_articles')
+        .select('version, title, content')
+        .eq('id', id)
+        .single()
+      
+      // Store version history (simple approach - store in same table with version number)
+      const newVersion = (currentArticle?.version || 1) + 1
+      
+      const updateData = {
+        updated_at: new Date().toISOString(),
+        version: newVersion
+      }
+      
+      if (title !== undefined) updateData.title = title
+      if (content !== undefined) updateData.content = content
+      if (category !== undefined) updateData.category = category
+      if (tags !== undefined) updateData.tags = tags
+      if (is_internal !== undefined) updateData.is_internal = is_internal
+      if (organization_id !== undefined) updateData.organization_id = organization_id
+      if (visibility !== undefined) updateData.visibility = visibility
+      
+      const { data, error } = await supabaseAdmin
+        .from('kb_articles')
+        .update(updateData)
+        .eq('id', id)
+        .select('*, created_by:users!created_by_id(first_name, last_name)')
+        .single()
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      
+      // Audit log
+      await supabaseAdmin.from('ticket_history').insert([{
+        id: uuidv4(),
+        ticket_id: null,
+        change_type: 'kb_article_updated',
+        new_value: JSON.stringify({ article_id: id, version: newVersion }),
+        changed_by_id: updated_by_id,
+        created_at: new Date().toISOString(),
+      }])
+      
+      return handleCORS(NextResponse.json(data))
+    }
+    if (route.match(/^\/kb-articles\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      const userId = searchParams.user_id
+      
+      // Soft delete - set is_archived flag
+      const { error } = await supabaseAdmin
+        .from('kb_articles')
+        .update({ is_archived: true, updated_at: new Date().toISOString() })
+        .eq('id', id)
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      
+      // Audit log
+      await supabaseAdmin.from('ticket_history').insert([{
+        id: uuidv4(),
+        ticket_id: null,
+        change_type: 'kb_article_archived',
+        new_value: JSON.stringify({ article_id: id }),
+        changed_by_id: userId,
+        created_at: new Date().toISOString(),
+      }])
+      
+      return handleCORS(NextResponse.json({ success: true }))
     }
     
     // Communication Templates

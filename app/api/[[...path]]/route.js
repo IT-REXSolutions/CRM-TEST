@@ -103,6 +103,34 @@ async function getOpenAIModel() {
   return await getSetting('openai_model', 'gpt-4o-mini')
 }
 
+// Helper function to get user from request (simplified)
+async function getUserFromRequest(request) {
+  try {
+    // Try to get user from Authorization header or session
+    const authHeader = request.headers.get('authorization')
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7)
+      // In a real app, decode JWT token here
+      // For now, try to find user by API key or return null
+    }
+    
+    // Try to get from X-User-ID header (for testing/internal)
+    const userId = request.headers.get('x-user-id')
+    if (userId) {
+      const { data: user } = await supabaseAdmin
+        .from('users')
+        .select('id, email, user_type, organization_id, role')
+        .eq('id', userId)
+        .single()
+      return user
+    }
+    
+    return null
+  } catch {
+    return null
+  }
+}
+
 // ============================================
 // AI FUNCTIONS - Using Settings
 // ============================================

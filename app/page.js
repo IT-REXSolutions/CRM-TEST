@@ -1048,6 +1048,9 @@ function TicketsPage({ currentUser, onOpenTicket }) {
   const [organizations, setOrganizations] = useState([])
   const [slaProfiles, setSlaProfiles] = useState([])
   const [users, setUsers] = useState([])
+  const [viewMode, setViewMode] = useState('list') // 'list' or 'kanban'
+  const [showCloseDialog, setShowCloseDialog] = useState(false)
+  const [closingTicket, setClosingTicket] = useState(null)
   
   const loadTickets = useCallback(async () => {
     try {
@@ -1088,32 +1091,81 @@ function TicketsPage({ currentUser, onOpenTicket }) {
     }
   }
   
+  const handleCloseTicket = (ticket) => {
+    setClosingTicket(ticket)
+    setShowCloseDialog(true)
+  }
+  
+  const handleCloseSubmit = async (closeData) => {
+    try {
+      await api.closeTicket(closingTicket.id, { ...closeData, user_id: currentUser.id })
+      toast.success('Ticket geschlossen')
+      setShowCloseDialog(false)
+      setClosingTicket(null)
+      loadTickets()
+    } catch (error) {
+      toast.error('Fehler beim Schließen: ' + (error.message || ''))
+    }
+  }
+  
+  const handleMoveTicket = async (ticketId, newStatus, oldStatus) => {
+    try {
+      await api.moveTicketStatus({ ticket_id: ticketId, new_status: newStatus, old_status: oldStatus, user_id: currentUser.id })
+      toast.success('Status aktualisiert')
+      loadTickets()
+    } catch (error) {
+      toast.error('Fehler beim Verschieben')
+    }
+  }
+  
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Select value={filter.status} onValueChange={(v) => setFilter(f => ({ ...f, status: v }))}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Alle Status</SelectItem>
-              {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                <SelectItem key={key} value={key}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filter.priority} onValueChange={(v) => setFilter(f => ({ ...f, priority: v }))}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Priorität" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Alle Prioritäten</SelectItem>
-              {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
-                <SelectItem key={key} value={key}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* View Mode Toggle */}
+          <div className="flex bg-slate-100 rounded-lg p-1">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'list' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              <Ticket className="h-4 w-4 inline mr-1" />
+              Liste
+            </button>
+            <button
+              onClick={() => setViewMode('kanban')}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'kanban' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
+            >
+              <KanbanSquare className="h-4 w-4 inline mr-1" />
+              Kanban
+            </button>
+          </div>
+          
+          {viewMode === 'list' && (
+            <>
+              <Select value={filter.status} onValueChange={(v) => setFilter(f => ({ ...f, status: v }))}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Alle Status</SelectItem>
+                  {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                    <SelectItem key={key} value={key}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={filter.priority} onValueChange={(v) => setFilter(f => ({ ...f, priority: v }))}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Priorität" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Alle Prioritäten</SelectItem>
+                  {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
+                    <SelectItem key={key} value={key}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
           <Button variant="outline" onClick={loadTickets}>
             <RefreshCw className="h-4 w-4 mr-2" />
             Aktualisieren

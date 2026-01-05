@@ -5518,6 +5518,338 @@ async function handleGetOpenAPISpec() {
           },
         },
       },
+      '/users/2fa/enable': {
+        post: {
+          summary: 'Enable 2FA for user',
+          tags: ['Authentication'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    user_id: { type: 'string', format: 'uuid' },
+                  },
+                  required: ['user_id'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: '2FA setup data including secret and backup codes' },
+          },
+        },
+      },
+      '/users/2fa/verify': {
+        post: {
+          summary: 'Verify 2FA token',
+          tags: ['Authentication'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    user_id: { type: 'string', format: 'uuid' },
+                    token: { type: 'string' },
+                  },
+                  required: ['user_id', 'token'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: '2FA verified successfully' },
+          },
+        },
+      },
+      '/users/2fa/disable': {
+        post: {
+          summary: 'Disable 2FA for user',
+          tags: ['Authentication'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    user_id: { type: 'string', format: 'uuid' },
+                    token: { type: 'string' },
+                    backup_code: { type: 'string' },
+                  },
+                  required: ['user_id'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: '2FA disabled' },
+          },
+        },
+      },
+      '/admin/users/disable': {
+        post: {
+          summary: 'Admin: Disable user account',
+          tags: ['Admin'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    admin_id: { type: 'string', format: 'uuid' },
+                    user_id: { type: 'string', format: 'uuid' },
+                    reason: { type: 'string' },
+                  },
+                  required: ['admin_id', 'user_id'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'User disabled' },
+          },
+        },
+      },
+      '/admin/users/enable': {
+        post: {
+          summary: 'Admin: Enable user account',
+          tags: ['Admin'],
+          responses: {
+            '200': { description: 'User enabled' },
+          },
+        },
+      },
+      '/admin/users/reset-password': {
+        post: {
+          summary: 'Admin: Reset user password',
+          tags: ['Admin'],
+          responses: {
+            '200': { description: 'Password reset' },
+          },
+        },
+      },
+      '/tickets/merge': {
+        post: {
+          summary: 'Merge multiple tickets into one',
+          tags: ['Tickets'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    target_ticket_id: { type: 'string', format: 'uuid' },
+                    source_ticket_ids: { type: 'array', items: { type: 'string', format: 'uuid' } },
+                    user_id: { type: 'string', format: 'uuid' },
+                  },
+                  required: ['target_ticket_id', 'source_ticket_ids', 'user_id'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Tickets merged' },
+          },
+        },
+      },
+      '/tickets/split': {
+        post: {
+          summary: 'Split ticket into new tickets',
+          tags: ['Tickets'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ticket_id: { type: 'string', format: 'uuid' },
+                    new_tickets: { type: 'array', items: { type: 'object' } },
+                    user_id: { type: 'string', format: 'uuid' },
+                  },
+                  required: ['ticket_id', 'new_tickets', 'user_id'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Ticket split' },
+          },
+        },
+      },
+      '/tickets/dependencies': {
+        post: {
+          summary: 'Add ticket dependency',
+          tags: ['Tickets'],
+          responses: {
+            '200': { description: 'Dependency added' },
+          },
+        },
+        delete: {
+          summary: 'Remove ticket dependency',
+          tags: ['Tickets'],
+          responses: {
+            '200': { description: 'Dependency removed' },
+          },
+        },
+      },
+      '/task-boards': {
+        get: {
+          summary: 'List task boards',
+          tags: ['Tasks'],
+          responses: {
+            '200': { description: 'List of task boards' },
+          },
+        },
+      },
+      '/standalone-tasks': {
+        get: {
+          summary: 'List standalone tasks',
+          tags: ['Tasks'],
+          responses: {
+            '200': { description: 'List of tasks' },
+          },
+        },
+        post: {
+          summary: 'Create standalone task',
+          tags: ['Tasks'],
+          responses: {
+            '200': { description: 'Task created' },
+          },
+        },
+      },
+      '/onboarding-requests': {
+        get: {
+          summary: 'List onboarding requests',
+          tags: ['Onboarding'],
+          responses: {
+            '200': { description: 'List of onboarding requests' },
+          },
+        },
+        post: {
+          summary: 'Create onboarding request',
+          tags: ['Onboarding'],
+          responses: {
+            '200': { description: 'Onboarding request created' },
+          },
+        },
+      },
+      '/offboarding-requests': {
+        get: {
+          summary: 'List offboarding requests',
+          tags: ['Offboarding'],
+          responses: {
+            '200': { description: 'List of offboarding requests' },
+          },
+        },
+        post: {
+          summary: 'Create offboarding request',
+          tags: ['Offboarding'],
+          responses: {
+            '200': { description: 'Offboarding request created' },
+          },
+        },
+      },
+      '/conversations': {
+        get: {
+          summary: 'List conversations (central inbox)',
+          tags: ['Inbox'],
+          responses: {
+            '200': { description: 'List of conversations' },
+          },
+        },
+        post: {
+          summary: 'Create conversation',
+          tags: ['Inbox'],
+          responses: {
+            '200': { description: 'Conversation created' },
+          },
+        },
+      },
+      '/backup': {
+        get: {
+          summary: 'Create backup of all data',
+          tags: ['Admin'],
+          responses: {
+            '200': { description: 'Backup data' },
+          },
+        },
+      },
+      '/audit-log': {
+        get: {
+          summary: 'Get audit log',
+          tags: ['Admin'],
+          parameters: [
+            { name: 'entity_type', in: 'query', schema: { type: 'string' } },
+            { name: 'entity_id', in: 'query', schema: { type: 'string' } },
+            { name: 'limit', in: 'query', schema: { type: 'integer' } },
+          ],
+          responses: {
+            '200': { description: 'Audit log entries' },
+          },
+        },
+      },
+      '/reports/tickets': {
+        get: {
+          summary: 'Get ticket reports',
+          tags: ['Reports'],
+          responses: {
+            '200': { description: 'Ticket statistics' },
+          },
+        },
+      },
+      '/reports/time': {
+        get: {
+          summary: 'Get time tracking reports',
+          tags: ['Reports'],
+          responses: {
+            '200': { description: 'Time tracking statistics' },
+          },
+        },
+      },
+      '/reports/onboarding': {
+        get: {
+          summary: 'Get onboarding reports',
+          tags: ['Reports'],
+          responses: {
+            '200': { description: 'Onboarding statistics' },
+          },
+        },
+      },
+      '/settings': {
+        get: {
+          summary: 'Get settings',
+          tags: ['Configuration'],
+          responses: {
+            '200': { description: 'Settings list' },
+          },
+        },
+        post: {
+          summary: 'Update setting',
+          tags: ['Configuration'],
+          responses: {
+            '200': { description: 'Setting updated' },
+          },
+        },
+      },
+      '/auth/m365/login': {
+        get: {
+          summary: 'Initiate M365 OAuth login',
+          tags: ['Authentication'],
+          responses: {
+            '302': { description: 'Redirect to Microsoft login' },
+          },
+        },
+      },
+      '/auth/m365/register': {
+        get: {
+          summary: 'Initiate M365 OAuth registration',
+          tags: ['Authentication'],
+          responses: {
+            '302': { description: 'Redirect to Microsoft login' },
+          },
+        },
+      },
     },
   }
   

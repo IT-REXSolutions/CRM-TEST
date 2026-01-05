@@ -2140,24 +2140,41 @@ function OrganizationsPage() {
   const [organizations, setOrganizations] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingOrg, setEditingOrg] = useState(null)
+  const [selectedOrg, setSelectedOrg] = useState(null)
+  const [slaProfiles, setSlaProfiles] = useState([])
   
   const loadOrganizations = useCallback(async () => {
-    try { setOrganizations(await api.getOrganizations()) }
-    catch { toast.error('Fehler') }
+    try { 
+      const [orgs, slas] = await Promise.all([api.getOrganizations(), api.getSLAProfiles()])
+      setOrganizations(orgs)
+      setSlaProfiles(slas)
+    }
+    catch { toast.error('Fehler beim Laden') }
     finally { setLoading(false) }
   }, [])
   
   useEffect(() => { loadOrganizations() }, [loadOrganizations])
   
   const handleCreate = async (data) => {
-    try { await api.createOrganization(data); toast.success('Erstellt'); setShowCreateDialog(false); loadOrganizations(); }
-    catch { toast.error('Fehler') }
+    try { await api.createOrganization(data); toast.success('Organisation erstellt'); setShowCreateDialog(false); loadOrganizations(); }
+    catch { toast.error('Fehler beim Erstellen') }
+  }
+  
+  const handleUpdate = async (data) => {
+    try { 
+      await api.updateOrganization(editingOrg.id, data); 
+      toast.success('Organisation aktualisiert'); 
+      setEditingOrg(null); 
+      loadOrganizations(); 
+    }
+    catch { toast.error('Fehler beim Aktualisieren') }
   }
   
   const handleDelete = async (id) => {
-    if (!confirm('Wirklich löschen?')) return
-    try { await api.deleteOrganization(id); toast.success('Gelöscht'); loadOrganizations(); }
-    catch { toast.error('Fehler') }
+    if (!confirm('Organisation wirklich löschen? Alle zugehörigen Daten werden gelöscht!')) return
+    try { await api.deleteOrganization(id); toast.success('Organisation gelöscht'); loadOrganizations(); }
+    catch { toast.error('Fehler beim Löschen') }
   }
   
   return (
@@ -2166,9 +2183,9 @@ function OrganizationsPage() {
         <h2 className="text-lg font-semibold">Organisationen</h2>
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Neue Organisation</Button></DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-lg">
             <DialogHeader><DialogTitle>Neue Organisation</DialogTitle></DialogHeader>
-            <CreateOrganizationForm onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            <OrganizationForm slaProfiles={slaProfiles} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -2176,20 +2193,28 @@ function OrganizationsPage() {
       {loading ? <div className="flex justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div> : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {organizations.map((org) => (
-            <Card key={org.id}>
+            <Card key={org.id} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-2">
                 <div className="flex justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{org.name}</CardTitle>
+                  <div className="cursor-pointer" onClick={() => setSelectedOrg(org)}>
+                    <CardTitle className="text-lg hover:text-blue-600">{org.name}</CardTitle>
                     {org.short_name && <CardDescription>{org.short_name}</CardDescription>}
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => handleDelete(org.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => setEditingOrg(org)} title="Bearbeiten">
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => handleDelete(org.id)} title="Löschen">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  {org.email && <p className="text-slate-500">{org.email}</p>}
-                  {org.phone && <p className="text-slate-500">{org.phone}</p>}
+                  {org.email && <p className="text-slate-500 flex items-center gap-2"><Mail className="h-3 w-3" />{org.email}</p>}
+                  {org.phone && <p className="text-slate-500 flex items-center gap-2"><Phone className="h-3 w-3" />{org.phone}</p>}
+                  {org.domain && <p className="text-slate-500 flex items-center gap-2"><Globe className="h-3 w-3" />{org.domain}</p>}
                   <div className="flex gap-4 pt-2">
                     <span className="text-xs bg-slate-100 px-2 py-1 rounded">{org.locations?.length || 0} Standorte</span>
                     <span className="text-xs bg-slate-100 px-2 py-1 rounded">{org.contacts?.length || 0} Kontakte</span>
@@ -2200,23 +2225,339 @@ function OrganizationsPage() {
           ))}
         </div>
       )}
+      
+      {/* Edit Organization Dialog */}
+      <Dialog open={!!editingOrg} onOpenChange={(open) => !open && setEditingOrg(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Organisation bearbeiten</DialogTitle></DialogHeader>
+          {editingOrg && (
+            <OrganizationForm 
+              organization={editingOrg} 
+              slaProfiles={slaProfiles}
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingOrg(null)} 
+              isEdit 
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* Organization Detail Dialog */}
+      <OrganizationDetailDialog 
+        organization={selectedOrg}
+        slaProfiles={slaProfiles}
+        open={!!selectedOrg}
+        onClose={() => setSelectedOrg(null)}
+        onUpdate={loadOrganizations}
+      />
     </div>
   )
 }
 
-function CreateOrganizationForm({ onSubmit, onCancel }) {
-  const [formData, setFormData] = useState({ name: '', short_name: '', email: '', phone: '', website: '' })
+function OrganizationForm({ organization, slaProfiles = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    name: organization?.name || '',
+    short_name: organization?.short_name || '',
+    email: organization?.email || '',
+    phone: organization?.phone || '',
+    website: organization?.website || '',
+    domain: organization?.domain || '',
+    notes: organization?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.name) {
+      toast.error('Name ist erforderlich')
+      return
+    }
+    onSubmit(formData)
+  }
+  
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (formData.name) onSubmit(formData); }} className="space-y-4">
-      <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} /></div>
-      <div><Label>Kurzname</Label><Input value={formData.short_name} onChange={(e) => setFormData(f => ({ ...f, short_name: e.target.value }))} /></div>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} /></div>
+        <div><Label>Kurzname</Label><Input value={formData.short_name} onChange={(e) => setFormData(f => ({ ...f, short_name: e.target.value }))} /></div>
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <div><Label>E-Mail</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
         <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
       </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Website</Label><Input value={formData.website} onChange={(e) => setFormData(f => ({ ...f, website: e.target.value }))} placeholder="https://..." /></div>
+        <div><Label>Domain (für Auto-Zuweisung)</Label><Input value={formData.domain} onChange={(e) => setFormData(f => ({ ...f, domain: e.target.value }))} placeholder="firma.de" /></div>
+      </div>
+      <div>
+        <Label>Notizen</Label>
+        <Textarea value={formData.notes} onChange={(e) => setFormData(f => ({ ...f, notes: e.target.value }))} rows={2} />
+      </div>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
-        <Button type="submit">Erstellen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function OrganizationDetailDialog({ organization, slaProfiles, open, onClose, onUpdate }) {
+  const [activeTab, setActiveTab] = useState('overview')
+  const [contacts, setContacts] = useState([])
+  const [locations, setLocations] = useState([])
+  const [editingContact, setEditingContact] = useState(null)
+  const [showAddContact, setShowAddContact] = useState(false)
+  const [showAddLocation, setShowAddLocation] = useState(false)
+  const [editingLocation, setEditingLocation] = useState(null)
+  
+  useEffect(() => {
+    if (open && organization) {
+      setContacts(organization.contacts || [])
+      setLocations(organization.locations || [])
+    }
+  }, [open, organization])
+  
+  const handleAddContact = async (data) => {
+    try {
+      await api.createContact({ ...data, organization_id: organization.id })
+      toast.success('Kontakt hinzugefügt')
+      setShowAddContact(false)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleUpdateContact = async (data) => {
+    try {
+      await api.updateContact(editingContact.id, data)
+      toast.success('Kontakt aktualisiert')
+      setEditingContact(null)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleDeleteContact = async (id) => {
+    if (!confirm('Kontakt wirklich löschen?')) return
+    try {
+      await api.deleteContact(id)
+      toast.success('Kontakt gelöscht')
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleAddLocation = async (data) => {
+    try {
+      await api.createLocation({ ...data, organization_id: organization.id })
+      toast.success('Standort hinzugefügt')
+      setShowAddLocation(false)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleUpdateLocation = async (data) => {
+    try {
+      await api.updateLocation(editingLocation.id, data)
+      toast.success('Standort aktualisiert')
+      setEditingLocation(null)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleDeleteLocation = async (id) => {
+    if (!confirm('Standort wirklich löschen?')) return
+    try {
+      await api.deleteLocation(id)
+      toast.success('Standort gelöscht')
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  if (!organization) return null
+  
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5" />
+            {organization.name}
+          </DialogTitle>
+        </DialogHeader>
+        
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col">
+          <TabsList>
+            <TabsTrigger value="overview">Übersicht</TabsTrigger>
+            <TabsTrigger value="contacts">Kontakte ({contacts.length})</TabsTrigger>
+            <TabsTrigger value="locations">Standorte ({locations.length})</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="overview" className="flex-1 overflow-auto p-2">
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label className="text-slate-500">E-Mail</Label><p>{organization.email || '-'}</p></div>
+              <div><Label className="text-slate-500">Telefon</Label><p>{organization.phone || '-'}</p></div>
+              <div><Label className="text-slate-500">Website</Label><p>{organization.website || '-'}</p></div>
+              <div><Label className="text-slate-500">Domain</Label><p>{organization.domain || '-'}</p></div>
+            </div>
+            {organization.notes && (
+              <div className="mt-4">
+                <Label className="text-slate-500">Notizen</Label>
+                <p className="whitespace-pre-wrap">{organization.notes}</p>
+              </div>
+            )}
+          </TabsContent>
+          
+          <TabsContent value="contacts" className="flex-1 overflow-auto p-2">
+            <div className="flex justify-end mb-4">
+              <Button size="sm" onClick={() => setShowAddContact(true)}><Plus className="h-4 w-4 mr-1" />Kontakt</Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>E-Mail</TableHead>
+                  <TableHead>Telefon</TableHead>
+                  <TableHead>Position</TableHead>
+                  <TableHead className="w-20"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {contacts.map(contact => (
+                  <TableRow key={contact.id}>
+                    <TableCell className="font-medium">{contact.first_name} {contact.last_name}</TableCell>
+                    <TableCell>{contact.email || '-'}</TableCell>
+                    <TableCell>{contact.phone || '-'}</TableCell>
+                    <TableCell>{contact.position || '-'}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setEditingContact(contact)}><Settings className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteContact(contact.id)}><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TabsContent>
+          
+          <TabsContent value="locations" className="flex-1 overflow-auto p-2">
+            <div className="flex justify-end mb-4">
+              <Button size="sm" onClick={() => setShowAddLocation(true)}><Plus className="h-4 w-4 mr-1" />Standort</Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Adresse</TableHead>
+                  <TableHead>Stadt</TableHead>
+                  <TableHead className="w-20"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {locations.map(loc => (
+                  <TableRow key={loc.id}>
+                    <TableCell className="font-medium">{loc.name} {loc.is_headquarters && <Badge variant="outline" className="ml-2">HQ</Badge>}</TableCell>
+                    <TableCell>{loc.address || '-'}</TableCell>
+                    <TableCell>{loc.zip_code} {loc.city}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setEditingLocation(loc)}><Settings className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteLocation(loc.id)}><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TabsContent>
+        </Tabs>
+        
+        {/* Add/Edit Contact Dialog */}
+        <Dialog open={showAddContact || !!editingContact} onOpenChange={(open) => { if (!open) { setShowAddContact(false); setEditingContact(null); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{editingContact ? 'Kontakt bearbeiten' : 'Neuer Kontakt'}</DialogTitle></DialogHeader>
+            <ContactForm contact={editingContact} onSubmit={editingContact ? handleUpdateContact : handleAddContact} onCancel={() => { setShowAddContact(false); setEditingContact(null); }} isEdit={!!editingContact} />
+          </DialogContent>
+        </Dialog>
+        
+        {/* Add/Edit Location Dialog */}
+        <Dialog open={showAddLocation || !!editingLocation} onOpenChange={(open) => { if (!open) { setShowAddLocation(false); setEditingLocation(null); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{editingLocation ? 'Standort bearbeiten' : 'Neuer Standort'}</DialogTitle></DialogHeader>
+            <LocationForm location={editingLocation} onSubmit={editingLocation ? handleUpdateLocation : handleAddLocation} onCancel={() => { setShowAddLocation(false); setEditingLocation(null); }} isEdit={!!editingLocation} />
+          </DialogContent>
+        </Dialog>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ContactForm({ contact, onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    first_name: contact?.first_name || '',
+    last_name: contact?.last_name || '',
+    email: contact?.email || '',
+    phone: contact?.phone || '',
+    mobile: contact?.mobile || '',
+    position: contact?.position || '',
+    department: contact?.department || '',
+    is_primary: contact?.is_primary || false,
+  })
+  
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (formData.first_name && formData.last_name) onSubmit(formData); else toast.error('Name ist erforderlich'); }} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Vorname *</Label><Input value={formData.first_name} onChange={(e) => setFormData(f => ({ ...f, first_name: e.target.value }))} /></div>
+        <div><Label>Nachname *</Label><Input value={formData.last_name} onChange={(e) => setFormData(f => ({ ...f, last_name: e.target.value }))} /></div>
+      </div>
+      <div><Label>E-Mail</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
+        <div><Label>Mobil</Label><Input value={formData.mobile} onChange={(e) => setFormData(f => ({ ...f, mobile: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Position</Label><Input value={formData.position} onChange={(e) => setFormData(f => ({ ...f, position: e.target.value }))} /></div>
+        <div><Label>Abteilung</Label><Input value={formData.department} onChange={(e) => setFormData(f => ({ ...f, department: e.target.value }))} /></div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch checked={formData.is_primary} onCheckedChange={(v) => setFormData(f => ({ ...f, is_primary: v }))} />
+        <Label>Hauptkontakt</Label>
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Hinzufügen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function LocationForm({ location, onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    name: location?.name || '',
+    address: location?.address || '',
+    city: location?.city || '',
+    zip_code: location?.zip_code || '',
+    country: location?.country || 'Deutschland',
+    phone: location?.phone || '',
+    is_headquarters: location?.is_headquarters || false,
+  })
+  
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (formData.name) onSubmit(formData); else toast.error('Name ist erforderlich'); }} className="space-y-4">
+      <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} placeholder="Hauptsitz, Niederlassung Berlin..." /></div>
+      <div><Label>Adresse</Label><Input value={formData.address} onChange={(e) => setFormData(f => ({ ...f, address: e.target.value }))} /></div>
+      <div className="grid grid-cols-3 gap-4">
+        <div><Label>PLZ</Label><Input value={formData.zip_code} onChange={(e) => setFormData(f => ({ ...f, zip_code: e.target.value }))} /></div>
+        <div className="col-span-2"><Label>Stadt</Label><Input value={formData.city} onChange={(e) => setFormData(f => ({ ...f, city: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Land</Label><Input value={formData.country} onChange={(e) => setFormData(f => ({ ...f, country: e.target.value }))} /></div>
+        <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch checked={formData.is_headquarters} onCheckedChange={(v) => setFormData(f => ({ ...f, is_headquarters: v }))} />
+        <Label>Hauptsitz</Label>
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Hinzufügen'}</Button>
       </DialogFooter>
     </form>
   )

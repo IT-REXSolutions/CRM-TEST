@@ -1,0 +1,200 @@
+<analysis>
+<original_problem_statement>
+The user's final and most critical request is to perform a **CRITICAL SYSTEM FIX** to address the lack of full CRUD (Create, Read, Update, Delete) functionality across the application. This supersedes all previous requests and serves as a strict, non-negotiable blocker for the application to be considered usable.
+
+**Core Objective**: Transform the current implementation into a fully working ITSM/CRM system where all core entities can be properly created, edited, updated, managed, and permissioned through both the UI and API.
+
+**Key Requirements (from the CRITICAL SYSTEM FIX PROMPT):**
+
+1.  **Users & User Management (BROKEN):**
+    *   Implement functionality for Admins and users to **edit** user profiles (name, email, roles, etc.).
+    *   Enable assigning/removing users from organizations.
+    *   Enforce role-based permissions at both UI and API levels.
+
+2.  **Organizations & CRM (BROKEN):**
+    *   Implement functionality to **edit** organization details (name, domains, SLA).
+    *   Add support for creating, editing, and deleting multiple locations per organization.
+    *   Allow editing of contacts/employees within an organization.
+
+3.  **Tickets (CRITICAL & UNUSABLE):**
+    *   Implement functionality to **edit** ticket titles and descriptions.
+    *   Allow agents/admins to change status, priority, and assignments after creation.
+    *   Implement a fully working comment system (public/internal) with edit/delete capabilities.
+    *   Ensure all ticket changes are audit-logged and trigger automations.
+
+4.  **Knowledge Base / Wiki (PARTIALLY BROKEN):**
+    *   Implement full CRUD for Wiki articles (**edit** and **delete/archive** are missing).
+    *   Enforce organization-based visibility (Global vs. Organization-specific wikis).
+    *   Ensure customers can only see the Global Wiki and their own organization's Wiki.
+
+5.  **Assets / CMDB (BROKEN):**
+    *   Implement full CRUD for Assets, specifically the ability to **edit** asset details (name, type, location, assignment).
+
+6.  **Permissions & Settings (BROKEN):**
+    *   Implement a functional permission management system where roles control edit rights for each entity.
+    *   Ensure permissions are enforced consistently across the UI and API.
+
+The system is considered **BLOCKED** and unusable in production until all of these edit/update paths are implemented.
+</original_problem_statement>
+
+**User's preferred language**: German
+
+**what currently exists?**
+A full-stack Next.js ITSM application with a monolithic frontend () and backend (). The database is PostgreSQL on Supabase.
+
+The application has been extensively developed, with features like 2FA, M365 OAuth, a comprehensive Wiki, and a Custom Fields system having their backends fully implemented and their database schemas applied by the user. The UI has been branded for IT REX Solutions.
+
+However, a critical flaw was identified: while entities can be created, the functionality to **edit or update** them is missing across the board, rendering the application unsuitable for real-world use. The backend API has handlers and routes for creating and reading data, but the  logic and corresponding UI is largely absent.
+
+**Last working item**:
+-   Last item agent was working: The agent had just received the CRITICAL SYSTEM FIX PROMPT and acknowledged it. The agent was about to begin the systematic implementation of full CRUD (especially Update) functionality across all core modules as demanded by the user.
+-   Status: **NOT STARTED**
+-   Agent Testing Done: N
+-   Which testing method agent to use? both (The fix will require extensive backend API and frontend UI changes and validation).
+-   User Testing Done: N
+
+**All Pending/In progress Issue list**:
+-   Issue 1: Core entities lack full CRUD functionality, specifically EDIT/UPDATE capabilities. (Priority: P0 - Blocker)
+
+**Issues Detail**:
+-   **Issue 1**:
+    -   **Description**: The application is fundamentally broken as core entities cannot be edited after creation. This applies to Users, Organizations, Tickets, Knowledge Base articles, and Assets. The user has provided a detailed prompt outlining the required edit/update functionality for each module.
+    -   **Attempted fixes**: None. This is a newly identified systemic problem that the agent was just about to start fixing.
+    -   **Next debug checklist**:
+        1.  **For each entity (User, Org, Ticket, etc.)**:
+        2.  **Backend ():** Review the  function. Add  blocks for  or  requests (e.g., , ).
+        3.  **Backend ():** Implement the corresponding handler functions (e.g., , ) that take an ID and a body, validate permissions, update the data in the Supabase DB, and create an audit log entry.
+        4.  **Frontend ():** In the respective UI component for each entity (e.g., , ), add Edit buttons.
+        5.  **Frontend ():** Create modal dialogs or forms that are pre-populated with the entity's current data and allow users to submit changes.
+        6.  **Frontend ():** Implement the  calls to the new  endpoints.
+    -   **Why fix this issue and what will be achieved with the fix?**: This is a **BLOCKER**. Fixing this will make the application usable for daily operations, transforming it from a create-only system to a fully functional ITSM/CRM platform.
+    -   **Status**: NOT STARTED
+    -   **Is recurring issue?**: N
+    -   **Should Test frontend/backend/both after fix?**: Both
+    -   **Blocked on other issue**: None. This is the primary blocker.
+
+**In progress Task List**:
+-   **Task 1**: Implement Full CRUD & System-wide Editability (Priority: P0)
+
+**Task Detail**:
+-   **Task 1**:
+    -   **Where to resume**: Start by modifying . Systematically add the  API endpoints and handlers for each core entity as outlined in the  and Next debug checklist above. Begin with User Management, then Organizations, then Tickets.
+    -   **What will be achieved with this?**: Fulfills the user's CRITICAL SYSTEM FIX PROMPT and makes the application production-ready and usable.
+    -   **Status**: NOT STARTED
+    -   **Should Test frontend/backend/both after fix?**: Both
+    -   **Blocked on something**: Nothing.
+
+**Upcoming and Future Tasks**
+-   Once the critical CRUD-fix is complete, the future tasks align with the user's POST–GO-LIVE CHANGE POLICY:
+    -   UI/UX improvements
+    -   New automation triggers/actions
+    -   New reports
+    -   New integrations (Placetel, Lexoffice are stubbed)
+    -   Performance optimizations
+
+**Completed work in this session**
+-   **Full Schema Implementation**: Created and successfully prompted the user to execute a massive, combined SQL script ( and others) that added tables and columns for 2FA, M365 Mailbox Integration, a full Wiki/Knowledge Base system, and a complete Custom Fields & Forms engine.
+-   **Backend API Implementation**:
+    -   Added API handlers and routes for the new Wiki and Custom Fields modules.
+    -   Added backend handlers and routes for M365 Mailbox integration (listing mailboxes, migration, etc.).
+    -   Fixed numerous bugs in existing API routes, including duplicate functions and incorrect response wrapping.
+-   **Branding & UI**:
+    -   Successfully updated the application branding to IT REX Solutions with the user's logo on the login page and sidebar.
+    -   Significantly enhanced the Settings UI, making SMTP and M365 OAuth credentials fully configurable. Added help text and better layout.
+    -   Implemented the foundational UI for a new multi-mailbox Inbox page.
+-   **Auditing & Verification**:
+    -   Performed a comprehensive, scripted API audit and documented the results in .
+    -   Dramatically expanded the OpenAPI specification from 14 to 36 paths.
+    -   Seeded the database with initial data (default custom fields, forms, and a sample wiki page) via API calls after the schema was applied.
+
+**Earlier issues found/mentioned but not fixed**
+-   The issues listed in the CRITICAL SYSTEM FIX PROMPT are the primary unfixed issues. They were not missed but rather represent the next, and most critical, layer of functionality that was not yet built.
+
+**Known issue recurrence from previous fork**
+-   N/A
+
+**Code Architecture**
+-   **Framework**: Next.js 14 (App Router)
+-   **Frontend**: A single monolithic file  containing all React components and client-side logic.
+-   **Backend**: A single monolithic API router  handling all API requests.
+-   **Database**: PostgreSQL on Supabase, managed via manually executed SQL scripts.
+
+**Key Technical Concepts**
+-   **Monolithic Codebase**: The entire application logic is concentrated in two very large files, requiring careful navigation and editing.
+-   **Manual Schema Migrations**: Development relies on generating  files that the user must execute in the Supabase dashboard.
+-   **Settings-driven Configuration**: A strong emphasis on making all credentials and configurations (like OpenAI keys, SMTP, M365 OAuth) manageable via the Settings UI, with values stored encrypted in the  table.
+
+**key DB schema**
+-   **Recently Added Tables**: , , , , , , , , , , , , , .
+-   **Key Altered Tables**:  (added 2FA, M365, disable fields),  (added merge/split fields),  (added mailbox type, sync status).
+
+**changes in tech stack**
+-   None in this session, but  was added previously.
+
+**All files of reference**
+-   : Heavily modified. Contains all backend logic, including the newly added (but incomplete CRUD) handlers for Wiki, Custom Fields, and M365 Mailboxes. This file is the primary target for the next set of changes.
+-   : Heavily modified. Contains all UI components. This file needs to be updated with edit forms/modals for all core entities.
+-   : Created and executed. Contains the schema for the Wiki and Custom Fields features.
+-   : Created and executed. Contains the schema for the M365 mailbox integration.
+-   A combined SQL script was generated and provided to the user, which they confirmed executing. This script is the source of truth for the current DB schema.
+-   : A detailed report of the agent's self-audit against a user-provided checklist.
+
+**Areas that need refactoring**:
+-   The monolithic files  and  are unmaintainable. The immediate priority is the critical fix, but a future task should be to break these down into modular components and API routes.
+
+**key api endpoints**
+-   **Wiki**: , , 
+-   **Custom Fields**: , 
+-   **M365 Mailbox**: , , 
+-   **Needs Implementation**:  endpoints for all core entities (e.g., , , , , ).
+
+**Critical Info for New Agent**
+-   **Your #1 Priority is the CRITICAL SYSTEM FIX PROMPT**: This is not a feature request; it's a blocker. The application is unusable without full CRUD functionality. Your entire focus must be on implementing the missing **edit/update** capabilities for Users, Organizations, Tickets, Wiki articles, and Assets.
+-   **Start with the Backend**: The database schema is complete and correct. Begin by implementing the  API routes and handlers in  for each module.
+-   **Then Implement the Frontend**: Once the backend APIs for updating are in place, modify  to add Edit buttons and forms/modals that consume these new endpoints.
+-   **Follow the User's Checklist**: Use the user's last prompt as your exact implementation guide. It clearly specifies what edit functionality is required for each module.
+-   **Do not ask for permission to fix these items.** The user's instruction is clear: Proceed with fixing and completing the system.
+
+**documents created in this job**
+-   /app/public/schema-final-completion.sql (updated)
+-   /app/public/schema-m365-mailbox.sql
+-   /app/public/schema-wiki-customfields.sql
+-   /app/QA_AUDIT_REPORT.md
+
+**Last 10 User Messages and any pending HUMAN messages**
+1.  **User**: Provided the CRITICAL SYSTEM FIX PROMPT detailing the missing CRUD functionality. (PENDING)
+2.  **Agent**: Confirmed the dashboard is functional and summarized the completion of all prior tasks.
+3.  **User**: Confirmed the final SQL script was executed and instructed the agent to continue until finished.
+4.  **Agent**: Provided the final combined SQL script for the user to execute in Supabase.
+5.  **User**: Asked for the SQL script to execute.
+6.  **Agent**: Summarized the completion of the backend implementation for Wiki and Custom Fields.
+7.  **User**: Provided a detailed prompt to implement a full-featured Wiki and a configurable Field & Form system.
+8.  **Agent**: Confirmed the new M365-integrated Inbox page UI is functional and outlined next steps.
+9.  **User**: Provided a detailed prompt to implement a secure, multi-mailbox Microsoft 365 integration.
+10. **Agent**: Confirmed all settings are now configurable via the UI and summarized the next steps.
+
+**Project Health Check:**
+-   **Broken**: The entire application is considered broken from a usability standpoint. The core business logic of **editing existing data** is missing for all major entities (Users, Orgs, Tickets, Assets, KB articles). This is a P0, production-blocking issue.
+
+**3rd Party Integrations**
+-   **Supabase**: PostgreSQL DB and Auth. Requires User API Key.
+-   **OpenAI**: For AI ticket classification. Configured to use the . The endpoint was offline during testing, but the keyword fallback is in place.
+-   **Microsoft 365**: For user authentication (OAuth) and email integration (Graph API). Backend is mostly implemented, UI is partially done. Requires customer-provided OAuth credentials in the Settings UI.
+-   **nodemailer**: For sending emails via SMTP. Configured via Settings UI.
+-   **Placetel Webex**: (Planned/Stubbed) For telephony/CTI.
+-   **Lexoffice**: (Planned/Stubbed) For billing.
+
+**Testing status**
+-   **Testing agent used after significant changes**: NO
+-   **Troubleshoot agent used after agent stuck in loop**: NO
+-   **Test files created**: None. A comprehensive, scripted API audit was performed manually via  and .
+-   **Known regressions**: None currently known, but the core functionality is incomplete.
+
+**Credentials to test flow:**
+-   Use the Login as Admin button on the login page, which auto-fills credentials.
+-   A customer account  /  can be used for the customer portal view.
+
+**What agent forgot to execute**
+The agent did not forget but was stopped just before starting the most crucial task. The last user prompt (CRITICAL SYSTEM FIX PROMPT) redefined the immediate priority, revealing that the completed features were not truly complete as they lacked edit/update functionality. The agent must now execute this system-wide fix.
+
+</analysis>

@@ -4419,11 +4419,86 @@ async function handleGetOpenAPISpec() {
 // AI-ITSM MODULE HANDLERS
 // =============================================
 
+// Keyword-based classification fallback
+function keywordClassification(text) {
+  const lowerText = text.toLowerCase()
+  
+  const typeKeywords = {
+    onboarding: ['neuer mitarbeiter', 'new starter', 'einstellung', 'onboarding', 'neuer kollege', 'anfangen', 'eintritt'],
+    offboarding: ['kündigung', 'ausscheiden', 'letzter tag', 'offboarding', 'verlässt', 'austritt', 'ausscheidet'],
+    support: ['hilfe', 'problem', 'fehler', 'funktioniert nicht', 'geht nicht', 'support', 'defekt', 'kaputt'],
+    order: ['bestellen', 'bestellung', 'kaufen', 'anschaffen', 'beschaffen', 'hardware', 'lizenz', 'laptop', 'pc'],
+    lead: ['anfrage', 'interesse', 'angebot', 'preise', 'kosten', 'beratung'],
+    project: ['projekt', 'migration', 'umstellung', 'rollout', 'implementierung'],
+    invoice: ['rechnung', 'invoice', 'zahlung', 'kosten', 'abrechnung'],
+  }
+  
+  const priorityKeywords = {
+    critical: ['dringend', 'notfall', 'kritisch', 'urgent', 'asap', 'sofort', 'ausgefallen'],
+    high: ['wichtig', 'schnell', 'bald', 'priorität'],
+    low: ['irgendwann', 'keine eile', 'wenn zeit'],
+  }
+  
+  // Find best matching type
+  let bestType = 'inquiry'
+  let maxScore = 0
+  
+  for (const [type, keywords] of Object.entries(typeKeywords)) {
+    const score = keywords.filter(k => lowerText.includes(k)).length
+    if (score > maxScore) {
+      maxScore = score
+      bestType = type
+    }
+  }
+  
+  // Determine priority
+  let priority = 'medium'
+  for (const [prio, keywords] of Object.entries(priorityKeywords)) {
+    if (keywords.some(k => lowerText.includes(k))) {
+      priority = prio
+      break
+    }
+  }
+  
+  // Determine queue
+  const queueMap = {
+    onboarding: 'admin',
+    offboarding: 'admin',
+    support: 'helpdesk',
+    order: 'admin',
+    lead: 'sales',
+    project: 'project',
+    invoice: 'admin',
+    inquiry: 'helpdesk',
+  }
+  
+  return {
+    type: bestType,
+    confidence: maxScore > 0 ? Math.min(0.3 + (maxScore * 0.2), 0.85) : 0.3,
+    intent: `Klassifiziert als ${bestType} basierend auf Keywords`,
+    priority,
+    suggested_queue: queueMap[bestType] || 'helpdesk',
+    key_entities: [],
+    requires_form: bestType === 'onboarding' || bestType === 'offboarding',
+    suggested_response: null,
+    reasoning: `Keyword-basierte Klassifizierung (${maxScore} Treffer)`,
+    method: 'keyword_fallback'
+  }
+}
+
 // AI Classification Engine
 async function classifyMessage(text, context = {}) {
   const openai = await getOpenAIClient()
+  
+  // If no OpenAI client, use keyword-based fallback
   if (!openai) {
-    return { success: false, error: 'OpenAI nicht konfiguriert' }
+    console.log('OpenAI not configured, using keyword fallback classification')
+    const classification = keywordClassification(text)
+    return { 
+      success: true, 
+      classification,
+      method: 'keyword_fallback'
+    }
   }
   
   // Get ticket types for classification

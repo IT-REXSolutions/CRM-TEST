@@ -1,12 +1,381 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { v4 as uuidv4 } from 'uuid'
+import OpenAI from 'openai'
 
 // Supabase Admin Client (bypasses RLS)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+
+// ============================================
+// SETTINGS HELPER - Central Configuration
+// ============================================
+
+// Cache for settings (refreshed every 5 minutes)
+let settingsCache = null
+let settingsCacheTime = 0
+const SETTINGS_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+async function getSettings() {
+  const now = Date.now()
+  if (settingsCache && (now - settingsCacheTime) < SETTINGS_CACHE_TTL) {
+    return settingsCache
+  }
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings')
+      .select('key, value')
+    
+    if (error) {
+      console.error('Settings fetch error:', error)
+      return settingsCache || {}
+    }
+    
+    const settings = {}
+    ;(data || []).forEach(s => {
+      try {
+        settings[s.key] = typeof s.value === 'string' ? JSON.parse(s.value) : s.value
+      } catch {
+        settings[s.key] = s.value
+      }
+    })
+    
+    settingsCache = settings
+    settingsCacheTime = now
+    return settings
+  } catch (error) {
+    console.error('Settings error:', error)
+    return settingsCache || {}
+  }
+}
+
+async function getSetting(key, defaultValue = null) {
+  const settings = await getSettings()
+  return settings[key] !== undefined ? settings[key] : defaultValue
+}
+
+// Clear settings cache (call after updating settings)
+function clearSettingsCache() {
+  settingsCache = null
+  settingsCacheTime = 0
+}
+
+// ============================================
+// OPENAI CLIENT - Dynamic from Settings
+// ============================================
+
+async function getOpenAIClient() {
+  const apiKey = await getSetting('openai_api_key')
+  const enabled = await getSetting('openai_enabled', false)
+  
+  if (!enabled || !apiKey) {
+    return null
+  }
+  
+  // Use Emergent API endpoint if it's an Emergent key, otherwise standard OpenAI
+  const isEmergentKey = apiKey.startsWith('ek_') || apiKey.startsWith('emergent')
+  
+  return new OpenAI({
+    apiKey: apiKey,
+    baseURL: isEmergentKey ? 'https://api.emergent.sh/v1/openai' : undefined,
+  })
+}
+
+async function getOpenAIModel() {
+  return await getSetting('openai_model', 'gpt-4o-mini')
+}
+
+// ============================================
+// AI FUNCTIONS - Using Settings
+// ============================================
+
+async function generateAICompletion(prompt, options = {}) {
+  const openai = await getOpenAIClient()
+  if (!openai) {
+    return { success: false, error: 'OpenAI nicht konfiguriert' }
+  }
+  
+  const model = await getOpenAIModel()
+  const {
+    systemPrompt = 'Du bist ein hilfreicher Assistent für IT-Service-Management.',
+    temperature = 0.7,
+    maxTokens = 1000,
+  } = options
+
+  try {
+    const response = await openai.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ],
+      temperature,
+      max_tokens: maxTokens,
+    })
+
+    return {
+      success: true,
+      content: response.choices[0]?.message?.content || '',
+      tokens: response.usage?.total_tokens || 0,
+    }
+  } catch (error) {
+    console.error('OpenAI Error:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+async function transcribeAudioWithWhisper(audioBuffer, filename) {
+  const openai = await getOpenAIClient()
+  if (!openai) {
+    return { success: false, error: 'OpenAI nicht konfiguriert' }
+  }
+
+  try {
+    // Create a File-like object from buffer
+    const file = new File([audioBuffer], filename, { type: 'audio/webm' })
+    
+    const transcription = await openai.audio.transcriptions.create({
+      file: file,
+      model: 'whisper-1',
+      language: 'de',
+    })
+
+    return {
+      success: true,
+      text: transcription.text,
+    }
+  } catch (error) {
+    console.error('Whisper Error:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+async function generateCallSummary(transcript, callMetadata) {
+  const systemPrompt = `Du bist ein IT-Support-Analyst. Analysiere das folgende Telefontranskript und erstelle eine strukturierte Zusammenfassung.
+
+Antworte im folgenden JSON-Format:
+{
+  "problem": "Kurze Beschreibung des Problems",
+  "actions": ["Durchgeführte Maßnahme 1", "Durchgeführte Maßnahme 2"],
+  "nextSteps": ["Nächster Schritt 1", "Nächster Schritt 2"],
+  "urgency": "niedrig|mittel|hoch|kritisch",
+  "suggestedCategory": "Kategorie falls erkennbar",
+  "keyPoints": ["Wichtiger Punkt 1", "Wichtiger Punkt 2"]
+}`
+
+  const prompt = `Anruf-Informationen:
+- Anrufer: ${callMetadata.callerNumber || 'Unbekannt'}
+- Organisation: ${callMetadata.organizationName || 'Unbekannt'}
+- Dauer: ${callMetadata.duration ? Math.round(callMetadata.duration / 60) + ' Minuten' : 'Unbekannt'}
+
+Transkript:
+${transcript}`
+
+  const result = await generateAICompletion(prompt, { systemPrompt, temperature: 0.3, maxTokens: 600 })
+  
+  if (result.success) {
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        return { success: true, summary: JSON.parse(jsonMatch[0]) }
+      }
+    } catch (e) {
+      // Return raw content if JSON parsing fails
+      return { success: true, summary: { problem: result.content } }
+    }
+  }
+  return result
+}
+
+async function parseDictationWithAI(text, type = 'ticket') {
+  const prompts = {
+    ticket: `Strukturiere den folgenden diktierten Text als Ticket:
+- Betreff (kurz und prägnant)
+- Beschreibung (detailliert)
+- Priorität (low/medium/high/critical)
+- Kategorie (falls erkennbar)
+
+Diktierter Text: "${text}"
+
+Antworte NUR mit validem JSON: {"subject": "", "description": "", "priority": "medium", "category": ""}`,
+    
+    task: `Strukturiere den folgenden diktierten Text als Aufgabe:
+- Titel (kurz und prägnant)
+- Beschreibung (detailliert)
+- Priorität (low/medium/high)
+
+Diktierter Text: "${text}"
+
+Antworte NUR mit validem JSON: {"title": "", "description": "", "priority": "medium"}`,
+    
+    time: `Extrahiere aus dem folgenden diktierten Text die Zeiterfassung:
+- Dauer (in Minuten, schätze wenn nötig)
+- Beschreibung der Tätigkeit
+- Abrechenbar (true/false)
+
+Diktierter Text: "${text}"
+
+Antworte NUR mit validem JSON: {"duration_minutes": 30, "description": "", "is_billable": true}`,
+    
+    comment: `Strukturiere den folgenden diktierten Text als Kommentar:
+- Inhalt (vollständiger Text, grammatikalisch korrigiert)
+- Intern (true für interne Notiz, false für Kundenkommentar)
+
+Diktierter Text: "${text}"
+
+Antworte NUR mit validem JSON: {"content": "", "is_internal": false}`
+  }
+
+  const systemPrompt = 'Du bist ein Assistent der diktierten Text strukturiert. Antworte NUR mit validem JSON, ohne zusätzlichen Text oder Markdown.'
+  
+  const result = await generateAICompletion(prompts[type] || prompts.ticket, { 
+    systemPrompt, 
+    temperature: 0.2,
+    maxTokens: 400 
+  })
+  
+  if (result.success) {
+    try {
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        return { success: true, data: JSON.parse(jsonMatch[0]) }
+      }
+    } catch (e) {
+      console.error('JSON parse error:', e)
+    }
+  }
+  return { success: false, error: result.error || 'Could not parse response' }
+}
+
+// ============================================
+// LEXOFFICE INTEGRATION
+// ============================================
+
+async function getLexofficeClient() {
+  const apiKey = await getSetting('lexoffice_api_key')
+  const enabled = await getSetting('lexoffice_enabled', false)
+  
+  if (!enabled || !apiKey) {
+    return null
+  }
+  
+  return {
+    apiKey,
+    baseUrl: 'https://api.lexoffice.io/v1',
+    async request(endpoint, method = 'GET', body = null) {
+      const options = {
+        method,
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      }
+      if (body) options.body = JSON.stringify(body)
+      
+      const response = await fetch(`${this.baseUrl}${endpoint}`, options)
+      
+      if (!response.ok) {
+        const error = await response.text()
+        throw new Error(`Lexoffice API Error: ${response.status} - ${error}`)
+      }
+      
+      return response.json()
+    }
+  }
+}
+
+async function createLexofficeInvoice(invoiceData) {
+  const client = await getLexofficeClient()
+  if (!client) {
+    return { success: false, error: 'Lexoffice nicht konfiguriert' }
+  }
+  
+  try {
+    // Create invoice in Lexoffice
+    const invoice = await client.request('/invoices', 'POST', {
+      archived: false,
+      voucherDate: invoiceData.invoice_date || new Date().toISOString().split('T')[0],
+      address: {
+        name: invoiceData.customer_name,
+        street: invoiceData.customer_address?.street || '',
+        zip: invoiceData.customer_address?.zip || '',
+        city: invoiceData.customer_address?.city || '',
+        countryCode: 'DE',
+      },
+      lineItems: invoiceData.line_items.map(item => ({
+        type: 'custom',
+        name: item.description,
+        quantity: item.quantity,
+        unitName: item.unit || 'Stunden',
+        unitPrice: {
+          currency: 'EUR',
+          netAmount: item.unit_price,
+          taxRatePercentage: 19,
+        },
+      })),
+      totalPrice: {
+        currency: 'EUR',
+      },
+      taxConditions: {
+        taxType: 'net',
+      },
+      paymentConditions: {
+        paymentTermLabel: invoiceData.payment_terms || '14 Tage netto',
+        paymentTermDuration: 14,
+      },
+      shippingConditions: {
+        shippingDate: new Date().toISOString().split('T')[0],
+        shippingType: 'service',
+      },
+      title: 'Rechnung',
+      introduction: invoiceData.introduction || '',
+      remark: invoiceData.remark || '',
+    })
+    
+    return { success: true, lexoffice_id: invoice.id, invoice }
+  } catch (error) {
+    console.error('Lexoffice Error:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// ============================================
+// PLACETEL INTEGRATION
+// ============================================
+
+async function getPlacetelClient() {
+  const apiKey = await getSetting('placetel_api_key')
+  const enabled = await getSetting('placetel_enabled', false)
+  
+  if (!enabled || !apiKey) {
+    return null
+  }
+  
+  return {
+    apiKey,
+    baseUrl: 'https://api.placetel.de/v2',
+    async request(endpoint, method = 'GET', body = null) {
+      const options = {
+        method,
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      }
+      if (body) options.body = JSON.stringify(body)
+      
+      const response = await fetch(`${this.baseUrl}${endpoint}`, options)
+      if (!response.ok) {
+        throw new Error(`Placetel API Error: ${response.status}`)
+      }
+      return response.json()
+    }
+  }
+}
 
 // Helper function to handle CORS
 function handleCORS(response) {

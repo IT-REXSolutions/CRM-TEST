@@ -7217,6 +7217,10 @@ export default function App() {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />
       case 'inbox': return <InboxPage currentUser={currentUser} />
+      case 'chatwoot': return <ChatwootPage currentUser={currentUser} />
+      case 'contacts': return <ContactsPage currentUser={currentUser} />
+      case 'companies': return <CompaniesPage currentUser={currentUser} />
+      case 'deals': return <DealsPage currentUser={currentUser} />
       case 'tickets': return <TicketsPage currentUser={currentUser} onOpenTicket={setSelectedTicketId} />
       case 'kanban': return <KanbanPage currentUser={currentUser} />
       case 'onboarding': return <OnboardingPage currentUser={currentUser} />

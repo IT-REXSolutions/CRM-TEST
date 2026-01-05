@@ -105,6 +105,12 @@ const NAV_ITEMS = [
   { id: 'settings', label: 'Einstellungen', icon: Settings },
 ]
 
+// Tabs für Tickets-Seite
+const TICKET_TABS = [
+  { id: 'list', label: 'Liste', icon: Ticket },
+  { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
+]
+
 const CUSTOMER_NAV_ITEMS = [
   { id: 'portal-tickets', label: 'Meine Tickets', icon: Ticket },
   { id: 'portal-new', label: 'Neues Ticket', icon: Plus },

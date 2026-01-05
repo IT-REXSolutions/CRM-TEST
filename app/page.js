@@ -2230,23 +2230,40 @@ function UsersPage() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingUser, setEditingUser] = useState(null)
   const [roles, setRoles] = useState([])
+  const [organizations, setOrganizations] = useState([])
   
   useEffect(() => {
-    Promise.all([api.getUsers(), api.getRoles()])
-      .then(([usersData, rolesData]) => { setUsers(usersData); setRoles(rolesData); })
+    Promise.all([api.getUsers(), api.getRoles(), api.getOrganizations()])
+      .then(([usersData, rolesData, orgsData]) => { setUsers(usersData); setRoles(rolesData); setOrganizations(orgsData); })
       .catch(() => toast.error('Fehler'))
       .finally(() => setLoading(false))
   }, [])
   
+  const loadUsers = async () => {
+    try { setUsers(await api.getUsers()); }
+    catch { toast.error('Fehler beim Laden'); }
+  }
+  
   const handleCreate = async (data) => {
-    try { await api.createUser(data); toast.success('Erstellt'); setShowCreateDialog(false); setUsers(await api.getUsers()); }
-    catch { toast.error('Fehler') }
+    try { await api.createUser(data); toast.success('Benutzer erstellt'); setShowCreateDialog(false); loadUsers(); }
+    catch { toast.error('Fehler beim Erstellen') }
+  }
+  
+  const handleUpdate = async (data) => {
+    try { 
+      await api.updateUser(editingUser.id, data); 
+      toast.success('Benutzer aktualisiert'); 
+      setEditingUser(null); 
+      loadUsers(); 
+    }
+    catch { toast.error('Fehler beim Aktualisieren') }
   }
   
   const handleDelete = async (id) => {
-    if (!confirm('Deaktivieren?')) return
-    try { await api.deleteUser(id); toast.success('Deaktiviert'); setUsers(await api.getUsers()); }
+    if (!confirm('Benutzer wirklich deaktivieren?')) return
+    try { await api.deleteUser(id); toast.success('Benutzer deaktiviert'); loadUsers(); }
     catch { toast.error('Fehler') }
   }
   
@@ -2258,7 +2275,7 @@ function UsersPage() {
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Neuer Benutzer</Button></DialogTrigger>
           <DialogContent>
             <DialogHeader><DialogTitle>Neuer Benutzer</DialogTitle></DialogHeader>
-            <CreateUserForm roles={roles} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            <UserForm roles={roles} organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -2272,8 +2289,9 @@ function UsersPage() {
                 <TableHead>E-Mail</TableHead>
                 <TableHead>Typ</TableHead>
                 <TableHead>Rolle</TableHead>
+                <TableHead>Organisation</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead></TableHead>
+                <TableHead className="w-24">Aktionen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2283,34 +2301,85 @@ function UsersPage() {
                   <TableCell>{user.email}</TableCell>
                   <TableCell><Badge variant="outline">{user.user_type === 'internal' ? 'Intern' : 'Kunde'}</Badge></TableCell>
                   <TableCell>{user.user_roles?.[0]?.roles?.display_name || '-'}</TableCell>
+                  <TableCell>{organizations.find(o => o.id === user.organization_id)?.name || '-'}</TableCell>
                   <TableCell><Badge className={user.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100'}>{user.is_active ? 'Aktiv' : 'Inaktiv'}</Badge></TableCell>
-                  <TableCell><Button variant="ghost" size="icon" onClick={() => handleDelete(user.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => setEditingUser(user)} title="Bearbeiten">
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(user.id)} title="Deaktivieren">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </Card>
       )}
+      
+      {/* Edit User Dialog */}
+      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Benutzer bearbeiten</DialogTitle></DialogHeader>
+          {editingUser && (
+            <UserForm 
+              user={editingUser} 
+              roles={roles} 
+              organizations={organizations}
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingUser(null)} 
+              isEdit 
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function CreateUserForm({ roles, onSubmit, onCancel }) {
-  const [formData, setFormData] = useState({ email: '', first_name: '', last_name: '', phone: '', user_type: 'internal', role_id: '' })
+function UserForm({ user, roles, organizations = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    email: user?.email || '',
+    first_name: user?.first_name || '',
+    last_name: user?.last_name || '',
+    phone: user?.phone || '',
+    user_type: user?.user_type || 'internal',
+    role_id: user?.user_roles?.[0]?.role_id || user?.role_id || '',
+    organization_id: user?.organization_id || '',
+    is_active: user?.is_active !== false,
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.email || !formData.first_name || !formData.last_name) {
+      toast.error('Bitte alle Pflichtfelder ausfüllen')
+      return
+    }
+    onSubmit({
+      ...formData,
+      role_id: formData.role_id || null,
+      organization_id: formData.organization_id || null,
+    })
+  }
+  
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (formData.email && formData.first_name && formData.last_name) onSubmit(formData); }} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div><Label>Vorname *</Label><Input value={formData.first_name} onChange={(e) => setFormData(f => ({ ...f, first_name: e.target.value }))} /></div>
         <div><Label>Nachname *</Label><Input value={formData.last_name} onChange={(e) => setFormData(f => ({ ...f, last_name: e.target.value }))} /></div>
       </div>
-      <div><Label>E-Mail *</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
+      <div><Label>E-Mail *</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} disabled={isEdit} /></div>
+      <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>Benutzertyp</Label>
           <Select value={formData.user_type} onValueChange={(v) => setFormData(f => ({ ...f, user_type: v }))}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="internal">Intern</SelectItem>
+              <SelectItem value="internal">Intern (Agent)</SelectItem>
               <SelectItem value="customer">Kunde</SelectItem>
             </SelectContent>
           </Select>
@@ -2326,9 +2395,25 @@ function CreateUserForm({ roles, onSubmit, onCancel }) {
           </Select>
         </div>
       </div>
+      <div>
+        <Label>Organisation</Label>
+        <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+          <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Keine</SelectItem>
+            {organizations.map((org) => <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {isEdit && (
+        <div className="flex items-center gap-2">
+          <Switch checked={formData.is_active} onCheckedChange={(v) => setFormData(f => ({ ...f, is_active: v }))} />
+          <Label>Benutzer aktiv</Label>
+        </div>
+      )}
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
-        <Button type="submit">Erstellen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
       </DialogFooter>
     </form>
   )

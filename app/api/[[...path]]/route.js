@@ -4566,6 +4566,185 @@ async function handleGetOpenAPISpec() {
           },
         },
       },
+      '/contacts': {
+        get: {
+          summary: 'List contacts',
+          tags: ['Contacts'],
+          parameters: [
+            { name: 'organization_id', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'List of contacts' },
+          },
+        },
+        post: {
+          summary: 'Create contact',
+          tags: ['Contacts'],
+          responses: {
+            '200': { description: 'Created contact' },
+          },
+        },
+      },
+      '/contacts/{id}': {
+        get: {
+          summary: 'Get contact by ID',
+          tags: ['Contacts'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Contact details' },
+          },
+        },
+        put: {
+          summary: 'Update contact',
+          tags: ['Contacts'],
+          responses: {
+            '200': { description: 'Updated contact' },
+          },
+        },
+        delete: {
+          summary: 'Delete contact',
+          tags: ['Contacts'],
+          responses: {
+            '200': { description: 'Contact deleted' },
+          },
+        },
+      },
+      '/organizations/{id}': {
+        get: {
+          summary: 'Get organization by ID',
+          tags: ['Organizations'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Organization details' },
+          },
+        },
+        put: {
+          summary: 'Update organization',
+          tags: ['Organizations'],
+          responses: {
+            '200': { description: 'Updated organization' },
+          },
+        },
+      },
+      '/assets': {
+        get: {
+          summary: 'List assets',
+          tags: ['Assets'],
+          parameters: [
+            { name: 'organization_id', in: 'query', schema: { type: 'string' } },
+            { name: 'asset_type_id', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'List of assets' },
+          },
+        },
+        post: {
+          summary: 'Create asset',
+          tags: ['Assets'],
+          responses: {
+            '200': { description: 'Created asset' },
+          },
+        },
+      },
+      '/assets/{id}': {
+        get: {
+          summary: 'Get asset by ID',
+          tags: ['Assets'],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Asset details' },
+          },
+        },
+        put: {
+          summary: 'Update asset',
+          tags: ['Assets'],
+          responses: {
+            '200': { description: 'Updated asset' },
+          },
+        },
+        delete: {
+          summary: 'Delete asset',
+          tags: ['Assets'],
+          responses: {
+            '200': { description: 'Asset deleted' },
+          },
+        },
+      },
+      '/webhooks': {
+        post: {
+          summary: 'Create webhook subscription',
+          tags: ['Webhooks'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    url: { type: 'string' },
+                    events: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Webhook created' },
+          },
+        },
+      },
+      '/kb-articles': {
+        get: {
+          summary: 'List knowledge base articles',
+          tags: ['Knowledge Base'],
+          responses: {
+            '200': { description: 'List of articles' },
+          },
+        },
+        post: {
+          summary: 'Create KB article',
+          tags: ['Knowledge Base'],
+          responses: {
+            '200': { description: 'Article created' },
+          },
+        },
+      },
+      '/ticket-types': {
+        get: {
+          summary: 'List ticket types',
+          tags: ['Configuration'],
+          responses: {
+            '200': { description: 'List of ticket types' },
+          },
+        },
+      },
+      '/ai/classify': {
+        post: {
+          summary: 'AI classify text for ticket type',
+          tags: ['AI'],
+          requestBody: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    text: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Classification result' },
+          },
+        },
+      },
     },
   }
   

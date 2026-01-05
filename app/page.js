@@ -2750,21 +2750,32 @@ function CreateTimeEntryForm({ tickets, organizations, onSubmit, onCancel }) {
 function ReportsPage() {
   const [reportType, setReportType] = useState('tickets')
   const [reportData, setReportData] = useState(null)
+  const [onboardingReport, setOnboardingReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [dateRange, setDateRange] = useState({ from: '', to: '' })
   
-  const loadReport = async () => {
+  const loadReport = useCallback(async () => {
     setLoading(true)
     try {
-      const params = { type: reportType }
-      if (dateRange.from) params.from_date = dateRange.from
-      if (dateRange.to) params.to_date = dateRange.to
-      setReportData(await api.getReports(params))
+      const params = {}
+      if (dateRange.from) params.start_date = dateRange.from
+      if (dateRange.to) params.end_date = dateRange.to
+      
+      if (reportType === 'onboarding') {
+        const data = await api.fetch(`/reports/onboarding?${new URLSearchParams(params)}`)
+        setOnboardingReport(data)
+      } else {
+        // Load original reports
+        params.type = reportType
+        if (dateRange.from) params.from_date = dateRange.from
+        if (dateRange.to) params.to_date = dateRange.to
+        setReportData(await api.getReports(params))
+      }
     } catch { toast.error('Fehler beim Laden des Reports') }
     finally { setLoading(false) }
-  }
+  }, [reportType, dateRange])
   
-  useEffect(() => { loadReport() }, [reportType])
+  useEffect(() => { loadReport() }, [loadReport])
   
   return (
     <div className="p-6 space-y-6">

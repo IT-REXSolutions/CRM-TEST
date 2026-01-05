@@ -11409,14 +11409,6 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleSendSLANotifications())
     }
     
-    // --- LICENSE REMINDERS ---
-    if (route === '/assets/check-expiring' && method === 'GET') {
-      return handleCORS(await handleCheckExpiringAssets(searchParams))
-    }
-    if (route === '/assets/send-reminders' && method === 'POST') {
-      return handleCORS(await handleSendAssetReminders())
-    }
-    
     // --- AI DAILY ASSISTANT ---
     if (route === '/ai/daily-summary' && method === 'GET') {
       return handleCORS(await handleGetDailySummary(searchParams))

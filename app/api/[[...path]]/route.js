@@ -1810,7 +1810,6 @@ async function handleUpdateSetting(body) {
   
   return NextResponse.json(data?.[0] || { success: true })
 }
-}
 
 async function handleBulkUpdateSettings(body) {
   const { settings, userId } = body

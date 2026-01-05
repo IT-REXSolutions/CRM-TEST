@@ -6629,7 +6629,7 @@ async function handleGetChatwootConversations(params) {
 
 async function handleN8nTicketCreated(body) {
   // This endpoint receives data from n8n when a ticket should be created
-  const { subject, description, priority, organization_id, contact_id, channel, source, custom_fields } = body
+  const { subject, description, priority, organization_id, contact_id, source, custom_fields } = body
   
   try {
     const ticketNumber = `N8N-${Date.now()}`
@@ -6645,7 +6645,6 @@ async function handleN8nTicketCreated(body) {
         status: 'new',
         organization_id,
         contact_id,
-        channel: channel || 'automation',
         source: source || 'n8n',
       }])
       .select()

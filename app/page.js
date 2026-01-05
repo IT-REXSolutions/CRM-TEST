@@ -3181,6 +3181,14 @@ function InboxPage({ currentUser }) {
   const [classifying, setClassifying] = useState(false)
   const [ticketTypes, setTicketTypes] = useState([])
   
+  // M365 Mailbox State
+  const [mailboxes, setMailboxes] = useState([])
+  const [selectedMailbox, setSelectedMailbox] = useState(null)
+  const [mailboxEmails, setMailboxEmails] = useState([])
+  const [loadingEmails, setLoadingEmails] = useState(false)
+  const [mailboxStats, setMailboxStats] = useState(null)
+  const [activeView, setActiveView] = useState('conversations') // 'conversations' | 'mailbox'
+  
   const loadConversations = useCallback(async () => {
     setLoading(true)
     const params = filter !== 'all' ? `?status=${filter}` : ''
@@ -3194,10 +3202,50 @@ function InboxPage({ currentUser }) {
     setTicketTypes(Array.isArray(data) ? data : [])
   }, [])
   
+  const loadMailboxes = useCallback(async () => {
+    try {
+      const data = await api.fetch('/m365/mailboxes')
+      setMailboxes(Array.isArray(data) ? data : [])
+      
+      // Also load dashboard stats
+      const stats = await api.fetch('/m365/dashboard')
+      setMailboxStats(stats)
+    } catch (error) {
+      console.error('Failed to load mailboxes:', error)
+    }
+  }, [])
+  
+  const loadMailboxEmails = useCallback(async (mailboxId, filterType = 'all') => {
+    if (!mailboxId) return
+    setLoadingEmails(true)
+    try {
+      const params = filterType !== 'all' ? `?filter=${filterType}` : ''
+      const data = await api.fetch(`/m365/mailboxes/${mailboxId}/messages${params}`)
+      setMailboxEmails(data.messages || [])
+    } catch (error) {
+      toast.error('E-Mails konnten nicht geladen werden')
+      setMailboxEmails([])
+    }
+    setLoadingEmails(false)
+  }, [])
+  
   useEffect(() => {
     loadConversations()
     loadTicketTypes()
-  }, [loadConversations, loadTicketTypes])
+    loadMailboxes()
+  }, [loadConversations, loadTicketTypes, loadMailboxes])
+  
+  useEffect(() => {
+    if (selectedMailbox) {
+      loadMailboxEmails(selectedMailbox.id)
+    }
+  }, [selectedMailbox, loadMailboxEmails])
+  
+  const handleSelectMailbox = (mailbox) => {
+    setSelectedMailbox(mailbox)
+    setActiveView('mailbox')
+    setSelectedConversation(null)
+  }
   
   const handleClassify = async (conversation) => {
     if (!conversation.body) return
@@ -3237,7 +3285,6 @@ function InboxPage({ currentUser }) {
         })
       })
       
-      // Update conversation with ticket link
       await api.fetch(`/conversations/${conversation.id}/process`, {
         method: 'POST',
         body: JSON.stringify({ ticket_id: ticket.id, processed_by_id: currentUser?.id })
@@ -3247,6 +3294,33 @@ function InboxPage({ currentUser }) {
       loadConversations()
     } catch (error) {
       toast.error('Fehler beim Erstellen des Tickets')
+    }
+  }
+  
+  const handleEmailToTicket = async (email) => {
+    if (!selectedMailbox) return
+    try {
+      const result = await api.fetch(`/m365/mailboxes/${selectedMailbox.id}/messages/${email.id}/to-ticket`, {
+        method: 'POST',
+        body: JSON.stringify({ created_by_id: currentUser?.id })
+      })
+      toast.success(`Ticket #${result.ticket_number} erstellt`)
+      loadMailboxEmails(selectedMailbox.id)
+    } catch (error) {
+      toast.error('Ticket konnte nicht erstellt werden')
+    }
+  }
+  
+  const handleMarkAsRead = async (email, isRead = true) => {
+    if (!selectedMailbox) return
+    try {
+      await api.fetch(`/m365/mailboxes/${selectedMailbox.id}/messages/${email.id}/read`, {
+        method: 'POST',
+        body: JSON.stringify({ isRead })
+      })
+      loadMailboxEmails(selectedMailbox.id)
+    } catch (error) {
+      toast.error('Status konnte nicht geändert werden')
     }
   }
   
@@ -3274,50 +3348,144 @@ function InboxPage({ currentUser }) {
     return colors[type] || 'bg-slate-100 text-slate-700'
   }
   
+  const getMailboxIcon = (type) => {
+    switch (type) {
+      case 'service': return <Cog className="w-4 h-4" />
+      case 'shared': return <Users className="w-4 h-4" />
+      default: return <Mail className="w-4 h-4" />
+    }
+  }
+  
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'connected': return 'text-green-500'
+      case 'token_expired': return 'text-amber-500'
+      case 'disconnected': return 'text-red-500'
+      default: return 'text-slate-400'
+    }
+  }
+  
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Posteingang</h1>
-          <p className="text-muted-foreground">Zentrale Inbox für alle eingehenden Nachrichten</p>
+    <div className="flex h-[calc(100vh-64px)]">
+      {/* Left Sidebar - Mailboxes */}
+      <div className="w-64 border-r bg-slate-50 flex flex-col">
+        <div className="p-4 border-b">
+          <h2 className="font-semibold text-sm">Posteingänge</h2>
         </div>
-        <div className="flex gap-2">
-          <Select value={filter} onValueChange={setFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Alle</SelectItem>
-              <SelectItem value="new">Neu</SelectItem>
-              <SelectItem value="read">Gelesen</SelectItem>
-              <SelectItem value="processed">Verarbeitet</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={loadConversations}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Aktualisieren
-          </Button>
+        
+        {/* General Inbox */}
+        <div 
+          className={`px-4 py-3 cursor-pointer hover:bg-slate-100 flex items-center gap-3 ${activeView === 'conversations' ? 'bg-slate-100 border-l-2 border-blue-500' : ''}`}
+          onClick={() => { setActiveView('conversations'); setSelectedMailbox(null); }}
+        >
+          <Inbox className="w-5 h-5 text-slate-600" />
+          <div className="flex-1">
+            <span className="font-medium text-sm">Alle Nachrichten</span>
+            <p className="text-xs text-muted-foreground">{conversations.length} Konversationen</p>
+          </div>
         </div>
+        
+        <Separator />
+        
+        {/* M365 Mailboxes */}
+        <div className="px-4 py-2">
+          <span className="text-xs font-semibold text-muted-foreground uppercase">Microsoft 365</span>
+        </div>
+        
+        <ScrollArea className="flex-1">
+          {mailboxes.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-muted-foreground">
+              <p>Keine Mailboxen verbunden</p>
+              <Button variant="link" size="sm" className="p-0 h-auto mt-1" onClick={() => window.location.href = '/settings?tab=email'}>
+                Mailbox verbinden →
+              </Button>
+            </div>
+          ) : (
+            mailboxes.map((mailbox) => (
+              <div 
+                key={mailbox.id}
+                className={`px-4 py-3 cursor-pointer hover:bg-slate-100 flex items-center gap-3 ${selectedMailbox?.id === mailbox.id ? 'bg-slate-100 border-l-2 border-blue-500' : ''}`}
+                onClick={() => handleSelectMailbox(mailbox)}
+              >
+                <div className={getStatusColor(mailbox.status)}>
+                  {getMailboxIcon(mailbox.mailbox_type)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium text-sm truncate block">{mailbox.display_name || mailbox.email}</span>
+                  <p className="text-xs text-muted-foreground truncate">{mailbox.email}</p>
+                </div>
+                {mailbox.unread_count > 0 && (
+                  <Badge className="bg-blue-500 text-white text-xs">{mailbox.unread_count}</Badge>
+                )}
+              </div>
+            ))
+          )}
+        </ScrollArea>
+        
+        {/* Dashboard Stats */}
+        {mailboxStats && (
+          <div className="p-4 border-t bg-white">
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div>
+                <div className="text-lg font-bold">{mailboxStats.total_unread}</div>
+                <div className="text-xs text-muted-foreground">Ungelesen</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold text-green-600">{mailboxStats.active_mailboxes}</div>
+                <div className="text-xs text-muted-foreground">Verbunden</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Conversation List */}
-        <div className="lg:col-span-1">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Nachrichten ({conversations.length})</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ScrollArea className="h-[calc(100vh-280px)]">
-                {loading ? (
-                  <div className="p-4 text-center">
-                    <Loader2 className="w-6 h-6 animate-spin mx-auto" />
-                  </div>
-                ) : conversations.length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground">
-                    <Inbox className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                    <p>Keine Nachrichten vorhanden</p>
-                    <p className="text-sm mt-2">Neue E-Mails und Anfragen erscheinen hier</p>
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
+        {activeView === 'conversations' ? (
+          /* Conversations View */
+          <div className="p-6 flex-1 overflow-auto">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h1 className="text-2xl font-bold">Posteingang</h1>
+                <p className="text-muted-foreground">Zentrale Inbox für alle eingehenden Nachrichten</p>
+              </div>
+              <div className="flex gap-2">
+                <Select value={filter} onValueChange={setFilter}>
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Alle</SelectItem>
+                    <SelectItem value="new">Neu</SelectItem>
+                    <SelectItem value="read">Gelesen</SelectItem>
+                    <SelectItem value="processed">Verarbeitet</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" onClick={loadConversations}>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Aktualisieren
+                </Button>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Conversation List */}
+              <div className="lg:col-span-1">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm">Nachrichten ({conversations.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <ScrollArea className="h-[calc(100vh-320px)]">
+                      {loading ? (
+                        <div className="p-4 text-center">
+                          <Loader2 className="w-6 h-6 animate-spin mx-auto" />
+                        </div>
+                      ) : conversations.length === 0 ? (
+                        <div className="p-8 text-center text-muted-foreground">
+                          <Inbox className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                          <p>Keine Nachrichten vorhanden</p>
+                          <p className="text-sm mt-2">Neue E-Mails und Anfragen erscheinen hier</p>
                   </div>
                 ) : (
                   <div className="divide-y">

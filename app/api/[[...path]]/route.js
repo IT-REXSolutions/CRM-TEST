@@ -1639,20 +1639,43 @@ async function handleDeleteAutomation(id) {
 async function handleGetRecurringTickets() {
   const { data, error } = await supabaseAdmin
     .from('recurring_tickets')
-    .select(`
-      *,
-      organizations (name),
-      assignee:users (first_name, last_name),
-      sla_profiles (name)
-    `)
+    .select('*')
     .order('name')
   
   if (error) {
-    // Table might not exist
-    if (error.code === '42P01') return NextResponse.json([])
+    // Table might not exist or other error
+    if (error.code === '42P01' || error.message.includes('does not exist')) {
+      return NextResponse.json([])
+    }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  return NextResponse.json(data || [])
+  
+  // Fetch related data separately if needed
+  const enrichedData = await Promise.all((data || []).map(async (item) => {
+    const result = { ...item }
+    
+    if (item.organization_id) {
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('name')
+        .eq('id', item.organization_id)
+        .single()
+      result.organizations = org
+    }
+    
+    if (item.assignee_id) {
+      const { data: user } = await supabaseAdmin
+        .from('users')
+        .select('first_name, last_name')
+        .eq('id', item.assignee_id)
+        .single()
+      result.assignee = user
+    }
+    
+    return result
+  }))
+  
+  return NextResponse.json(enrichedData)
 }
 
 async function handleCreateRecurringTicket(body) {

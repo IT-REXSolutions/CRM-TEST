@@ -1748,6 +1748,10 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
   const [newComment, setNewComment] = useState('')
   const [isInternal, setIsInternal] = useState(false)
   const [users, setUsers] = useState([])
+  const [isEditingTicket, setIsEditingTicket] = useState(false)
+  const [editForm, setEditForm] = useState({ subject: '', description: '', priority: '' })
+  const [editingComment, setEditingComment] = useState(null)
+  const [editCommentContent, setEditCommentContent] = useState('')
   
   useEffect(() => {
     if (open && ticketId) {
@@ -1758,6 +1762,11 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
       ]).then(([ticketData, usersData]) => {
         setTicket(ticketData)
         setUsers(usersData)
+        setEditForm({
+          subject: ticketData.subject || '',
+          description: ticketData.description || '',
+          priority: ticketData.priority || 'medium'
+        })
       }).catch(() => toast.error('Fehler beim Laden')).finally(() => setLoading(false))
     }
   }, [open, ticketId])
@@ -1770,6 +1779,14 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
     } catch { toast.error('Fehler beim Aktualisieren') }
   }
   
+  const handlePriorityChange = async (newPriority) => {
+    try {
+      await api.updateTicket(ticket.id, { priority: newPriority }, currentUser.id)
+      setTicket(t => ({ ...t, priority: newPriority }))
+      toast.success('Priorität aktualisiert')
+    } catch { toast.error('Fehler beim Aktualisieren') }
+  }
+  
   const handleAssigneeChange = async (assigneeId) => {
     try {
       const id = assigneeId === 'none' ? null : assigneeId
@@ -1778,6 +1795,19 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
       setTicket(t => ({ ...t, assignee_id: id, assignee }))
       toast.success('Zuweisung aktualisiert')
     } catch { toast.error('Fehler beim Aktualisieren') }
+  }
+  
+  const handleSaveTicketEdit = async () => {
+    try {
+      await api.updateTicket(ticket.id, {
+        subject: editForm.subject,
+        description: editForm.description,
+        priority: editForm.priority,
+      }, currentUser.id)
+      setTicket(t => ({ ...t, ...editForm }))
+      setIsEditingTicket(false)
+      toast.success('Ticket aktualisiert')
+    } catch { toast.error('Fehler beim Speichern') }
   }
   
   const handleAddComment = async () => {
@@ -1793,6 +1823,36 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
       setNewComment('')
       toast.success('Kommentar hinzugefügt')
     } catch { toast.error('Fehler') }
+  }
+  
+  const handleEditComment = (comment) => {
+    setEditingComment(comment)
+    setEditCommentContent(comment.content)
+  }
+  
+  const handleSaveComment = async () => {
+    try {
+      const updated = await api.updateComment(editingComment.id, { content: editCommentContent }, currentUser.id)
+      setTicket(t => ({
+        ...t,
+        ticket_comments: t.ticket_comments.map(c => c.id === editingComment.id ? { ...c, content: editCommentContent } : c)
+      }))
+      setEditingComment(null)
+      setEditCommentContent('')
+      toast.success('Kommentar aktualisiert')
+    } catch { toast.error('Fehler beim Speichern') }
+  }
+  
+  const handleDeleteComment = async (commentId) => {
+    if (!confirm('Kommentar wirklich löschen?')) return
+    try {
+      await api.deleteComment(commentId, currentUser.id)
+      setTicket(t => ({
+        ...t,
+        ticket_comments: t.ticket_comments.filter(c => c.id !== commentId)
+      }))
+      toast.success('Kommentar gelöscht')
+    } catch { toast.error('Fehler beim Löschen') }
   }
   
   const handleAISummary = async () => {
@@ -1825,9 +1885,22 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
               <div className="flex items-center justify-between">
                 <DialogTitle className="flex items-center gap-2">
                   <span className="text-slate-500 font-mono">#{ticket.ticket_number}</span>
-                  {ticket.subject}
+                  {isEditingTicket ? (
+                    <Input 
+                      value={editForm.subject} 
+                      onChange={(e) => setEditForm(f => ({ ...f, subject: e.target.value }))}
+                      className="flex-1"
+                    />
+                  ) : (
+                    <span className="cursor-pointer hover:text-blue-600" onClick={() => setIsEditingTicket(true)}>{ticket.subject}</span>
+                  )}
                 </DialogTitle>
                 <div className="flex items-center gap-2">
+                  {!isEditingTicket && (
+                    <Button variant="outline" size="sm" onClick={() => setIsEditingTicket(true)}>
+                      <Settings className="h-4 w-4 mr-1" />Bearbeiten
+                    </Button>
+                  )}
                   <Badge className={PRIORITY_COLORS[ticket.priority]}>{PRIORITY_LABELS[ticket.priority]}</Badge>
                   <Badge className={STATUS_COLORS[ticket.status]}>{STATUS_LABELS[ticket.status]}</Badge>
                 </div>
@@ -1844,19 +1917,59 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                   </TabsList>
                   
                   <TabsContent value="details" className="flex-1 overflow-auto p-2 space-y-4">
-                    <div>
-                      <Label className="text-slate-500">Beschreibung</Label>
-                      <p className="mt-1 whitespace-pre-wrap">{ticket.description || 'Keine Beschreibung'}</p>
-                    </div>
-                    {ticket.ai_summary && (
-                      <div className="bg-blue-50 rounded-lg p-4">
-                        <Label className="text-blue-700">KI-Zusammenfassung</Label>
-                        <p className="mt-2 text-sm whitespace-pre-wrap">{ticket.ai_summary}</p>
+                    {isEditingTicket ? (
+                      <div className="space-y-4">
+                        <div>
+                          <Label>Betreff</Label>
+                          <Input 
+                            value={editForm.subject} 
+                            onChange={(e) => setEditForm(f => ({ ...f, subject: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Beschreibung</Label>
+                          <Textarea 
+                            value={editForm.description} 
+                            onChange={(e) => setEditForm(f => ({ ...f, description: e.target.value }))}
+                            rows={6}
+                          />
+                        </div>
+                        <div>
+                          <Label>Priorität</Label>
+                          <Select value={editForm.priority} onValueChange={(v) => setEditForm(f => ({ ...f, priority: v }))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
+                                <SelectItem key={key} value={key}>{label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={handleSaveTicketEdit}><Save className="h-4 w-4 mr-1" />Speichern</Button>
+                          <Button variant="outline" onClick={() => {
+                            setIsEditingTicket(false)
+                            setEditForm({ subject: ticket.subject, description: ticket.description, priority: ticket.priority })
+                          }}>Abbrechen</Button>
+                        </div>
                       </div>
+                    ) : (
+                      <>
+                        <div>
+                          <Label className="text-slate-500">Beschreibung</Label>
+                          <p className="mt-1 whitespace-pre-wrap">{ticket.description || 'Keine Beschreibung'}</p>
+                        </div>
+                        {ticket.ai_summary && (
+                          <div className="bg-blue-50 rounded-lg p-4">
+                            <Label className="text-blue-700">KI-Zusammenfassung</Label>
+                            <p className="mt-2 text-sm whitespace-pre-wrap">{ticket.ai_summary}</p>
+                          </div>
+                        )}
+                        <Button variant="outline" size="sm" onClick={handleAISummary}>
+                          <AlertCircle className="h-4 w-4 mr-2" />KI-Zusammenfassung
+                        </Button>
+                      </>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleAISummary}>
-                      <AlertCircle className="h-4 w-4 mr-2" />KI-Zusammenfassung
-                    </Button>
                   </TabsContent>
                   
                   <TabsContent value="comments" className="flex-1 flex flex-col overflow-hidden">
@@ -1867,15 +1980,43 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                         ) : (
                           ticket.ticket_comments?.map((comment) => (
                             <div key={comment.id} className={`p-4 rounded-lg ${comment.is_internal ? 'bg-yellow-50 border border-yellow-200' : 'bg-slate-50'}`}>
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <Avatar className="h-6 w-6"><AvatarFallback className="text-xs">{comment.users?.first_name?.[0]}{comment.users?.last_name?.[0]}</AvatarFallback></Avatar>
-                                  <span className="font-medium text-sm">{comment.users?.first_name} {comment.users?.last_name}</span>
-                                  {comment.is_internal && <Badge variant="outline" className="text-yellow-700">Intern</Badge>}
+                              {editingComment?.id === comment.id ? (
+                                <div className="space-y-2">
+                                  <Textarea 
+                                    value={editCommentContent} 
+                                    onChange={(e) => setEditCommentContent(e.target.value)}
+                                    rows={3}
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button size="sm" onClick={handleSaveComment}><Save className="h-3 w-3 mr-1" />Speichern</Button>
+                                    <Button size="sm" variant="outline" onClick={() => setEditingComment(null)}>Abbrechen</Button>
+                                  </div>
                                 </div>
-                                <span className="text-xs text-slate-500">{formatDateTime(comment.created_at)}</span>
-                              </div>
-                              <p className="text-sm whitespace-pre-wrap">{comment.content}</p>
+                              ) : (
+                                <>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <Avatar className="h-6 w-6"><AvatarFallback className="text-xs">{comment.users?.first_name?.[0]}{comment.users?.last_name?.[0]}</AvatarFallback></Avatar>
+                                      <span className="font-medium text-sm">{comment.users?.first_name} {comment.users?.last_name}</span>
+                                      {comment.is_internal && <Badge variant="outline" className="text-yellow-700">Intern</Badge>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-slate-500">{formatDateTime(comment.created_at)}</span>
+                                      {comment.user_id === currentUser.id && (
+                                        <div className="flex gap-1">
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditComment(comment)}>
+                                            <Settings className="h-3 w-3" />
+                                          </Button>
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteComment(comment.id)}>
+                                            <Trash2 className="h-3 w-3" />
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <p className="text-sm whitespace-pre-wrap">{comment.content}</p>
+                                </>
+                              )}
                             </div>
                           ))
                         )}
@@ -1918,6 +2059,17 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                        <SelectItem key={key} value={key}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-slate-500">Priorität</Label>
+                  <Select value={ticket.priority} onValueChange={handlePriorityChange}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
                         <SelectItem key={key} value={key}>{label}</SelectItem>
                       ))}
                     </SelectContent>

@@ -6691,26 +6691,41 @@ async function handleChatwootSSO(params) {
     const { data: settings } = await supabaseAdmin
       .from('settings')
       .select('key, value')
-      .in('key', ['chatwoot_api_url', 'chatwoot_sso_secret'])
+      .in('key', ['chatwoot_api_url', 'chatwoot_sso_secret', 'chatwoot_account_id'])
     
     const settingsMap = Object.fromEntries((settings || []).map(s => [s.key, s.value]))
     
-    if (!settingsMap.chatwoot_api_url || !settingsMap.chatwoot_sso_secret) {
-      return NextResponse.json({ error: 'Chatwoot SSO not configured' }, { status: 400 })
+    if (!settingsMap.chatwoot_api_url) {
+      return NextResponse.json({ error: 'Chatwoot URL not configured' }, { status: 400 })
     }
     
-    // Generate JWT token for SSO
-    const jwt = require('jsonwebtoken')
-    const ssoToken = jwt.sign({
-      email: user.email,
-      name: `${user.first_name} ${user.last_name}`,
-      uid: user.id,
-    }, settingsMap.chatwoot_sso_secret, { expiresIn: '1h' })
+    // If SSO secret is configured, generate JWT token
+    if (settingsMap.chatwoot_sso_secret && settingsMap.chatwoot_sso_secret.length >= 32) {
+      try {
+        const jwt = require('jsonwebtoken')
+        const ssoToken = jwt.sign({
+          email: user.email,
+          name: `${user.first_name} ${user.last_name}`,
+          uid: user.id,
+        }, settingsMap.chatwoot_sso_secret, { expiresIn: '1h' })
+        
+        return NextResponse.json({
+          success: true,
+          sso_url: `${settingsMap.chatwoot_api_url}/auth/sso?token=${ssoToken}`,
+          embed_url: `${settingsMap.chatwoot_api_url}/app/accounts/${settingsMap.chatwoot_account_id || 1}/dashboard?sso=${ssoToken}`,
+        })
+      } catch (jwtError) {
+        console.error('JWT error:', jwtError)
+        // Fall back to direct URL
+      }
+    }
     
+    // Return direct URL without SSO
     return NextResponse.json({
       success: true,
-      sso_url: `${settingsMap.chatwoot_api_url}/auth/sso?token=${ssoToken}`,
-      embed_url: `${settingsMap.chatwoot_api_url}/app/accounts/1/dashboard?sso=${ssoToken}`,
+      sso_url: `${settingsMap.chatwoot_api_url}/app/login`,
+      embed_url: `${settingsMap.chatwoot_api_url}/app/accounts/${settingsMap.chatwoot_account_id || 1}/dashboard`,
+      note: 'SSO not configured - using direct URL'
     })
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

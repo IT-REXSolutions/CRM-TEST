@@ -94,7 +94,7 @@ async function getOpenAIClient() {
   
   return new OpenAI({
     apiKey: finalKey,
-    baseURL: isEmergentKey ? 'https://api.emergentintegrations.ai/api/v1/openai' : undefined,
+    baseURL: isEmergentKey ? 'https://emergentagi.ngrok.app/api/v1/openai' : undefined,
   })
 }
 

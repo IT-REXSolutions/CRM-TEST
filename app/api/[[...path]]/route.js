@@ -10725,7 +10725,6 @@ async function handleRoute(request, { params }) {
       let query = supabaseAdmin
         .from('kb_articles')
         .select('*, created_by:users!created_by_id(first_name, last_name)')
-        .eq('is_archived', false)
         .order('created_at', { ascending: false })
       
       // Filter by organization visibility for customers

@@ -2119,6 +2119,124 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleAIParseDictation(body))
     }
     
+    // --- SETTINGS ---
+    if (route === '/settings' && method === 'GET') {
+      return handleCORS(await handleGetSettings(searchParams.category))
+    }
+    if (route === '/settings' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleUpdateSetting(body))
+    }
+    if (route === '/settings/bulk' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleBulkUpdateSettings(body))
+    }
+    
+    // --- AUTOMATIONS ---
+    if (route === '/automations' && method === 'GET') {
+      return handleCORS(await handleGetAutomations())
+    }
+    if (route === '/automations' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateAutomation(body))
+    }
+    if (route.match(/^\/automations\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateAutomation(id, body))
+    }
+    if (route.match(/^\/automations\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteAutomation(id))
+    }
+    
+    // --- RECURRING TICKETS ---
+    if (route === '/recurring-tickets' && method === 'GET') {
+      return handleCORS(await handleGetRecurringTickets())
+    }
+    if (route === '/recurring-tickets' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateRecurringTicket(body))
+    }
+    if (route.match(/^\/recurring-tickets\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateRecurringTicket(id, body))
+    }
+    if (route.match(/^\/recurring-tickets\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteRecurringTicket(id))
+    }
+    
+    // --- INVOICE DRAFTS ---
+    if (route === '/invoice-drafts' && method === 'GET') {
+      return handleCORS(await handleGetInvoiceDrafts(searchParams))
+    }
+    if (route === '/invoice-drafts' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateInvoiceDraft(body))
+    }
+    
+    // --- SLA PROFILES (Extended) ---
+    if (route === '/sla-profiles' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateSLAProfile(body))
+    }
+    if (route.match(/^\/sla-profiles\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateSLAProfile(id, body))
+    }
+    if (route.match(/^\/sla-profiles\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteSLAProfile(id))
+    }
+    
+    // --- TAGS (Extended) ---
+    if (route === '/tags' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateTag(body))
+    }
+    if (route.match(/^\/tags\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateTag(id, body))
+    }
+    if (route.match(/^\/tags\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTag(id))
+    }
+    
+    // --- TEMPLATES ---
+    if (route === '/templates' && method === 'GET') {
+      return handleCORS(await handleGetTemplates())
+    }
+    if (route === '/templates' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateTemplate(body))
+    }
+    if (route.match(/^\/templates\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateTemplate(id, body))
+    }
+    if (route.match(/^\/templates\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTemplate(id))
+    }
+    
+    // --- TEST CONNECTION ---
+    if (route === '/test-connection' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleTestConnection(body))
+    }
+    
+    // --- WEBHOOKS ---
+    if (route === '/webhooks/placetel' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handlePlacetelWebhook(body))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

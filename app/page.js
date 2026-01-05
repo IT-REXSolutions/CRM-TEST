@@ -288,6 +288,278 @@ function formatDateTime(date) {
 }
 
 // ============================================
+// DICTATION COMPONENT (Global - Phase 5)
+// ============================================
+
+function DictationButton({ type = 'ticket', onComplete, ticketId, organizationId, className = '' }) {
+  const [isRecording, setIsRecording] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [mediaRecorder, setMediaRecorder] = useState(null)
+  const [audioChunks, setAudioChunks] = useState([])
+  
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      
+      const chunks = []
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data)
+      }
+      
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop())
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' })
+        await processAudio(audioBlob)
+      }
+      
+      recorder.start()
+      setMediaRecorder(recorder)
+      setAudioChunks(chunks)
+      setIsRecording(true)
+      toast.info('Aufnahme gestartet... Sprechen Sie jetzt.')
+    } catch (error) {
+      toast.error('Mikrofon-Zugriff verweigert')
+    }
+  }
+  
+  const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop()
+      setIsRecording(false)
+    }
+  }
+  
+  const processAudio = async (audioBlob) => {
+    setIsProcessing(true)
+    try {
+      // Convert to base64
+      const reader = new FileReader()
+      reader.readAsDataURL(audioBlob)
+      reader.onloadend = async () => {
+        const base64Audio = reader.result.split(',')[1]
+        
+        // Transcribe and parse
+        const result = await api.transcribeDictation({
+          audio_data: base64Audio,
+          type: type,
+        })
+        
+        if (result.success && result.parsed) {
+          toast.success('Diktat erfolgreich verarbeitet')
+          
+          // Create the entity based on type
+          let created = null
+          switch (type) {
+            case 'ticket':
+              created = await api.dictationCreateTicket({
+                transcription: result.transcription,
+                parsed_data: result.parsed,
+                organization_id: organizationId,
+              })
+              break
+            case 'task':
+              created = await api.dictationCreateTask({
+                transcription: result.transcription,
+                parsed_data: result.parsed,
+              })
+              break
+            case 'comment':
+              created = await api.dictationCreateComment({
+                transcription: result.transcription,
+                parsed_data: result.parsed,
+                ticket_id: ticketId,
+              })
+              break
+            case 'time':
+              created = await api.dictationCreateTimeEntry({
+                transcription: result.transcription,
+                parsed_data: result.parsed,
+                ticket_id: ticketId,
+                organization_id: organizationId,
+              })
+              break
+          }
+          
+          if (onComplete) onComplete(created, result)
+        } else {
+          toast.error(result.error || 'Diktat konnte nicht verarbeitet werden')
+        }
+        setIsProcessing(false)
+      }
+    } catch (error) {
+      toast.error('Fehler bei der Verarbeitung')
+      setIsProcessing(false)
+    }
+  }
+  
+  const labels = {
+    ticket: 'Ticket diktieren',
+    task: 'Aufgabe diktieren',
+    comment: 'Kommentar diktieren',
+    time: 'Zeit diktieren',
+  }
+  
+  return (
+    <Button
+      variant={isRecording ? 'destructive' : 'outline'}
+      size="sm"
+      onClick={isRecording ? stopRecording : startRecording}
+      disabled={isProcessing}
+      className={className}
+    >
+      {isProcessing ? (
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+      ) : isRecording ? (
+        <MicOff className="h-4 w-4 mr-2" />
+      ) : (
+        <Mic className="h-4 w-4 mr-2" />
+      )}
+      {isProcessing ? 'Verarbeite...' : isRecording ? 'Stoppen' : labels[type]}
+    </Button>
+  )
+}
+
+// ============================================
+// INVOICE CREATION DIALOG (Phase 6)
+// ============================================
+
+function CreateInvoiceDialog({ organizationId, open, onClose, onCreated }) {
+  const [loading, setLoading] = useState(false)
+  const [timeEntries, setTimeEntries] = useState([])
+  const [selectedEntries, setSelectedEntries] = useState([])
+  
+  useEffect(() => {
+    if (open && organizationId) {
+      loadTimeEntries()
+    }
+  }, [open, organizationId])
+  
+  const loadTimeEntries = async () => {
+    try {
+      const entries = await api.getTimeEntries({ 
+        organization_id: organizationId,
+        is_billable: true,
+        is_invoiced: false,
+      })
+      setTimeEntries(entries.filter(e => e.is_billable && !e.is_invoiced))
+      setSelectedEntries(entries.filter(e => e.is_billable && !e.is_invoiced).map(e => e.id))
+    } catch (error) {
+      toast.error('Fehler beim Laden der Zeiteinträge')
+    }
+  }
+  
+  const handleCreate = async () => {
+    if (selectedEntries.length === 0) {
+      toast.error('Keine Zeiteinträge ausgewählt')
+      return
+    }
+    
+    setLoading(true)
+    try {
+      const invoice = await api.createInvoiceFromTime({
+        organization_id: organizationId,
+        time_entry_ids: selectedEntries,
+      })
+      toast.success('Rechnungsentwurf erstellt')
+      onCreated?.(invoice)
+      onClose()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen der Rechnung')
+    }
+    setLoading(false)
+  }
+  
+  const toggleEntry = (id) => {
+    setSelectedEntries(prev => 
+      prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]
+    )
+  }
+  
+  const totalMinutes = timeEntries
+    .filter(e => selectedEntries.includes(e.id))
+    .reduce((sum, e) => sum + (e.duration_minutes || 0), 0)
+  
+  const totalAmount = timeEntries
+    .filter(e => selectedEntries.includes(e.id))
+    .reduce((sum, e) => sum + ((e.duration_minutes / 60) * (e.hourly_rate || 85)), 0)
+  
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Rechnung erstellen</DialogTitle>
+          <DialogDescription>
+            Wählen Sie die abrechenbaren Zeiteinträge für diese Rechnung
+          </DialogDescription>
+        </DialogHeader>
+        
+        {timeEntries.length === 0 ? (
+          <div className="py-8 text-center text-slate-500">
+            Keine abrechenbaren Zeiteinträge vorhanden
+          </div>
+        ) : (
+          <>
+            <div className="max-h-64 overflow-auto border rounded-lg">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10"></TableHead>
+                    <TableHead>Beschreibung</TableHead>
+                    <TableHead className="w-24">Dauer</TableHead>
+                    <TableHead className="w-24">Betrag</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {timeEntries.map(entry => (
+                    <TableRow key={entry.id} className="cursor-pointer" onClick={() => toggleEntry(entry.id)}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedEntries.includes(entry.id)}
+                          onChange={() => toggleEntry(entry.id)}
+                          className="rounded"
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium">{entry.description}</TableCell>
+                      <TableCell>{formatDuration(entry.duration_minutes)}</TableCell>
+                      <TableCell>
+                        €{((entry.duration_minutes / 60) * (entry.hourly_rate || 85)).toFixed(2)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            
+            <div className="flex justify-between items-center pt-4 border-t">
+              <div className="text-sm text-slate-500">
+                {selectedEntries.length} Einträge ausgewählt
+              </div>
+              <div className="text-right">
+                <div className="text-sm text-slate-500">Gesamt: {formatDuration(totalMinutes)}</div>
+                <div className="text-lg font-semibold">€{totalAmount.toFixed(2)} (netto)</div>
+              </div>
+            </div>
+          </>
+        )}
+        
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Abbrechen</Button>
+          <Button 
+            onClick={handleCreate} 
+            disabled={loading || selectedEntries.length === 0}
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CreditCard className="h-4 w-4 mr-2" />}
+            Rechnung erstellen
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ============================================
 // AUTH COMPONENTS
 // ============================================
 

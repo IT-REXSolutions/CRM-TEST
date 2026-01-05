@@ -5222,6 +5222,84 @@ async function handleCreateDynamicForm(body) {
   return NextResponse.json(data)
 }
 
+// Onboarding Request Handlers
+async function handleGetOnboardingRequests(params) {
+  const { status, organization_id, limit } = params
+  
+  let query = supabaseAdmin
+    .from('onboarding_requests')
+    .select('*')
+    .order('start_date', { ascending: true })
+    .limit(parseInt(limit) || 50)
+  
+  if (status) query = query.eq('status', status)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateOnboardingRequest(body) {
+  const { 
+    ticket_id, organization_id, first_name, last_name, email, personal_email,
+    phone, start_date, job_title, department, manager_name, manager_email,
+    location, office_location, needs_email, email_type, email_aliases,
+    distribution_lists, m365_license_type, needs_teams, needs_sharepoint,
+    sharepoint_sites, teams_channels, software_requirements, hardware_requirements,
+    access_permissions, vpn_required, remote_desktop_required, special_requirements
+  } = body
+  
+  if (!ticket_id || !organization_id || !first_name || !last_name || !start_date) {
+    return NextResponse.json({ error: 'Pflichtfelder fehlen (ticket_id, organization_id, first_name, last_name, start_date)' }, { status: 400 })
+  }
+  
+  // Create default checklist
+  const checklist = [
+    { task: 'AD-Account erstellen', status: 'pending' },
+    { task: 'E-Mail-Postfach einrichten', status: 'pending' },
+    { task: 'M365 Lizenz zuweisen', status: 'pending' },
+    { task: 'Teams hinzufügen', status: 'pending' },
+    { task: 'SharePoint-Zugriff', status: 'pending' },
+    { task: 'Hardware vorbereiten', status: 'pending' },
+    { task: 'Zugangsdaten versenden', status: 'pending' },
+  ]
+  
+  if (vpn_required) checklist.push({ task: 'VPN-Zugang einrichten', status: 'pending' })
+  if (remote_desktop_required) checklist.push({ task: 'Remote Desktop einrichten', status: 'pending' })
+  
+  const { data, error } = await supabaseAdmin
+    .from('onboarding_requests')
+    .insert([{
+      id: uuidv4(),
+      ticket_id, organization_id, first_name, last_name, email, personal_email,
+      phone, start_date, job_title, department, manager_name, manager_email,
+      location: location || 'office', office_location, needs_email: needs_email !== false,
+      email_type, email_aliases, distribution_lists, m365_license_type,
+      needs_teams: needs_teams !== false, needs_sharepoint: needs_sharepoint !== false,
+      sharepoint_sites, teams_channels, software_requirements: software_requirements || [],
+      hardware_requirements: hardware_requirements || [], access_permissions: access_permissions || [],
+      vpn_required: vpn_required || false, remote_desktop_required: remote_desktop_required || false,
+      special_requirements, status: 'pending', checklist
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Update ticket to link with onboarding
+  await supabaseAdmin
+    .from('tickets')
+    .update({ ticket_type_code: 'onboarding' })
+    .eq('id', ticket_id)
+  
+  return NextResponse.json(data)
+}
+
 // ============================================
 // MAIN ROUTE HANDLER
 // ============================================

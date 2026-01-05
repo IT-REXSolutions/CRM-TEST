@@ -11182,6 +11182,13 @@ async function handleRoute(request, { params }) {
     }
     
     // --- ASSETS ---
+    // Specific routes must come before generic /:id routes
+    if (route === '/assets/check-expiring' && method === 'GET') {
+      return handleCORS(await handleCheckExpiringAssets(searchParams))
+    }
+    if (route === '/assets/send-reminders' && method === 'POST') {
+      return handleCORS(await handleSendAssetReminders())
+    }
     if (route === '/assets' && method === 'GET') {
       return handleCORS(await handleGetAssets(searchParams))
     }

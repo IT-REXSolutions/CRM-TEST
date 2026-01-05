@@ -10093,6 +10093,15 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       return handleCORS(await handleCreateComment(body))
     }
+    if (route.match(/^\/comments\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateComment(id, body, searchParams.user_id))
+    }
+    if (route.match(/^\/comments\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteComment(id, searchParams.user_id))
+    }
     
     // --- TAGS ---
     if (route === '/tags' && method === 'GET') {

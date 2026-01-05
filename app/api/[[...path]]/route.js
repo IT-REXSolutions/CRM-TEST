@@ -3409,7 +3409,14 @@ async function handleCreateAsset(body) {
 }
 
 async function handleUpdateAsset(id, body) {
-  const { custom_fields, ...assetData } = body
+  const { custom_fields, user_id, ...assetData } = body
+  
+  // Get current asset for audit logging
+  const { data: oldAsset } = await supabaseAdmin
+    .from('assets')
+    .select('*')
+    .eq('id', id)
+    .single()
   
   const { error } = await supabaseAdmin
     .from('assets')
@@ -3432,16 +3439,54 @@ async function handleUpdateAsset(id, body) {
     }
   }
   
+  // Audit log - track what changed
+  const changes = []
+  for (const key of Object.keys(assetData)) {
+    if (oldAsset && oldAsset[key] !== assetData[key]) {
+      changes.push(`${key}: ${oldAsset[key]} → ${assetData[key]}`)
+    }
+  }
+  
+  if (changes.length > 0) {
+    await supabaseAdmin.from('ticket_history').insert([{
+      id: uuidv4(),
+      ticket_id: null,
+      change_type: 'asset_updated',
+      old_value: JSON.stringify({ asset_id: id, name: oldAsset?.name }),
+      new_value: changes.join('; '),
+      changed_by_id: user_id || null,
+      created_at: new Date().toISOString(),
+    }])
+  }
+  
   return NextResponse.json({ success: true })
 }
 
-async function handleDeleteAsset(id) {
+async function handleDeleteAsset(id, userId) {
+  // Get asset info before deleting for audit log
+  const { data: asset } = await supabaseAdmin
+    .from('assets')
+    .select('name, asset_tag')
+    .eq('id', id)
+    .single()
+  
   const { error } = await supabaseAdmin
     .from('assets')
     .delete()
     .eq('id', id)
   
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: 'asset_deleted',
+    old_value: JSON.stringify({ asset_id: id, name: asset?.name, tag: asset?.asset_tag }),
+    changed_by_id: userId || null,
+    created_at: new Date().toISOString(),
+  }])
+  
   return NextResponse.json({ success: true })
 }
 

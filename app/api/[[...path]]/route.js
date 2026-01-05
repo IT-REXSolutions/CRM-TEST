@@ -536,8 +536,8 @@ async function handlePasswordReset(body) {
   try {
     await handleSendEmail({
       to: email,
-      subject: 'Passwort zurücksetzen - ServiceDesk Pro',
-      body: `Hallo ${user.first_name},\n\nSie haben eine Passwort-Zurücksetzung angefordert.\n\nKlicken Sie auf folgenden Link:\n${resetUrl}\n\nDer Link ist 1 Stunde gültig.\n\nFalls Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.\n\nMit freundlichen Grüßen,\nServiceDesk Pro`,
+      subject: 'Passwort zurücksetzen - IT REX ServiceDesk',
+      body: `Hallo ${user.first_name},\n\nSie haben eine Passwort-Zurücksetzung angefordert.\n\nKlicken Sie auf folgenden Link:\n${resetUrl}\n\nDer Link ist 1 Stunde gültig.\n\nFalls Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.\n\nMit freundlichen Grüßen,\nIT REX ServiceDesk`,
     })
   } catch {}
   
@@ -942,7 +942,7 @@ async function handleAdminResetUserPassword(body) {
       await handleSendEmail({
         to: user.email,
         subject: 'Ihr Passwort wurde zurückgesetzt',
-        body: `Hallo ${user.first_name},\n\nIhr Passwort wurde von einem Administrator zurückgesetzt.\n\nBitte melden Sie sich an und ändern Sie Ihr Passwort.\n\nMit freundlichen Grüßen,\nServiceDesk Pro`,
+        body: `Hallo ${user.first_name},\n\nIhr Passwort wurde von einem Administrator zurückgesetzt.\n\nBitte melden Sie sich an und ändern Sie Ihr Passwort.\n\nMit freundlichen Grüßen,\nIT REX ServiceDesk`,
       })
     }
   }
@@ -5184,9 +5184,9 @@ async function handleGetOpenAPISpec() {
   const spec = {
     openapi: '3.0.0',
     info: {
-      title: 'ServiceDesk Pro API',
+      title: 'IT REX ServiceDesk API',
       version: '1.0.0',
-      description: 'Public API for ServiceDesk Pro - Helpdesk & Ticket Management System',
+      description: 'Public API for IT REX ServiceDesk - Helpdesk & Ticket Management System',
     },
     servers: [
       { url: '/api', description: 'API Server' },
@@ -6920,7 +6920,7 @@ async function handleSendEmail(body) {
     }
   }
   
-  const companyName = await getSetting('company_name', 'ServiceDesk Pro')
+  const companyName = await getSetting('company_name', 'IT REX ServiceDesk')
   const senderEmail = await getSetting('smtp_from_email') || await getSetting('smtp_user')
   
   try {
@@ -6999,7 +6999,7 @@ async function handleSendOnboardingWelcome(body) {
     .eq('is_active', true)
     .single()
   
-  const companyName = request.organizations?.name || await getSetting('company_name', 'ServiceDesk Pro')
+  const companyName = request.organizations?.name || await getSetting('company_name', 'IT REX ServiceDesk')
   const agentName = await getSetting('support_team_name', 'IT-Support')
   
   const variables = {
@@ -7053,7 +7053,7 @@ async function handleSendTicketNotification(body) {
     .eq('is_active', true)
     .single()
   
-  const companyName = ticket.organizations?.name || await getSetting('company_name', 'ServiceDesk Pro')
+  const companyName = ticket.organizations?.name || await getSetting('company_name', 'IT REX ServiceDesk')
   const contactName = ticket.contacts 
     ? `${ticket.contacts.first_name || ''} ${ticket.contacts.last_name || ''}`.trim()
     : 'Kunde'
@@ -7455,7 +7455,7 @@ async function handleRoute(request, { params }) {
     // Root endpoint
     if ((route === '/' || route === '/root') && method === 'GET') {
       return handleCORS(NextResponse.json({ 
-        message: 'ServiceDesk Pro API',
+        message: 'IT REX ServiceDesk API',
         version: '2.0.0',
         status: 'running'
       }))

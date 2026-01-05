@@ -4488,17 +4488,23 @@ export default function App() {
     time: 'Zeiterfassung',
     reports: 'Reports',
     settings: 'Einstellungen',
+    inbox: 'Posteingang',
+    onboarding: 'Mitarbeiter On-/Offboarding',
+    knowledge: 'Wissensdatenbank',
   }
   
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />
+      case 'inbox': return <InboxPage currentUser={currentUser} />
       case 'tickets': return <TicketsPage currentUser={currentUser} onOpenTicket={setSelectedTicketId} />
       case 'kanban': return <KanbanPage currentUser={currentUser} />
+      case 'onboarding': return <OnboardingPage currentUser={currentUser} />
       case 'organizations': return <OrganizationsPage />
       case 'users': return <UsersPage />
       case 'assets': return <AssetsPage />
       case 'time': return <TimePage currentUser={currentUser} />
+      case 'knowledge': return <KnowledgeBasePage currentUser={currentUser} />
       case 'reports': return <ReportsPage />
       case 'settings': return <SettingsPage />
       default: return <DashboardPage />

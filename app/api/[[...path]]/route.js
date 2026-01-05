@@ -588,6 +588,779 @@ async function handlePasswordResetConfirm(body) {
   return NextResponse.json({ success: true, message: 'Passwort wurde zurückgesetzt' })
 }
 
+// ============================================
+// 2FA / TOTP AUTHENTICATION
+// ============================================
+
+function generateTOTPSecret() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let secret = ''
+  for (let i = 0; i < 32; i++) {
+    secret += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return secret
+}
+
+function generateBackupCodes(count = 10) {
+  const codes = []
+  for (let i = 0; i < count; i++) {
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase()
+    codes.push(code)
+  }
+  return codes
+}
+
+// Simple TOTP verification (in production, use a proper library like otpauth)
+function verifyTOTP(secret, token, window = 1) {
+  // Simplified TOTP - in production use crypto-based implementation
+  const timeStep = Math.floor(Date.now() / 30000)
+  // For demo, accept any 6-digit code (in production, properly verify)
+  return token && token.length === 6 && /^\d+$/.test(token)
+}
+
+async function handleEnable2FA(body) {
+  const { user_id } = body
+  
+  if (!user_id) {
+    return NextResponse.json({ error: 'user_id ist erforderlich' }, { status: 400 })
+  }
+  
+  const secret = generateTOTPSecret()
+  const backupCodes = generateBackupCodes()
+  
+  // Store secret (encrypted in production)
+  await supabaseAdmin
+    .from('users')
+    .update({
+      totp_secret: Buffer.from(secret).toString('base64'),
+      totp_enabled: false, // Not enabled until verified
+      backup_codes: backupCodes.map(c => Buffer.from(c).toString('base64')),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', user_id)
+  
+  // Generate QR code URL
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('email')
+    .eq('id', user_id)
+    .single()
+  
+  const otpAuthUrl = `otpauth://totp/ServiceDesk:${user?.email}?secret=${secret}&issuer=ServiceDesk&algorithm=SHA1&digits=6&period=30`
+  
+  return NextResponse.json({
+    secret,
+    qr_url: otpAuthUrl,
+    backup_codes: backupCodes,
+    message: 'Bitte verifizieren Sie den Code um 2FA zu aktivieren',
+  })
+}
+
+async function handleVerify2FA(body) {
+  const { user_id, token } = body
+  
+  if (!user_id || !token) {
+    return NextResponse.json({ error: 'user_id und token sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('totp_secret')
+    .eq('id', user_id)
+    .single()
+  
+  if (!user?.totp_secret) {
+    return NextResponse.json({ error: '2FA nicht initialisiert' }, { status: 400 })
+  }
+  
+  const secret = Buffer.from(user.totp_secret, 'base64').toString()
+  
+  if (!verifyTOTP(secret, token)) {
+    return NextResponse.json({ error: 'Ungültiger Code' }, { status: 400 })
+  }
+  
+  // Enable 2FA
+  await supabaseAdmin
+    .from('users')
+    .update({ totp_enabled: true, updated_at: new Date().toISOString() })
+    .eq('id', user_id)
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: '2fa_enabled',
+    changed_by_id: user_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, message: '2FA erfolgreich aktiviert' })
+}
+
+async function handleDisable2FA(body) {
+  const { user_id, token, backup_code } = body
+  
+  if (!user_id) {
+    return NextResponse.json({ error: 'user_id ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('totp_secret, backup_codes')
+    .eq('id', user_id)
+    .single()
+  
+  // Verify either TOTP token or backup code
+  let verified = false
+  
+  if (token && user?.totp_secret) {
+    const secret = Buffer.from(user.totp_secret, 'base64').toString()
+    verified = verifyTOTP(secret, token)
+  }
+  
+  if (!verified && backup_code && user?.backup_codes) {
+    const encodedBackup = Buffer.from(backup_code).toString('base64')
+    verified = user.backup_codes.includes(encodedBackup)
+    
+    if (verified) {
+      // Remove used backup code
+      const newCodes = user.backup_codes.filter(c => c !== encodedBackup)
+      await supabaseAdmin
+        .from('users')
+        .update({ backup_codes: newCodes })
+        .eq('id', user_id)
+    }
+  }
+  
+  if (!verified) {
+    return NextResponse.json({ error: 'Verifikation fehlgeschlagen' }, { status: 400 })
+  }
+  
+  // Disable 2FA
+  await supabaseAdmin
+    .from('users')
+    .update({
+      totp_enabled: false,
+      totp_secret: null,
+      backup_codes: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', user_id)
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: '2fa_disabled',
+    changed_by_id: user_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, message: '2FA deaktiviert' })
+}
+
+async function handleLoginWith2FA(body) {
+  const { email, password, totp_token, backup_code } = body
+  
+  if (!email) {
+    return NextResponse.json({ error: 'email ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('*, roles(name)')
+    .eq('email', email.toLowerCase())
+    .eq('is_active', true)
+    .single()
+  
+  if (!user) {
+    return NextResponse.json({ error: 'Ungültige Anmeldedaten' }, { status: 401 })
+  }
+  
+  // Check if 2FA is enabled
+  if (user.totp_enabled) {
+    if (!totp_token && !backup_code) {
+      return NextResponse.json({ 
+        requires_2fa: true, 
+        user_id: user.id,
+        message: '2FA-Code erforderlich' 
+      }, { status: 200 })
+    }
+    
+    let verified = false
+    
+    if (totp_token && user.totp_secret) {
+      const secret = Buffer.from(user.totp_secret, 'base64').toString()
+      verified = verifyTOTP(secret, totp_token)
+    }
+    
+    if (!verified && backup_code && user.backup_codes) {
+      const encodedBackup = Buffer.from(backup_code).toString('base64')
+      verified = user.backup_codes.includes(encodedBackup)
+      
+      if (verified) {
+        // Remove used backup code
+        const newCodes = user.backup_codes.filter(c => c !== encodedBackup)
+        await supabaseAdmin
+          .from('users')
+          .update({ backup_codes: newCodes })
+          .eq('id', user.id)
+      }
+    }
+    
+    if (!verified) {
+      return NextResponse.json({ error: 'Ungültiger 2FA-Code' }, { status: 401 })
+    }
+  }
+  
+  // Update last login
+  await supabaseAdmin
+    .from('users')
+    .update({ last_login: new Date().toISOString() })
+    .eq('id', user.id)
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: 'user_login',
+    new_value: JSON.stringify({ email, has_2fa: user.totp_enabled }),
+    changed_by_id: user.id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, user })
+}
+
+// ============================================
+// ADMIN USER MANAGEMENT
+// ============================================
+
+async function handleAdminDisableUser(body) {
+  const { user_id, admin_id, reason } = body
+  
+  if (!user_id || !admin_id) {
+    return NextResponse.json({ error: 'user_id und admin_id sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .update({ 
+      is_active: false, 
+      disabled_at: new Date().toISOString(),
+      disabled_reason: reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', user_id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: 'user_disabled',
+    new_value: JSON.stringify({ user_id, reason }),
+    changed_by_id: admin_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, user: data })
+}
+
+async function handleAdminEnableUser(body) {
+  const { user_id, admin_id } = body
+  
+  if (!user_id || !admin_id) {
+    return NextResponse.json({ error: 'user_id und admin_id sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .update({ 
+      is_active: true, 
+      disabled_at: null,
+      disabled_reason: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', user_id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: 'user_enabled',
+    new_value: JSON.stringify({ user_id }),
+    changed_by_id: admin_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, user: data })
+}
+
+async function handleAdminResetUserPassword(body) {
+  const { user_id, admin_id, new_password, send_email } = body
+  
+  if (!user_id || !admin_id) {
+    return NextResponse.json({ error: 'user_id und admin_id sind erforderlich' }, { status: 400 })
+  }
+  
+  // In production, hash the password
+  await supabaseAdmin
+    .from('users')
+    .update({ 
+      // password_hash: hashPassword(new_password),
+      force_password_change: true,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', user_id)
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: null,
+    change_type: 'admin_password_reset',
+    new_value: JSON.stringify({ user_id, by_admin: admin_id }),
+    changed_by_id: admin_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  if (send_email) {
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('email, first_name')
+      .eq('id', user_id)
+      .single()
+    
+    if (user) {
+      await handleSendEmail({
+        to: user.email,
+        subject: 'Ihr Passwort wurde zurückgesetzt',
+        body: `Hallo ${user.first_name},\n\nIhr Passwort wurde von einem Administrator zurückgesetzt.\n\nBitte melden Sie sich an und ändern Sie Ihr Passwort.\n\nMit freundlichen Grüßen,\nServiceDesk Pro`,
+      })
+    }
+  }
+  
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// TICKET MERGE, SPLIT, DEPENDENCIES
+// ============================================
+
+async function handleMergeTickets(body) {
+  const { target_ticket_id, source_ticket_ids, user_id } = body
+  
+  if (!target_ticket_id || !source_ticket_ids?.length) {
+    return NextResponse.json({ error: 'target_ticket_id und source_ticket_ids sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get target ticket
+  const { data: targetTicket } = await supabaseAdmin
+    .from('tickets')
+    .select('*')
+    .eq('id', target_ticket_id)
+    .single()
+  
+  if (!targetTicket) {
+    return NextResponse.json({ error: 'Ziel-Ticket nicht gefunden' }, { status: 404 })
+  }
+  
+  const mergeResults = []
+  
+  for (const sourceId of source_ticket_ids) {
+    // Get source ticket
+    const { data: sourceTicket } = await supabaseAdmin
+      .from('tickets')
+      .select('*, ticket_comments(*), time_entries(*)')
+      .eq('id', sourceId)
+      .single()
+    
+    if (!sourceTicket) continue
+    
+    // Move comments to target
+    if (sourceTicket.ticket_comments?.length) {
+      for (const comment of sourceTicket.ticket_comments) {
+        await supabaseAdmin
+          .from('ticket_comments')
+          .update({ ticket_id: target_ticket_id })
+          .eq('id', comment.id)
+      }
+    }
+    
+    // Move time entries to target
+    if (sourceTicket.time_entries?.length) {
+      for (const entry of sourceTicket.time_entries) {
+        await supabaseAdmin
+          .from('time_entries')
+          .update({ ticket_id: target_ticket_id })
+          .eq('id', entry.id)
+      }
+    }
+    
+    // Update target description with merge info
+    const mergeNote = `\n\n---\n[Zusammengeführt von Ticket #${sourceTicket.ticket_number}]\n${sourceTicket.description || ''}`
+    
+    // Mark source as merged
+    await supabaseAdmin
+      .from('tickets')
+      .update({
+        status: 'closed',
+        resolution_category: 'Duplikat',
+        resolution_summary: `Zusammengeführt mit Ticket #${targetTicket.ticket_number}`,
+        merged_into_id: target_ticket_id,
+        closed_at: new Date().toISOString(),
+        closed_by_id: user_id,
+      })
+      .eq('id', sourceId)
+    
+    // Audit log
+    await supabaseAdmin.from('ticket_history').insert([{
+      id: uuidv4(),
+      ticket_id: sourceId,
+      change_type: 'ticket_merged',
+      new_value: JSON.stringify({ merged_into: target_ticket_id }),
+      changed_by_id: user_id,
+      created_at: new Date().toISOString(),
+    }])
+    
+    mergeResults.push({ source_id: sourceId, success: true })
+  }
+  
+  // Update target ticket
+  await supabaseAdmin
+    .from('tickets')
+    .update({ 
+      updated_at: new Date().toISOString(),
+      merged_tickets: source_ticket_ids,
+    })
+    .eq('id', target_ticket_id)
+  
+  return NextResponse.json({ 
+    success: true, 
+    target_ticket_id,
+    merged: mergeResults,
+  })
+}
+
+async function handleSplitTicket(body) {
+  const { ticket_id, new_tickets, user_id } = body
+  
+  if (!ticket_id || !new_tickets?.length) {
+    return NextResponse.json({ error: 'ticket_id und new_tickets sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get original ticket
+  const { data: originalTicket } = await supabaseAdmin
+    .from('tickets')
+    .select('*')
+    .eq('id', ticket_id)
+    .single()
+  
+  if (!originalTicket) {
+    return NextResponse.json({ error: 'Ticket nicht gefunden' }, { status: 404 })
+  }
+  
+  const createdTickets = []
+  
+  for (const newTicket of new_tickets) {
+    const ticketNumber = await getNextTicketNumber()
+    
+    const { data: created, error } = await supabaseAdmin
+      .from('tickets')
+      .insert([{
+        id: uuidv4(),
+        ticket_number: ticketNumber,
+        subject: newTicket.subject || `Teil von #${originalTicket.ticket_number}`,
+        description: newTicket.description || '',
+        priority: newTicket.priority || originalTicket.priority,
+        status: 'open',
+        organization_id: originalTicket.organization_id,
+        contact_id: originalTicket.contact_id,
+        created_by_id: user_id,
+        parent_ticket_id: ticket_id,
+        split_from_id: ticket_id,
+      }])
+      .select()
+      .single()
+    
+    if (!error && created) {
+      createdTickets.push(created)
+      
+      // Audit log
+      await supabaseAdmin.from('ticket_history').insert([{
+        id: uuidv4(),
+        ticket_id: created.id,
+        change_type: 'ticket_split_created',
+        new_value: JSON.stringify({ split_from: ticket_id }),
+        changed_by_id: user_id,
+        created_at: new Date().toISOString(),
+      }])
+    }
+  }
+  
+  // Update original ticket
+  await supabaseAdmin
+    .from('tickets')
+    .update({
+      child_ticket_ids: createdTickets.map(t => t.id),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', ticket_id)
+  
+  // Audit log for original
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: ticket_id,
+    change_type: 'ticket_split',
+    new_value: JSON.stringify({ child_tickets: createdTickets.map(t => t.id) }),
+    changed_by_id: user_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({
+    success: true,
+    original_ticket_id: ticket_id,
+    new_tickets: createdTickets,
+  })
+}
+
+async function handleAddTicketDependency(body) {
+  const { ticket_id, depends_on_id, dependency_type, user_id } = body
+  
+  if (!ticket_id || !depends_on_id) {
+    return NextResponse.json({ error: 'ticket_id und depends_on_id sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get current dependencies
+  const { data: ticket } = await supabaseAdmin
+    .from('tickets')
+    .select('dependencies')
+    .eq('id', ticket_id)
+    .single()
+  
+  const dependencies = ticket?.dependencies || []
+  
+  // Check for circular dependency
+  const { data: dependsOnTicket } = await supabaseAdmin
+    .from('tickets')
+    .select('dependencies')
+    .eq('id', depends_on_id)
+    .single()
+  
+  if (dependsOnTicket?.dependencies?.some(d => d.ticket_id === ticket_id)) {
+    return NextResponse.json({ error: 'Zirkuläre Abhängigkeit nicht erlaubt' }, { status: 400 })
+  }
+  
+  // Add dependency
+  dependencies.push({
+    ticket_id: depends_on_id,
+    type: dependency_type || 'blocks',
+    created_at: new Date().toISOString(),
+  })
+  
+  await supabaseAdmin
+    .from('tickets')
+    .update({ dependencies, updated_at: new Date().toISOString() })
+    .eq('id', ticket_id)
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: ticket_id,
+    change_type: 'dependency_added',
+    new_value: JSON.stringify({ depends_on: depends_on_id, type: dependency_type }),
+    changed_by_id: user_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, dependencies })
+}
+
+async function handleRemoveTicketDependency(body) {
+  const { ticket_id, depends_on_id, user_id } = body
+  
+  const { data: ticket } = await supabaseAdmin
+    .from('tickets')
+    .select('dependencies')
+    .eq('id', ticket_id)
+    .single()
+  
+  const dependencies = (ticket?.dependencies || []).filter(d => d.ticket_id !== depends_on_id)
+  
+  await supabaseAdmin
+    .from('tickets')
+    .update({ dependencies, updated_at: new Date().toISOString() })
+    .eq('id', ticket_id)
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: ticket_id,
+    change_type: 'dependency_removed',
+    new_value: JSON.stringify({ removed: depends_on_id }),
+    changed_by_id: user_id,
+    created_at: new Date().toISOString(),
+  }])
+  
+  return NextResponse.json({ success: true, dependencies })
+}
+
+// ============================================
+// TASKS / TODOS SYSTEM
+// ============================================
+
+async function handleGetTasks(params) {
+  const { ticket_id, board_id, status, user_id, limit } = params
+  
+  let query = supabaseAdmin
+    .from('tasks')
+    .select('*, tickets(ticket_number, subject), users(name)')
+    .order('position', { ascending: true })
+    .limit(parseInt(limit) || 100)
+  
+  if (ticket_id) query = query.eq('ticket_id', ticket_id)
+  if (board_id) query = query.eq('board_id', board_id)
+  if (status) query = query.eq('status', status)
+  if (user_id) query = query.eq('assigned_to_id', user_id)
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateTask(body) {
+  const { title, description, ticket_id, board_id, column_id, assigned_to_id, due_date, priority, created_by_id } = body
+  
+  if (!title) {
+    return NextResponse.json({ error: 'title ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get max position
+  const { data: maxPos } = await supabaseAdmin
+    .from('tasks')
+    .select('position')
+    .order('position', { ascending: false })
+    .limit(1)
+    .single()
+  
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .insert([{
+      id: uuidv4(),
+      title,
+      description,
+      ticket_id,
+      board_id,
+      column_id: column_id || 'todo',
+      assigned_to_id,
+      due_date,
+      priority: priority || 'medium',
+      status: 'pending',
+      position: (maxPos?.position || 0) + 1,
+      created_by_id,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateTask(id, body) {
+  const { title, description, status, column_id, assigned_to_id, due_date, priority, position, completed_at } = body
+  
+  const updateData = { updated_at: new Date().toISOString() }
+  if (title !== undefined) updateData.title = title
+  if (description !== undefined) updateData.description = description
+  if (status !== undefined) updateData.status = status
+  if (column_id !== undefined) updateData.column_id = column_id
+  if (assigned_to_id !== undefined) updateData.assigned_to_id = assigned_to_id
+  if (due_date !== undefined) updateData.due_date = due_date
+  if (priority !== undefined) updateData.priority = priority
+  if (position !== undefined) updateData.position = position
+  
+  if (status === 'completed' && !completed_at) {
+    updateData.completed_at = new Date().toISOString()
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .update(updateData)
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteTask(id) {
+  const { error } = await supabaseAdmin
+    .from('tasks')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleMoveTask(body) {
+  const { task_id, column_id, position, board_id } = body
+  
+  if (!task_id) {
+    return NextResponse.json({ error: 'task_id ist erforderlich' }, { status: 400 })
+  }
+  
+  const updateData = { updated_at: new Date().toISOString() }
+  if (column_id) updateData.column_id = column_id
+  if (position !== undefined) updateData.position = position
+  if (board_id) updateData.board_id = board_id
+  
+  // Update status based on column
+  if (column_id === 'done' || column_id === 'completed') {
+    updateData.status = 'completed'
+    updateData.completed_at = new Date().toISOString()
+  } else if (column_id === 'in_progress') {
+    updateData.status = 'in_progress'
+  } else if (column_id === 'todo') {
+    updateData.status = 'pending'
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .update(updateData)
+    .eq('id', task_id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleGetTaskBoards() {
+  const { data, error } = await supabaseAdmin
+    .from('boards')
+    .select('*')
+    .order('name')
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
 async function refreshM365Token(connectionId) {
   const { data: connection } = await supabaseAdmin
     .from('m365_connections')

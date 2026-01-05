@@ -79,12 +79,13 @@ CREATE INDEX IF NOT EXISTS idx_organizations_domain ON organizations(domain);
 
 -- ============================================
 -- G) DEFAULT SETTINGS FOR M365 OAUTH
+-- Note: Using proper JSON format for JSONB column
 -- ============================================
 INSERT INTO settings (key, value, category, description)
 VALUES 
-  ('m365_client_id', '', 'integrations', 'Microsoft 365 Application (Client) ID'),
-  ('m365_client_secret', '', 'integrations', 'Microsoft 365 Client Secret (encrypted)'),
-  ('m365_tenant_id', '', 'integrations', 'Microsoft 365 Tenant ID (optional, use "common" for multi-tenant)'),
+  ('m365_client_id', '""', 'integrations', 'Microsoft 365 Application (Client) ID'),
+  ('m365_client_secret', '""', 'integrations', 'Microsoft 365 Client Secret (encrypted)'),
+  ('m365_tenant_id', '"common"', 'integrations', 'Microsoft 365 Tenant ID (optional, use "common" for multi-tenant)'),
   ('m365_oauth_enabled', 'false', 'integrations', 'Enable Microsoft 365 OAuth for customer login'),
   ('allow_email_registration', 'true', 'auth', 'Allow email/password registration'),
   ('require_2fa', 'false', 'auth', 'Require 2FA for all users')
@@ -111,10 +112,6 @@ GRANT ALL ON tasks TO authenticated, anon, service_role;
 -- RLS policies
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'users' AND policyname = 'allow_all') THEN
-    CREATE POLICY "allow_all" ON users FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-  
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ticket_dependencies' AND policyname = 'allow_all') THEN
     ALTER TABLE ticket_dependencies ENABLE ROW LEVEL SECURITY;
     CREATE POLICY "allow_all" ON ticket_dependencies FOR ALL USING (true) WITH CHECK (true);

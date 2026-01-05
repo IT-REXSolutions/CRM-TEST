@@ -14,7 +14,9 @@ import {
   Shield, Database, Zap, ToggleLeft, ToggleRight,
   AlertTriangle, Check, X, Eye, EyeOff, Copy,
   Webhook, Cloud, CreditCard, PhoneCall, HelpCircle,
-  History, Archive, Repeat
+  History, Archive, Repeat, UserPlus, UserMinus, UserCheck,
+  Inbox, Send, Brain, Sparkles, FileQuestion, BookOpen,
+  GripVertical, MoreVertical, ArrowRight, CircleDot
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

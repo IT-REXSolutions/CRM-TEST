@@ -3013,23 +3013,23 @@ function InboxPage({ currentUser }) {
   const [classifying, setClassifying] = useState(false)
   const [ticketTypes, setTicketTypes] = useState([])
   
-  useEffect(() => {
-    loadConversations()
-    loadTicketTypes()
-  }, [filter])
-  
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
     setLoading(true)
     const params = filter !== 'all' ? `?status=${filter}` : ''
     const data = await api.fetch(`/conversations${params}`)
     setConversations(Array.isArray(data) ? data : [])
     setLoading(false)
-  }
+  }, [filter])
   
-  const loadTicketTypes = async () => {
+  const loadTicketTypes = useCallback(async () => {
     const data = await api.fetch('/ticket-types')
     setTicketTypes(Array.isArray(data) ? data : [])
-  }
+  }, [])
+  
+  useEffect(() => {
+    loadConversations()
+    loadTicketTypes()
+  }, [loadConversations, loadTicketTypes])
   
   const handleClassify = async (conversation) => {
     if (!conversation.body) return

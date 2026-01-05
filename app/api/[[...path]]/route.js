@@ -1795,20 +1795,24 @@ async function handleUpdateSetting(body) {
     updated_by_id: userId || null,
   }
   
-  const { data, error } = await supabaseAdmin
+  console.log('Inserting setting:', JSON.stringify(insertData))
+  
+  const result = await supabaseAdmin
     .from('settings')
     .upsert(insertData, { onConflict: 'key' })
     .select()
   
+  console.log('Upsert result:', JSON.stringify(result))
+  
   // Clear settings cache
   clearSettingsCache()
   
-  if (error) {
-    console.error('Settings update error:', JSON.stringify(error))
-    return NextResponse.json({ error: error.message || 'Unknown error', details: error }, { status: 500 })
+  if (result.error) {
+    console.error('Settings update error:', JSON.stringify(result.error))
+    return NextResponse.json({ error: result.error.message || 'Unknown error', details: result.error }, { status: 500 })
   }
   
-  return NextResponse.json(data?.[0] || { success: true })
+  return NextResponse.json(result.data?.[0] || { success: true })
 }
 
 async function handleBulkUpdateSettings(body) {

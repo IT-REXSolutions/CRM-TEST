@@ -2995,6 +2995,144 @@ async function handleCreateComment(body) {
   return NextResponse.json(data)
 }
 
+async function handleUpdateComment(commentId, body, userId) {
+  const { content, is_internal } = body
+  
+  // Verify ownership or admin
+  const { data: comment } = await supabaseAdmin
+    .from('ticket_comments')
+    .select('user_id, ticket_id')
+    .eq('id', commentId)
+    .single()
+  
+  if (!comment) {
+    return NextResponse.json({ error: 'Kommentar nicht gefunden' }, { status: 404 })
+  }
+  
+  // Only allow edit by creator (in production, also check admin role)
+  if (comment.user_id !== userId) {
+    return NextResponse.json({ error: 'Keine Berechtigung' }, { status: 403 })
+  }
+  
+  const updateData = { updated_at: new Date().toISOString() }
+  if (content !== undefined) updateData.content = content
+  if (is_internal !== undefined) updateData.is_internal = is_internal
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_comments')
+    .update(updateData)
+    .eq('id', commentId)
+    .select(`*, users (id, first_name, last_name)`)
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: comment.ticket_id,
+    user_id: userId,
+    action: 'comment_updated',
+    old_value: 'Kommentar bearbeitet',
+    new_value: content?.substring(0, 100),
+  }])
+  
+  return NextResponse.json(data)
+}
+
+async function handleDeleteComment(commentId, userId) {
+  // Verify ownership
+  const { data: comment } = await supabaseAdmin
+    .from('ticket_comments')
+    .select('user_id, ticket_id')
+    .eq('id', commentId)
+    .single()
+  
+  if (!comment) {
+    return NextResponse.json({ error: 'Kommentar nicht gefunden' }, { status: 404 })
+  }
+  
+  // Only allow delete by creator (in production, also check admin role)
+  if (comment.user_id !== userId) {
+    return NextResponse.json({ error: 'Keine Berechtigung' }, { status: 403 })
+  }
+  
+  const { error } = await supabaseAdmin
+    .from('ticket_comments')
+    .delete()
+    .eq('id', commentId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: comment.ticket_id,
+    user_id: userId,
+    action: 'comment_deleted',
+  }])
+  
+  return NextResponse.json({ success: true })
+}
+
+async function handleUpdateContact(contactId, body) {
+  const allowedFields = ['first_name', 'last_name', 'email', 'phone', 'mobile', 'position', 'department', 'location_id', 'is_primary', 'notes']
+  
+  const updateData = { updated_at: new Date().toISOString() }
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) updateData[field] = body[field]
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('contacts')
+    .update(updateData)
+    .eq('id', contactId)
+    .select('*')
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteContact(contactId) {
+  const { error } = await supabaseAdmin
+    .from('contacts')
+    .delete()
+    .eq('id', contactId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleUpdateLocation(locationId, body) {
+  const allowedFields = ['name', 'address', 'city', 'zip_code', 'country', 'phone', 'is_headquarters']
+  
+  const updateData = { updated_at: new Date().toISOString() }
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) updateData[field] = body[field]
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('locations')
+    .update(updateData)
+    .eq('id', locationId)
+    .select('*')
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteLocation(locationId) {
+  const { error } = await supabaseAdmin
+    .from('locations')
+    .delete()
+    .eq('id', locationId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
 // ============================================
 // TICKET TAGS HANDLERS
 // ============================================

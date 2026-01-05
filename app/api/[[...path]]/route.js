@@ -1965,7 +1965,7 @@ async function handleCreateTicketTemplate(body) {
   return NextResponse.json(data)
 }
 
-async function handleUpdateTemplate(id, body) {
+async function handleUpdateTicketTemplate(id, body) {
   const { error } = await supabaseAdmin
     .from('ticket_templates')
     .update({ ...body, updated_at: new Date().toISOString() })

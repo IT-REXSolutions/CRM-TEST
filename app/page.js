@@ -4895,50 +4895,93 @@ function KnowledgeBasePage({ currentUser }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedArticle, setSelectedArticle] = useState(null)
   const [showNewDialog, setShowNewDialog] = useState(false)
-  const [newArticle, setNewArticle] = useState({
-    title: '', content: '', category: '', tags: '', is_internal: true
-  })
+  const [editingArticle, setEditingArticle] = useState(null)
+  const [organizations, setOrganizations] = useState([])
+  const [filterOrg, setFilterOrg] = useState('all')
+  const [filterVisibility, setFilterVisibility] = useState('all')
   
   useEffect(() => {
     loadArticles()
+    api.getOrganizations().then(setOrganizations).catch(() => {})
   }, [])
   
   const loadArticles = async () => {
     setLoading(true)
-    const data = await api.fetch('/kb-articles')
-    setArticles(Array.isArray(data) ? data : [])
+    try {
+      const data = await api.fetch('/kb-articles')
+      // Filter out archived articles
+      setArticles(Array.isArray(data) ? data.filter(a => !a.is_archived) : [])
+    } catch {
+      setArticles([])
+    }
     setLoading(false)
   }
   
-  const handleCreateArticle = async () => {
-    if (!newArticle.title || !newArticle.content) {
-      toast.error('Titel und Inhalt sind erforderlich')
-      return
-    }
-    
+  const handleCreateArticle = async (articleData) => {
     try {
       await api.fetch('/kb-articles', {
         method: 'POST',
         body: JSON.stringify({
-          ...newArticle,
-          tags: newArticle.tags ? newArticle.tags.split(',').map(t => t.trim()) : [],
+          ...articleData,
           created_by_id: currentUser?.id
         })
       })
       toast.success('Artikel erstellt')
       setShowNewDialog(false)
-      setNewArticle({ title: '', content: '', category: '', tags: '', is_internal: true })
       loadArticles()
     } catch (error) {
       toast.error('Fehler beim Erstellen')
     }
   }
   
-  const filteredArticles = articles.filter(a => 
-    a.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.category?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const handleUpdateArticle = async (articleData) => {
+    try {
+      await api.fetch(`/kb-articles/${editingArticle.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...articleData,
+          updated_by_id: currentUser?.id
+        })
+      })
+      toast.success('Artikel aktualisiert')
+      setEditingArticle(null)
+      setSelectedArticle(null)
+      loadArticles()
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren')
+    }
+  }
+  
+  const handleDeleteArticle = async (id) => {
+    if (!confirm('Artikel wirklich archivieren?')) return
+    try {
+      await api.fetch(`/kb-articles/${id}?user_id=${currentUser?.id}`, { method: 'DELETE' })
+      toast.success('Artikel archiviert')
+      setSelectedArticle(null)
+      loadArticles()
+    } catch (error) {
+      toast.error('Fehler beim Archivieren')
+    }
+  }
+  
+  const filteredArticles = articles.filter(a => {
+    const matchesSearch = 
+      a.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.category?.toLowerCase().includes(searchQuery.toLowerCase())
+    
+    const matchesOrg = filterOrg === 'all' || 
+      (filterOrg === 'global' && !a.organization_id) ||
+      a.organization_id === filterOrg
+    
+    const matchesVisibility = filterVisibility === 'all' ||
+      (filterVisibility === 'internal' && a.is_internal) ||
+      (filterVisibility === 'public' && !a.is_internal)
+    
+    return matchesSearch && matchesOrg && matchesVisibility
+  })
+  
+  const isAdmin = currentUser?.user_type === 'internal'
   
   return (
     <div className="p-6">
@@ -4947,14 +4990,16 @@ function KnowledgeBasePage({ currentUser }) {
           <h1 className="text-2xl font-bold">Wissensdatenbank</h1>
           <p className="text-muted-foreground">Lösungen, Anleitungen und Best Practices</p>
         </div>
-        <Button onClick={() => setShowNewDialog(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Neuer Artikel
-        </Button>
+        {isAdmin && (
+          <Button onClick={() => setShowNewDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Neuer Artikel
+          </Button>
+        )}
       </div>
       
-      <div className="mb-6">
-        <div className="relative max-w-md">
+      <div className="flex flex-wrap gap-4 mb-6">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input 
             placeholder="Suchen..."
@@ -4963,6 +5008,32 @@ function KnowledgeBasePage({ currentUser }) {
             className="pl-10"
           />
         </div>
+        {isAdmin && (
+          <>
+            <Select value={filterOrg} onValueChange={setFilterOrg}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Organisation" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle Organisationen</SelectItem>
+                <SelectItem value="global">Global (Alle)</SelectItem>
+                {organizations.map(org => (
+                  <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterVisibility} onValueChange={setFilterVisibility}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Sichtbarkeit" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle</SelectItem>
+                <SelectItem value="public">Öffentlich</SelectItem>
+                <SelectItem value="internal">Nur intern</SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        )}
       </div>
       
       {loading ? (
@@ -4973,11 +5044,15 @@ function KnowledgeBasePage({ currentUser }) {
         <Card className="p-12 text-center">
           <BookOpen className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
           <h3 className="text-lg font-medium mb-2">Keine Artikel gefunden</h3>
-          <p className="text-muted-foreground mb-4">Erstellen Sie den ersten Wissensartikel</p>
-          <Button onClick={() => setShowNewDialog(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Artikel erstellen
-          </Button>
+          <p className="text-muted-foreground mb-4">
+            {searchQuery ? 'Keine Ergebnisse für Ihre Suche' : 'Erstellen Sie den ersten Wissensartikel'}
+          </p>
+          {isAdmin && !searchQuery && (
+            <Button onClick={() => setShowNewDialog(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Artikel erstellen
+            </Button>
+          )}
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -4990,9 +5065,17 @@ function KnowledgeBasePage({ currentUser }) {
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <CardTitle className="text-lg">{article.title}</CardTitle>
-                  {article.is_internal && (
-                    <Badge variant="outline" className="text-xs">Intern</Badge>
-                  )}
+                  <div className="flex gap-1">
+                    {article.is_internal && (
+                      <Badge variant="outline" className="text-xs bg-yellow-50">Intern</Badge>
+                    )}
+                    {article.organization_id && (
+                      <Badge variant="outline" className="text-xs bg-blue-50">
+                        <Building2 className="w-3 h-3 mr-1" />
+                        {article.organization?.name || 'Org'}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 {article.category && (
                   <Badge className="w-fit bg-blue-100 text-blue-700">{article.category}</Badge>
@@ -5003,9 +5086,13 @@ function KnowledgeBasePage({ currentUser }) {
                   {article.content?.substring(0, 150)}...
                 </p>
                 <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
-                  <span>{new Date(article.created_at).toLocaleDateString('de-DE')}</span>
+                  <span>
+                    {article.created_by ? `${article.created_by.first_name} ${article.created_by.last_name}` : ''} · 
+                    {new Date(article.created_at).toLocaleDateString('de-DE')}
+                  </span>
                   <div className="flex items-center gap-2">
                     <Eye className="w-3 h-3" /> {article.views || 0}
+                    {article.version > 1 && <Badge variant="outline" className="text-xs">v{article.version}</Badge>}
                   </div>
                 </div>
               </CardContent>
@@ -5020,54 +5107,29 @@ function KnowledgeBasePage({ currentUser }) {
           <DialogHeader>
             <DialogTitle>Neuer Wissensartikel</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div>
-              <Label>Titel *</Label>
-              <Input 
-                value={newArticle.title}
-                onChange={(e) => setNewArticle({...newArticle, title: e.target.value})}
-                placeholder="Wie man..."
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Kategorie</Label>
-                <Input 
-                  value={newArticle.category}
-                  onChange={(e) => setNewArticle({...newArticle, category: e.target.value})}
-                  placeholder="Z.B. Netzwerk, Office 365"
-                />
-              </div>
-              <div>
-                <Label>Tags (kommagetrennt)</Label>
-                <Input 
-                  value={newArticle.tags}
-                  onChange={(e) => setNewArticle({...newArticle, tags: e.target.value})}
-                  placeholder="vpn, remote, zugang"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Inhalt *</Label>
-              <Textarea 
-                value={newArticle.content}
-                onChange={(e) => setNewArticle({...newArticle, content: e.target.value})}
-                placeholder="Beschreiben Sie die Lösung..."
-                rows={10}
-              />
-            </div>
-            <div className="flex items-center space-x-2">
-              <Switch 
-                checked={newArticle.is_internal}
-                onCheckedChange={(v) => setNewArticle({...newArticle, is_internal: v})}
-              />
-              <Label>Nur für interne Nutzung</Label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewDialog(false)}>Abbrechen</Button>
-            <Button onClick={handleCreateArticle}>Erstellen</Button>
-          </DialogFooter>
+          <KBArticleForm 
+            organizations={organizations}
+            onSubmit={handleCreateArticle}
+            onCancel={() => setShowNewDialog(false)}
+          />
+        </DialogContent>
+      </Dialog>
+      
+      {/* Edit Article Dialog */}
+      <Dialog open={!!editingArticle} onOpenChange={(open) => !open && setEditingArticle(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Artikel bearbeiten</DialogTitle>
+          </DialogHeader>
+          {editingArticle && (
+            <KBArticleForm 
+              article={editingArticle}
+              organizations={organizations}
+              onSubmit={handleUpdateArticle}
+              onCancel={() => setEditingArticle(null)}
+              isEdit
+            />
+          )}
         </DialogContent>
       </Dialog>
       
@@ -5076,13 +5138,42 @@ function KnowledgeBasePage({ currentUser }) {
         <Dialog open={!!selectedArticle} onOpenChange={() => setSelectedArticle(null)}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{selectedArticle.title}</DialogTitle>
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex items-start justify-between">
+                <DialogTitle>{selectedArticle.title}</DialogTitle>
+                {isAdmin && (
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => { setEditingArticle(selectedArticle); }}>
+                      <Settings className="w-4 h-4 mr-1" />
+                      Bearbeiten
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handleDeleteArticle(selectedArticle.id)}>
+                      <Archive className="w-4 h-4 mr-1" />
+                      Archivieren
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
                 {selectedArticle.category && (
                   <Badge className="bg-blue-100 text-blue-700">{selectedArticle.category}</Badge>
                 )}
                 {selectedArticle.is_internal && (
-                  <Badge variant="outline">Intern</Badge>
+                  <Badge variant="outline" className="bg-yellow-50">Nur intern</Badge>
+                )}
+                {selectedArticle.organization_id && (
+                  <Badge variant="outline" className="bg-blue-50">
+                    <Building2 className="w-3 h-3 mr-1" />
+                    {selectedArticle.organization?.name || 'Organisation'}
+                  </Badge>
+                )}
+                {!selectedArticle.organization_id && (
+                  <Badge variant="outline" className="bg-green-50">
+                    <Globe className="w-3 h-3 mr-1" />
+                    Global
+                  </Badge>
+                )}
+                {selectedArticle.version > 1 && (
+                  <Badge variant="outline">Version {selectedArticle.version}</Badge>
                 )}
               </div>
             </DialogHeader>
@@ -5101,6 +5192,14 @@ function KnowledgeBasePage({ currentUser }) {
                   </div>
                 </div>
               )}
+              
+              <div className="mt-6 pt-4 border-t text-sm text-muted-foreground">
+                <p>Erstellt von: {selectedArticle.created_by?.first_name} {selectedArticle.created_by?.last_name}</p>
+                <p>Erstellt am: {new Date(selectedArticle.created_at).toLocaleString('de-DE')}</p>
+                {selectedArticle.updated_at && selectedArticle.updated_at !== selectedArticle.created_at && (
+                  <p>Zuletzt aktualisiert: {new Date(selectedArticle.updated_at).toLocaleString('de-DE')}</p>
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setSelectedArticle(null)}>Schließen</Button>
@@ -5108,6 +5207,105 @@ function KnowledgeBasePage({ currentUser }) {
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  )
+}
+
+function KBArticleForm({ article, organizations = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    title: article?.title || '',
+    content: article?.content || '',
+    category: article?.category || '',
+    tags: article?.tags ? article.tags.join(', ') : '',
+    is_internal: article?.is_internal || false,
+    organization_id: article?.organization_id || '',
+    visibility: article?.visibility || 'all'
+  })
+  
+  const handleSubmit = () => {
+    if (!formData.title || !formData.content) {
+      toast.error('Titel und Inhalt sind erforderlich')
+      return
+    }
+    onSubmit({
+      ...formData,
+      tags: formData.tags ? formData.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+      organization_id: formData.organization_id || null
+    })
+  }
+  
+  return (
+    <div className="grid gap-4 py-4">
+      <div>
+        <Label>Titel *</Label>
+        <Input 
+          value={formData.title}
+          onChange={(e) => setFormData({...formData, title: e.target.value})}
+          placeholder="Wie man..."
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Kategorie</Label>
+          <Input 
+            value={formData.category}
+            onChange={(e) => setFormData({...formData, category: e.target.value})}
+            placeholder="Z.B. Netzwerk, Office 365"
+          />
+        </div>
+        <div>
+          <Label>Tags (kommagetrennt)</Label>
+          <Input 
+            value={formData.tags}
+            onChange={(e) => setFormData({...formData, tags: e.target.value})}
+            placeholder="vpn, remote, zugang"
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Organisation (optional)</Label>
+          <Select value={formData.organization_id || 'global'} onValueChange={(v) => setFormData({...formData, organization_id: v === 'global' ? '' : v})}>
+            <SelectTrigger>
+              <SelectValue placeholder="Global (alle)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="global">Global (alle Organisationen)</SelectItem>
+              {organizations.map(org => (
+                <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            Artikel nur für bestimmte Organisation sichtbar machen
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <Switch 
+              checked={formData.is_internal}
+              onCheckedChange={(v) => setFormData({...formData, is_internal: v})}
+            />
+            <Label>Nur für Mitarbeiter sichtbar</Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Interne Artikel sind für Kunden nicht sichtbar
+          </p>
+        </div>
+      </div>
+      <div>
+        <Label>Inhalt *</Label>
+        <Textarea 
+          value={formData.content}
+          onChange={(e) => setFormData({...formData, content: e.target.value})}
+          placeholder="Beschreiben Sie die Lösung..."
+          rows={12}
+        />
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button onClick={handleSubmit}>{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
     </div>
   )
 }

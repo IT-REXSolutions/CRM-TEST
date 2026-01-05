@@ -1213,7 +1213,7 @@ function TicketsPage({ currentUser, onOpenTicket }) {
               <Ticket className="h-12 w-12 mx-auto text-slate-300" />
               <p className="mt-4 text-slate-500">Keine Tickets gefunden</p>
             </div>
-          ) : (
+          ) : viewMode === 'list' ? (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1224,15 +1224,16 @@ function TicketsPage({ currentUser, onOpenTicket }) {
                   <TableHead>Priorität</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Erstellt</TableHead>
+                  <TableHead className="w-24">Aktionen</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {tickets.map((ticket) => (
-                  <TableRow key={ticket.id} className="cursor-pointer hover:bg-slate-50" onClick={() => onOpenTicket(ticket.id)}>
-                    <TableCell className="font-mono text-slate-500">{ticket.ticket_number}</TableCell>
-                    <TableCell className="font-medium">{ticket.subject}</TableCell>
-                    <TableCell>{ticket.organizations?.name || '-'}</TableCell>
-                    <TableCell>
+                  <TableRow key={ticket.id} className="cursor-pointer hover:bg-slate-50">
+                    <TableCell className="font-mono text-slate-500" onClick={() => onOpenTicket(ticket.id)}>{ticket.ticket_number}</TableCell>
+                    <TableCell className="font-medium" onClick={() => onOpenTicket(ticket.id)}>{ticket.subject}</TableCell>
+                    <TableCell onClick={() => onOpenTicket(ticket.id)}>{ticket.organizations?.name || '-'}</TableCell>
+                    <TableCell onClick={() => onOpenTicket(ticket.id)}>
                       {ticket.assignee ? `${ticket.assignee.first_name} ${ticket.assignee.last_name}` : '-'}
                     </TableCell>
                     <TableCell>
@@ -1242,14 +1243,286 @@ function TicketsPage({ currentUser, onOpenTicket }) {
                       <Badge className={STATUS_COLORS[ticket.status]}>{STATUS_LABELS[ticket.status]}</Badge>
                     </TableCell>
                     <TableCell className="text-slate-500">{formatDate(ticket.created_at)}</TableCell>
+                    <TableCell>
+                      {ticket.status !== 'closed' && (
+                        <Button variant="ghost" size="sm" onClick={() => handleCloseTicket(ticket)}>
+                          <CheckCircle2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+          ) : (
+            <TicketKanbanBoard 
+              tickets={tickets} 
+              onMoveTicket={handleMoveTicket}
+              onOpenTicket={onOpenTicket}
+              onCloseTicket={handleCloseTicket}
+            />
           )}
         </CardContent>
       </Card>
+      
+      {/* Close Ticket Dialog */}
+      <CloseTicketDialog
+        open={showCloseDialog}
+        ticket={closingTicket}
+        onClose={() => {
+          setShowCloseDialog(false)
+          setClosingTicket(null)
+        }}
+        onSubmit={handleCloseSubmit}
+      />
     </div>
+  )
+}
+
+// ============================================
+// TICKET KANBAN BOARD
+// ============================================
+
+function TicketKanbanBoard({ tickets, onMoveTicket, onOpenTicket, onCloseTicket }) {
+  const [draggedTicket, setDraggedTicket] = useState(null)
+  
+  const columns = [
+    { id: 'open', name: 'Offen', color: 'bg-yellow-500' },
+    { id: 'pending', name: 'Wartend', color: 'bg-orange-500' },
+    { id: 'in_progress', name: 'In Bearbeitung', color: 'bg-blue-500' },
+    { id: 'resolved', name: 'Gelöst', color: 'bg-green-500' },
+    { id: 'closed', name: 'Geschlossen', color: 'bg-slate-500' },
+  ]
+  
+  const handleDragStart = (e, ticket) => {
+    setDraggedTicket(ticket)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+  
+  const handleDrop = (e, newStatus) => {
+    e.preventDefault()
+    if (draggedTicket && draggedTicket.status !== newStatus) {
+      onMoveTicket(draggedTicket.id, newStatus, draggedTicket.status)
+    }
+    setDraggedTicket(null)
+  }
+  
+  return (
+    <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: '500px' }}>
+      {columns.map(column => {
+        const columnTickets = tickets.filter(t => t.status === column.id)
+        return (
+          <div
+            key={column.id}
+            className="flex-shrink-0 w-72 bg-slate-50 rounded-lg"
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, column.id)}
+          >
+            <div className={`${column.color} text-white px-3 py-2 rounded-t-lg font-medium flex justify-between items-center`}>
+              <span>{column.name}</span>
+              <Badge variant="secondary" className="bg-white/20 text-white">{columnTickets.length}</Badge>
+            </div>
+            <div className="p-2 space-y-2 min-h-[400px]">
+              {columnTickets.map(ticket => (
+                <div
+                  key={ticket.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, ticket)}
+                  className="bg-white rounded-lg p-3 shadow-sm border cursor-move hover:shadow-md transition-shadow"
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-xs text-slate-500 font-mono">#{ticket.ticket_number}</span>
+                    <Badge className={`${PRIORITY_COLORS[ticket.priority]} text-xs`}>{PRIORITY_LABELS[ticket.priority]}</Badge>
+                  </div>
+                  <h4 className="font-medium text-sm mb-2 line-clamp-2 cursor-pointer hover:text-blue-600" onClick={() => onOpenTicket(ticket.id)}>
+                    {ticket.subject}
+                  </h4>
+                  {ticket.organizations?.name && (
+                    <div className="text-xs text-slate-500 flex items-center gap-1 mb-2">
+                      <Building2 className="h-3 w-3" />
+                      {ticket.organizations.name}
+                    </div>
+                  )}
+                  {ticket.assignee && (
+                    <div className="text-xs text-slate-500 flex items-center gap-1">
+                      <User className="h-3 w-3" />
+                      {ticket.assignee.first_name} {ticket.assignee.last_name}
+                    </div>
+                  )}
+                  {column.id !== 'closed' && (
+                    <Button variant="ghost" size="sm" className="w-full mt-2 text-xs" onClick={() => onCloseTicket(ticket)}>
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                      Schließen
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ============================================
+// CLOSE TICKET DIALOG
+// ============================================
+
+function CloseTicketDialog({ open, ticket, onClose, onSubmit }) {
+  const [loading, setLoading] = useState(false)
+  const [config, setConfig] = useState({})
+  const [categories, setCategories] = useState([])
+  const [todos, setTodos] = useState([])
+  const [form, setForm] = useState({
+    time_spent_minutes: 0,
+    is_billable: true,
+    resolution_category: '',
+    internal_summary: '',
+    customer_summary: '',
+    completed_todo_ids: [],
+    create_time_entry: true,
+  })
+  
+  useEffect(() => {
+    if (open && ticket) {
+      // Load config and todos
+      Promise.all([
+        api.getCloseFlowConfig().catch(() => ({})),
+        api.getResolutionCategories().catch(() => []),
+        api.getTicketTodos(ticket.id).catch(() => []),
+      ]).then(([cfg, cats, todoList]) => {
+        setConfig(cfg)
+        setCategories(cats)
+        setTodos(todoList)
+        // Pre-select completed todos
+        setForm(f => ({ ...f, completed_todo_ids: todoList.filter(t => t.is_completed).map(t => t.id) }))
+      })
+    }
+  }, [open, ticket])
+  
+  const handleSubmit = async () => {
+    setLoading(true)
+    try {
+      await onSubmit(form)
+    } finally {
+      setLoading(false)
+    }
+  }
+  
+  const toggleTodo = (id) => {
+    setForm(f => ({
+      ...f,
+      completed_todo_ids: f.completed_todo_ids.includes(id)
+        ? f.completed_todo_ids.filter(i => i !== id)
+        : [...f.completed_todo_ids, id]
+    }))
+  }
+  
+  if (!ticket) return null
+  
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Ticket #{ticket.ticket_number} schließen</DialogTitle>
+          <DialogDescription>{ticket.subject}</DialogDescription>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          {/* Time Entry */}
+          <div className="space-y-2">
+            <Label>Zeitaufwand (Minuten) {config.time_required && <span className="text-red-500">*</span>}</Label>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min={0}
+                value={form.time_spent_minutes}
+                onChange={(e) => setForm(f => ({ ...f, time_spent_minutes: parseInt(e.target.value) || 0 }))}
+                placeholder="0"
+              />
+              <div className="flex items-center gap-2">
+                <Switch checked={form.is_billable} onCheckedChange={(v) => setForm(f => ({ ...f, is_billable: v }))} />
+                <Label>Abrechenbar</Label>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <input type="checkbox" checked={form.create_time_entry} onChange={(e) => setForm(f => ({ ...f, create_time_entry: e.target.checked }))} />
+              <Label className="text-sm">Zeiteintrag erstellen</Label>
+            </div>
+          </div>
+          
+          {/* Resolution Category */}
+          <div className="space-y-2">
+            <Label>Lösungskategorie {config.resolution_category_required && <span className="text-red-500">*</span>}</Label>
+            <Select value={form.resolution_category} onValueChange={(v) => setForm(f => ({ ...f, resolution_category: v }))}>
+              <SelectTrigger>
+                <SelectValue placeholder="Kategorie wählen" />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.map(cat => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {/* Todos */}
+          {todos.length > 0 && (
+            <div className="space-y-2">
+              <Label>Erledigte Aufgaben</Label>
+              <div className="border rounded-lg p-2 max-h-32 overflow-auto space-y-1">
+                {todos.map(todo => (
+                  <label key={todo.id} className="flex items-center gap-2 p-1 hover:bg-slate-50 rounded cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.completed_todo_ids.includes(todo.id)}
+                      onChange={() => toggleTodo(todo.id)}
+                    />
+                    <span className={form.completed_todo_ids.includes(todo.id) ? 'line-through text-slate-400' : ''}>{todo.title}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Internal Summary */}
+          <div className="space-y-2">
+            <Label>Interne Notiz {config.internal_note_required && <span className="text-red-500">*</span>}</Label>
+            <Textarea
+              value={form.internal_summary}
+              onChange={(e) => setForm(f => ({ ...f, internal_summary: e.target.value }))}
+              placeholder="Interne Zusammenfassung der Lösung..."
+              rows={2}
+            />
+          </div>
+          
+          {/* Customer Summary */}
+          <div className="space-y-2">
+            <Label>Kundenzusammenfassung {config.customer_summary_required && <span className="text-red-500">*</span>}</Label>
+            <Textarea
+              value={form.customer_summary}
+              onChange={(e) => setForm(f => ({ ...f, customer_summary: e.target.value }))}
+              placeholder="Zusammenfassung für den Kunden (wird als Kommentar hinzugefügt)..."
+              rows={2}
+            />
+          </div>
+        </div>
+        
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Abbrechen</Button>
+          <Button onClick={handleSubmit} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+            Ticket schließen
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

@@ -2852,6 +2852,133 @@ function ReportsPage() {
               )}
             </TabsContent>
             
+            <TabsContent value="onboarding">
+              {onboardingReport && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+                    <StatsCard title="Onboardings" value={onboardingReport.total_onboardings} icon={UserPlus} color="green" />
+                    <StatsCard title="Offboardings" value={onboardingReport.total_offboardings} icon={UserMinus} color="orange" />
+                    <StatsCard title="Ø Bearbeitungszeit" value={`${onboardingReport.avg_onboarding_completion_days} Tage`} icon={Clock} color="blue" />
+                    <StatsCard title="Anstehend (30 Tage)" value={(onboardingReport.upcoming_starts?.length || 0) + (onboardingReport.upcoming_exits?.length || 0)} icon={Calendar} color="purple" />
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                    {/* Upcoming Starts */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <UserPlus className="h-5 w-5 text-green-500" />
+                          Anstehende Eintritte
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {onboardingReport.upcoming_starts?.length > 0 ? (
+                          <div className="space-y-3">
+                            {onboardingReport.upcoming_starts.slice(0, 5).map((item) => (
+                              <div key={item.id} className="flex items-center justify-between p-2 bg-green-50 rounded">
+                                <div>
+                                  <p className="font-medium">{item.name}</p>
+                                  <p className="text-sm text-muted-foreground">{item.organization} • {item.department || '-'}</p>
+                                </div>
+                                <Badge className="bg-green-100 text-green-700">
+                                  {new Date(item.start_date).toLocaleDateString('de-DE')}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted-foreground text-center py-4">Keine anstehenden Eintritte</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                    
+                    {/* Upcoming Exits */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <UserMinus className="h-5 w-5 text-orange-500" />
+                          Anstehende Austritte
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {onboardingReport.upcoming_exits?.length > 0 ? (
+                          <div className="space-y-3">
+                            {onboardingReport.upcoming_exits.slice(0, 5).map((item) => (
+                              <div key={item.id} className="flex items-center justify-between p-2 bg-orange-50 rounded">
+                                <div>
+                                  <p className="font-medium">{item.name}</p>
+                                  <p className="text-sm text-muted-foreground">{item.organization}</p>
+                                </div>
+                                <Badge className="bg-orange-100 text-orange-700">
+                                  {new Date(item.last_day).toLocaleDateString('de-DE')}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-muted-foreground text-center py-4">Keine anstehenden Austritte</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                    
+                    {/* By Status */}
+                    <Card>
+                      <CardHeader><CardTitle>Onboarding nach Status</CardTitle></CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          {Object.entries(onboardingReport.onboarding_by_status || {}).map(([status, count]) => (
+                            <div key={status} className="flex items-center justify-between">
+                              <span className="capitalize">{status.replace('_', ' ')}</span>
+                              <span className="font-medium">{count}</span>
+                            </div>
+                          ))}
+                          {Object.keys(onboardingReport.onboarding_by_status || {}).length === 0 && (
+                            <p className="text-muted-foreground text-center">Keine Daten</p>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    {/* License Distribution */}
+                    <Card>
+                      <CardHeader><CardTitle>M365 Lizenzen</CardTitle></CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          {Object.entries(onboardingReport.license_distribution || {}).map(([license, count]) => (
+                            <div key={license} className="flex items-center justify-between">
+                              <Badge variant="outline">{license}</Badge>
+                              <span className="font-medium">{count}</span>
+                            </div>
+                          ))}
+                          {Object.keys(onboardingReport.license_distribution || {}).length === 0 && (
+                            <p className="text-muted-foreground text-center">Keine Daten</p>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    {/* By Department */}
+                    <Card className="md:col-span-2">
+                      <CardHeader><CardTitle>Onboardings nach Abteilung</CardTitle></CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          {Object.entries(onboardingReport.onboarding_by_department || {}).map(([dept, count]) => (
+                            <div key={dept} className="p-3 bg-slate-50 rounded text-center">
+                              <p className="font-medium text-lg">{count}</p>
+                              <p className="text-sm text-muted-foreground">{dept}</p>
+                            </div>
+                          ))}
+                          {Object.keys(onboardingReport.onboarding_by_department || {}).length === 0 && (
+                            <p className="text-muted-foreground col-span-4 text-center py-4">Keine Daten</p>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </>
+              )}
+            </TabsContent>
+            
             <TabsContent value="sla">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
                 <StatsCard title="Tickets mit SLA" value={reportData.total} icon={Ticket} color="blue" />

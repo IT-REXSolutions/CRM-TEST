@@ -4402,6 +4402,831 @@ async function handleGetOpenAPISpec() {
   return NextResponse.json(spec)
 }
 
+// =============================================
+// AI-ITSM MODULE HANDLERS
+// =============================================
+
+// AI Classification Engine
+async function classifyMessage(text, context = {}) {
+  const openai = await getOpenAIClient()
+  if (!openai) {
+    return { success: false, error: 'OpenAI nicht konfiguriert' }
+  }
+  
+  // Get ticket types for classification
+  const { data: ticketTypes } = await supabaseAdmin
+    .from('ticket_types')
+    .select('code, name, description, keywords')
+    .eq('is_active', true)
+  
+  const typeDescriptions = (ticketTypes || []).map(t => 
+    `- ${t.code}: ${t.name} (${t.description || ''}). Keywords: ${(t.keywords || []).join(', ')}`
+  ).join('\n')
+  
+  const systemPrompt = `Du bist ein KI-Assistent für IT-Service-Management. Analysiere eingehende Nachrichten und klassifiziere sie.
+
+Verfügbare Ticket-Typen:
+${typeDescriptions}
+
+Analysiere die Nachricht und antworte NUR mit validem JSON im folgenden Format:
+{
+  "type": "ticket_type_code",
+  "confidence": 0.95,
+  "intent": "kurze beschreibung der absicht",
+  "priority": "low|medium|high|critical",
+  "suggested_queue": "helpdesk|admin|project|sales",
+  "key_entities": ["erkannte entitäten"],
+  "requires_form": true/false,
+  "suggested_response": "optionaler vorschlag für antwort",
+  "reasoning": "kurze begründung"
+}`
+
+  const contextInfo = context.customer_name ? `\nKunde: ${context.customer_name}` : ''
+  const historyInfo = context.has_open_tickets ? `\nKunde hat offene Tickets.` : ''
+  
+  const prompt = `Nachricht:
+"${text}"
+${contextInfo}${historyInfo}
+
+Klassifiziere diese Nachricht:`
+
+  try {
+    const model = await getOpenAIModel()
+    const response = await openai.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2,
+      max_tokens: 500,
+    })
+    
+    const content = response.choices[0]?.message?.content || ''
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    
+    if (jsonMatch) {
+      const classification = JSON.parse(jsonMatch[0])
+      return {
+        success: true,
+        classification,
+        tokens: response.usage?.total_tokens || 0,
+        model,
+      }
+    }
+    
+    return { success: false, error: 'Keine gültige Klassifizierung' }
+  } catch (error) {
+    console.error('Classification error:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+async function handleClassifyMessage(body) {
+  const { text, context, conversation_id } = body
+  
+  if (!text) {
+    return NextResponse.json({ error: 'text ist erforderlich' }, { status: 400 })
+  }
+  
+  const startTime = Date.now()
+  const result = await classifyMessage(text, context || {})
+  const processingTime = Date.now() - startTime
+  
+  if (result.success) {
+    // Log classification
+    if (conversation_id) {
+      await supabaseAdmin.from('ai_classification_log').insert([{
+        id: uuidv4(),
+        conversation_id,
+        input_text: text.substring(0, 1000),
+        input_context: context || {},
+        classification: result.classification,
+        confidence: result.classification.confidence,
+        model_used: result.model,
+        tokens_used: result.tokens,
+        processing_time_ms: processingTime,
+      }])
+    }
+  }
+  
+  return NextResponse.json(result)
+}
+
+// Central Inbox Handlers
+async function handleGetConversations(params) {
+  const { status, channel, organization_id, ticket_id, limit, offset } = params
+  
+  let query = supabaseAdmin
+    .from('conversations')
+    .select(`
+      *,
+      contacts (id, first_name, last_name, email),
+      organizations (id, name),
+      tickets (id, ticket_number, subject, status)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(parseInt(limit) || 50)
+  
+  if (status) query = query.eq('status', status)
+  if (channel) query = query.eq('channel', channel)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  if (ticket_id) query = query.eq('ticket_id', ticket_id)
+  if (offset) query = query.range(parseInt(offset), parseInt(offset) + (parseInt(limit) || 50) - 1)
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateConversation(body) {
+  const { 
+    channel, from_address, from_name, to_address, subject, body: messageBody, 
+    body_html, attachments, organization_id, contact_id, auto_classify 
+  } = body
+  
+  if (!channel || !messageBody) {
+    return NextResponse.json({ error: 'channel und body sind erforderlich' }, { status: 400 })
+  }
+  
+  const conversationId = uuidv4()
+  const conversationData = {
+    id: conversationId,
+    channel,
+    from_address,
+    from_name,
+    to_address,
+    subject,
+    body: messageBody,
+    body_html,
+    attachments: attachments || [],
+    organization_id: organization_id || null,
+    contact_id: contact_id || null,
+    status: 'new',
+    is_inbound: true,
+  }
+  
+  // Auto-classify if requested
+  if (auto_classify) {
+    const classifyText = `${subject || ''}\n\n${messageBody}`
+    const context = {}
+    
+    if (organization_id) {
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('name')
+        .eq('id', organization_id)
+        .single()
+      if (org) context.customer_name = org.name
+    }
+    
+    // Check for open tickets
+    if (organization_id || contact_id) {
+      const { data: openTickets } = await supabaseAdmin
+        .from('tickets')
+        .select('id')
+        .or(organization_id ? `organization_id.eq.${organization_id}` : `contact_id.eq.${contact_id}`)
+        .in('status', ['open', 'pending', 'in_progress'])
+        .limit(1)
+      context.has_open_tickets = openTickets && openTickets.length > 0
+    }
+    
+    const classification = await classifyMessage(classifyText, context)
+    if (classification.success) {
+      conversationData.ai_classification = classification.classification
+      conversationData.classification_status = 'classified'
+    }
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('conversations')
+    .insert([conversationData])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleProcessConversation(id, body) {
+  const { action, ticket_type_code, user_id, create_ticket, ticket_data } = body
+  
+  // Get conversation
+  const { data: conversation } = await supabaseAdmin
+    .from('conversations')
+    .select('*')
+    .eq('id', id)
+    .single()
+  
+  if (!conversation) {
+    return NextResponse.json({ error: 'Conversation nicht gefunden' }, { status: 404 })
+  }
+  
+  let ticketId = conversation.ticket_id
+  
+  // Create ticket if requested
+  if (create_ticket && !ticketId) {
+    const classification = conversation.ai_classification || {}
+    
+    const newTicket = {
+      id: uuidv4(),
+      subject: conversation.subject || 'Neue Anfrage',
+      description: conversation.body,
+      status: 'open',
+      priority: classification.priority || 'medium',
+      ticket_type_code: ticket_type_code || classification.type || null,
+      organization_id: conversation.organization_id,
+      contact_id: conversation.contact_id,
+      source: conversation.channel,
+      conversation_id: id,
+      ai_classification: classification,
+      created_by_id: user_id,
+      ...ticket_data,
+    }
+    
+    const { data: createdTicket, error: ticketError } = await supabaseAdmin
+      .from('tickets')
+      .insert([newTicket])
+      .select()
+      .single()
+    
+    if (ticketError) return NextResponse.json({ error: ticketError.message }, { status: 500 })
+    ticketId = createdTicket.id
+    
+    // Add history
+    await supabaseAdmin.from('ticket_history').insert([{
+      id: uuidv4(),
+      ticket_id: ticketId,
+      user_id,
+      action: 'created',
+      metadata: { source: conversation.channel, conversation_id: id },
+    }])
+    
+    // Trigger automations
+    await handleRunAutomations({
+      trigger_type: 'ticket_created',
+      trigger_data: { ticket_id: ticketId, ticket_type: newTicket.ticket_type_code },
+    })
+    
+    // Trigger webhooks
+    await triggerWebhooks('ticket.created', { ticket: createdTicket })
+  }
+  
+  // Update conversation
+  const { data, error } = await supabaseAdmin
+    .from('conversations')
+    .update({
+      status: action === 'archive' ? 'archived' : 'processed',
+      ticket_id: ticketId,
+      processed_at: new Date().toISOString(),
+      processed_by_id: user_id,
+      classification_status: ticket_type_code ? 'confirmed' : conversation.classification_status,
+    })
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  return NextResponse.json({
+    conversation: data,
+    ticket_id: ticketId,
+  })
+}
+
+// Ticket Types
+async function handleGetTicketTypes(params) {
+  const { data, error } = await supabaseAdmin
+    .from('ticket_types')
+    .select('*')
+    .eq('is_active', true)
+    .order('position')
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+// Onboarding Handlers
+async function handleCreateOnboarding(body) {
+  const { ticket_id, organization_id, ...employeeData } = body
+  
+  if (!ticket_id || !organization_id || !employeeData.first_name || !employeeData.last_name || !employeeData.start_date) {
+    return NextResponse.json({ error: 'Pflichtfelder fehlen' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('onboarding_requests')
+    .insert([{
+      id: uuidv4(),
+      ticket_id,
+      organization_id,
+      ...employeeData,
+      status: 'pending',
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Update ticket type
+  await supabaseAdmin
+    .from('tickets')
+    .update({ ticket_type_code: 'onboarding' })
+    .eq('id', ticket_id)
+  
+  return NextResponse.json(data)
+}
+
+async function handleGetOnboarding(id) {
+  const { data, error } = await supabaseAdmin
+    .from('onboarding_requests')
+    .select(`
+      *,
+      tickets (id, ticket_number, subject, status),
+      organizations (id, name)
+    `)
+    .eq('id', id)
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateOnboarding(id, body) {
+  const { data, error } = await supabaseAdmin
+    .from('onboarding_requests')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleCompleteOnboardingTask(id, body) {
+  const { task_name, completed_by_id, notes } = body
+  
+  // Get current checklist
+  const { data: onboarding } = await supabaseAdmin
+    .from('onboarding_requests')
+    .select('checklist')
+    .eq('id', id)
+    .single()
+  
+  const checklist = onboarding?.checklist || []
+  const taskIndex = checklist.findIndex(t => t.task === task_name)
+  
+  if (taskIndex >= 0) {
+    checklist[taskIndex] = {
+      ...checklist[taskIndex],
+      status: 'completed',
+      completed_by: completed_by_id,
+      completed_at: new Date().toISOString(),
+      notes,
+    }
+  } else {
+    checklist.push({
+      task: task_name,
+      status: 'completed',
+      completed_by: completed_by_id,
+      completed_at: new Date().toISOString(),
+      notes,
+    })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('onboarding_requests')
+    .update({ checklist, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+// M365 Integration Handlers
+async function handleM365AuthUrl(body) {
+  const { organization_id, redirect_uri } = body
+  
+  const clientId = await getSetting('m365_client_id')
+  if (!clientId) {
+    return NextResponse.json({ error: 'M365 Client ID nicht konfiguriert' }, { status: 400 })
+  }
+  
+  const scopes = [
+    'User.Read.All',
+    'Directory.Read.All',
+    'Mail.Read',
+    'Mail.Send',
+  ].join(' ')
+  
+  const state = Buffer.from(JSON.stringify({ organization_id })).toString('base64')
+  
+  const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+    `client_id=${clientId}` +
+    `&response_type=code` +
+    `&redirect_uri=${encodeURIComponent(redirect_uri || `${process.env.NEXT_PUBLIC_BASE_URL}/api/m365/callback`)}` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&state=${state}` +
+    `&response_mode=query`
+  
+  return NextResponse.json({ auth_url: authUrl })
+}
+
+async function handleM365Callback(body) {
+  const { code, state, redirect_uri } = body
+  
+  const clientId = await getSetting('m365_client_id')
+  const clientSecret = await getSetting('m365_client_secret')
+  
+  if (!clientId || !clientSecret) {
+    return NextResponse.json({ error: 'M365 nicht konfiguriert' }, { status: 400 })
+  }
+  
+  // Decode state
+  let organizationId = null
+  try {
+    const stateData = JSON.parse(Buffer.from(state, 'base64').toString())
+    organizationId = stateData.organization_id
+  } catch {}
+  
+  try {
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        code,
+        redirect_uri: redirect_uri || `${process.env.NEXT_PUBLIC_BASE_URL}/api/m365/callback`,
+        grant_type: 'authorization_code',
+      }),
+    })
+    
+    const tokens = await tokenResponse.json()
+    
+    if (tokens.error) {
+      return NextResponse.json({ error: tokens.error_description || tokens.error }, { status: 400 })
+    }
+    
+    // Get tenant info
+    const profileResponse = await fetch('https://graph.microsoft.com/v1.0/organization', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    })
+    const profileData = await profileResponse.json()
+    const tenant = profileData.value?.[0]
+    
+    // Save connection
+    const connectionId = uuidv4()
+    await supabaseAdmin.from('m365_connections').insert([{
+      id: connectionId,
+      organization_id: organizationId,
+      tenant_id: tenant?.id,
+      tenant_name: tenant?.displayName,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      scopes: tokens.scope?.split(' ') || [],
+      is_active: true,
+    }])
+    
+    // Update organization
+    if (organizationId) {
+      await supabaseAdmin
+        .from('organizations')
+        .update({ m365_tenant_id: tenant?.id, m365_connected: true })
+        .eq('id', organizationId)
+    }
+    
+    return NextResponse.json({ 
+      success: true, 
+      connection_id: connectionId,
+      tenant_name: tenant?.displayName,
+    })
+  } catch (error) {
+    console.error('M365 callback error:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleM365SyncUsers(body) {
+  const { connection_id } = body
+  
+  const { data: connection } = await supabaseAdmin
+    .from('m365_connections')
+    .select('*')
+    .eq('id', connection_id)
+    .single()
+  
+  if (!connection) {
+    return NextResponse.json({ error: 'Verbindung nicht gefunden' }, { status: 404 })
+  }
+  
+  // Check token expiry and refresh if needed
+  let accessToken = connection.access_token
+  if (new Date(connection.token_expires_at) < new Date()) {
+    // Refresh token
+    const clientId = await getSetting('m365_client_id')
+    const clientSecret = await getSetting('m365_client_secret')
+    
+    const refreshResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: connection.refresh_token,
+        grant_type: 'refresh_token',
+      }),
+    })
+    
+    const tokens = await refreshResponse.json()
+    if (tokens.access_token) {
+      accessToken = tokens.access_token
+      await supabaseAdmin
+        .from('m365_connections')
+        .update({
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token || connection.refresh_token,
+          token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        })
+        .eq('id', connection_id)
+    }
+  }
+  
+  try {
+    // Fetch users from Microsoft Graph
+    const usersResponse = await fetch('https://graph.microsoft.com/v1.0/users?$select=id,userPrincipalName,displayName,givenName,surname,mail,jobTitle,department,officeLocation,mobilePhone,accountEnabled&$top=999', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    
+    const usersData = await usersResponse.json()
+    
+    if (usersData.error) {
+      return NextResponse.json({ error: usersData.error.message }, { status: 400 })
+    }
+    
+    const users = usersData.value || []
+    let synced = 0
+    let created = 0
+    
+    for (const user of users) {
+      // Check if user exists
+      const { data: existing } = await supabaseAdmin
+        .from('m365_users')
+        .select('id')
+        .eq('connection_id', connection_id)
+        .eq('azure_id', user.id)
+        .single()
+      
+      if (existing) {
+        // Update
+        await supabaseAdmin
+          .from('m365_users')
+          .update({
+            user_principal_name: user.userPrincipalName,
+            display_name: user.displayName,
+            given_name: user.givenName,
+            surname: user.surname,
+            mail: user.mail,
+            job_title: user.jobTitle,
+            department: user.department,
+            office_location: user.officeLocation,
+            mobile_phone: user.mobilePhone,
+            account_enabled: user.accountEnabled,
+            last_synced_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+        synced++
+      } else {
+        // Create
+        await supabaseAdmin.from('m365_users').insert([{
+          id: uuidv4(),
+          connection_id,
+          azure_id: user.id,
+          user_principal_name: user.userPrincipalName,
+          display_name: user.displayName,
+          given_name: user.givenName,
+          surname: user.surname,
+          mail: user.mail,
+          job_title: user.jobTitle,
+          department: user.department,
+          office_location: user.officeLocation,
+          mobile_phone: user.mobilePhone,
+          account_enabled: user.accountEnabled,
+        }])
+        created++
+      }
+    }
+    
+    // Update connection last sync
+    await supabaseAdmin
+      .from('m365_connections')
+      .update({ last_sync_at: new Date().toISOString() })
+      .eq('id', connection_id)
+    
+    return NextResponse.json({
+      success: true,
+      total_users: users.length,
+      synced,
+      created,
+    })
+  } catch (error) {
+    console.error('M365 sync error:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetM365Users(params) {
+  const { connection_id, organization_id } = params
+  
+  let query = supabaseAdmin
+    .from('m365_users')
+    .select(`
+      *,
+      m365_connections (id, tenant_name, organization_id)
+    `)
+    .order('display_name')
+  
+  if (connection_id) {
+    query = query.eq('connection_id', connection_id)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  
+  // Filter by organization if needed
+  let result = data || []
+  if (organization_id && !connection_id) {
+    result = result.filter(u => u.m365_connections?.organization_id === organization_id)
+  }
+  
+  return NextResponse.json(result)
+}
+
+async function handleGetM365Connections(params) {
+  const { organization_id } = params
+  
+  let query = supabaseAdmin
+    .from('m365_connections')
+    .select('id, organization_id, tenant_id, tenant_name, is_active, last_sync_at, created_at')
+    .order('created_at', { ascending: false })
+  
+  if (organization_id) {
+    query = query.eq('organization_id', organization_id)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+// AI Suggestions
+async function handleGetAISuggestions(params) {
+  const { ticket_id, type } = params
+  
+  let query = supabaseAdmin
+    .from('ai_suggestions')
+    .select('*')
+    .order('created_at', { ascending: false })
+  
+  if (ticket_id) query = query.eq('ticket_id', ticket_id)
+  if (type) query = query.eq('type', type)
+  
+  const { data, error } = await query.limit(10)
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleGenerateAISuggestions(body) {
+  const { ticket_id, types } = body
+  
+  if (!ticket_id) {
+    return NextResponse.json({ error: 'ticket_id ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get ticket with history
+  const { data: ticket } = await supabaseAdmin
+    .from('tickets')
+    .select(`
+      *,
+      organizations (name),
+      ticket_comments (content, is_internal, created_at)
+    `)
+    .eq('id', ticket_id)
+    .single()
+  
+  if (!ticket) {
+    return NextResponse.json({ error: 'Ticket nicht gefunden' }, { status: 404 })
+  }
+  
+  const suggestions = []
+  const suggestionTypes = types || ['response', 'solution']
+  
+  for (const type of suggestionTypes) {
+    let prompt = ''
+    let systemPrompt = ''
+    
+    if (type === 'response') {
+      systemPrompt = 'Du bist ein IT-Support-Mitarbeiter. Erstelle eine professionelle Antwort auf die Kundenanfrage.'
+      prompt = `Ticket: ${ticket.subject}\n\nBeschreibung:\n${ticket.description}\n\nErstelle eine professionelle Antwort auf diese Anfrage.`
+    } else if (type === 'solution') {
+      systemPrompt = 'Du bist ein IT-Experte. Analysiere das Problem und schlage Lösungsschritte vor.'
+      prompt = `Problem: ${ticket.subject}\n\n${ticket.description}\n\nSchlage Lösungsschritte vor als JSON: {"steps": ["Schritt 1", "Schritt 2"], "estimated_time_minutes": 30}`
+    }
+    
+    const result = await generateAICompletion(prompt, { systemPrompt, temperature: 0.4 })
+    
+    if (result.success) {
+      const suggestionData = {
+        id: uuidv4(),
+        ticket_id,
+        type,
+        content: type === 'solution' ? ((() => {
+          try { return JSON.parse(result.content.match(/\{[\s\S]*\}/)?.[0] || '{}') } catch { return { text: result.content } }
+        })()) : { text: result.content },
+        confidence: 0.8,
+      }
+      
+      await supabaseAdmin.from('ai_suggestions').insert([suggestionData])
+      suggestions.push(suggestionData)
+    }
+  }
+  
+  return NextResponse.json(suggestions)
+}
+
+// Dynamic Forms
+async function handleGetDynamicForms(params) {
+  const { ticket_type_code } = params
+  
+  let query = supabaseAdmin
+    .from('dynamic_forms')
+    .select('*')
+    .eq('is_active', true)
+    .order('name')
+  
+  if (ticket_type_code) {
+    query = query.eq('ticket_type_code', ticket_type_code)
+  }
+  
+  const { data, error } = await query
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateDynamicForm(body) {
+  const { name, description, ticket_type_code, fields, conditions, layout, created_by_id } = body
+  
+  if (!name || !fields) {
+    return NextResponse.json({ error: 'name und fields sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('dynamic_forms')
+    .insert([{
+      id: uuidv4(),
+      name,
+      description,
+      ticket_type_code,
+      fields,
+      conditions: conditions || [],
+      layout: layout || 'single',
+      created_by_id,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
 // ============================================
 // MAIN ROUTE HANDLER
 // ============================================

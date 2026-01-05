@@ -4528,7 +4528,7 @@ function SettingsPage() {
                     <Input
                       value={settings.company_name || ''}
                       onChange={(e) => updateSetting('company_name', e.target.value)}
-                      placeholder="ServiceDesk Pro"
+                      placeholder="IT REX Solutions"
                     />
                   </div>
                   <div className="space-y-2">

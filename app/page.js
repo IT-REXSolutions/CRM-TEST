@@ -6052,6 +6052,184 @@ function SettingsPage() {
                 </CardContent>
               </Card>
               
+              {/* Chatwoot Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-orange-100 rounded-lg">
+                        <MessageSquare className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">Chatwoot</CardTitle>
+                        <CardDescription>Omnichannel-Chat (WhatsApp, Web, E-Mail)</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.chatwoot_enabled === true || settings.chatwoot_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('chatwoot_enabled', v)
+                        saveSetting('chatwoot_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Chatwoot URL</Label>
+                      <Input
+                        value={settings.chatwoot_api_url || ''}
+                        onChange={(e) => updateSetting('chatwoot_api_url', e.target.value)}
+                        placeholder="https://app.chatwoot.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Account ID</Label>
+                      <Input
+                        value={settings.chatwoot_account_id || ''}
+                        onChange={(e) => updateSetting('chatwoot_account_id', e.target.value)}
+                        placeholder="1"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>API Token</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={showPassword.chatwoot ? 'text' : 'password'}
+                          value={settings.chatwoot_api_token || ''}
+                          onChange={(e) => updateSetting('chatwoot_api_token', e.target.value)}
+                          placeholder="Chatwoot API Token..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('chatwoot')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.chatwoot ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>SSO Secret</Label>
+                    <Input
+                      type="password"
+                      value={settings.chatwoot_sso_secret || ''}
+                      onChange={(e) => updateSetting('chatwoot_sso_secret', e.target.value)}
+                      placeholder="Für Single Sign-On..."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Webhook-URL (in Chatwoot eintragen)</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        readOnly
+                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/chatwoot`}
+                        className="bg-slate-50"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="icon"
+                        onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/chatwoot`)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={settings.chatwoot_auto_create_ticket === true || settings.chatwoot_auto_create_ticket === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('chatwoot_auto_create_ticket', v)
+                        saveSetting('chatwoot_auto_create_ticket', v)
+                      }}
+                    />
+                    <Label>Automatisch Ticket bei neuer Konversation erstellen</Label>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={async () => {
+                      await saveSetting('chatwoot_api_url', settings.chatwoot_api_url)
+                      await saveSetting('chatwoot_api_token', settings.chatwoot_api_token)
+                      await saveSetting('chatwoot_account_id', settings.chatwoot_account_id)
+                      await saveSetting('chatwoot_sso_secret', settings.chatwoot_sso_secret)
+                      toast.success('Chatwoot-Einstellungen gespeichert')
+                    }} size="sm">
+                      <Save className="h-4 w-4 mr-2" />
+                      Speichern
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* n8n Automation Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-red-100 rounded-lg">
+                        <Webhook className="h-5 w-5 text-red-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">n8n Automation</CardTitle>
+                        <CardDescription>Workflow-Automatisierung & Webhooks</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.n8n_enabled === true || settings.n8n_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('n8n_enabled', v)
+                        saveSetting('n8n_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>n8n URL (optional)</Label>
+                    <Input
+                      value={settings.n8n_url || ''}
+                      onChange={(e) => updateSetting('n8n_url', e.target.value)}
+                      placeholder="https://n8n.example.com"
+                    />
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-lg space-y-3">
+                    <Label className="font-medium">Verfügbare Webhook-Endpoints:</Label>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/ticket-created</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/ticket-created`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/ticket-updated</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/ticket-updated`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/message-received</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/message-received`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/contact-updated</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/contact-updated`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Diese Endpoints können in n8n als HTTP-Trigger verwendet werden, um Automatisierungen auszulösen.
+                  </p>
+                </CardContent>
+              </Card>
+              
               {/* Microsoft 365 OAuth Integration */}
               <Card>
                 <CardHeader>

@@ -258,6 +258,54 @@ const api = {
   createInvoiceFromTime: (data) => api.fetch('/invoices/create-from-time', { method: 'POST', body: JSON.stringify(data) }),
   syncInvoiceToLexoffice: (data) => api.fetch('/invoices/sync-lexoffice', { method: 'POST', body: JSON.stringify(data) }),
   
+  // Ticket Kanban (New)
+  getTicketKanbanViews: () => api.fetch('/ticket-kanban-views'),
+  createTicketKanbanView: (data) => api.fetch('/ticket-kanban-views', { method: 'POST', body: JSON.stringify(data) }),
+  updateTicketKanbanView: (id, data) => api.fetch(`/ticket-kanban-views/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTicketKanbanView: (id) => api.fetch(`/ticket-kanban-views/${id}`, { method: 'DELETE' }),
+  getTicketKanbanData: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return api.fetch(`/ticket-kanban${query ? `?${query}` : ''}`)
+  },
+  moveTicketStatus: (data) => api.fetch('/tickets/move', { method: 'POST', body: JSON.stringify(data) }),
+  
+  // Ticket Todos & Close Flow
+  getTicketTodos: (ticketId) => api.fetch(`/tickets/${ticketId}/todos`),
+  createTicketTodo: (ticketId, data) => api.fetch(`/tickets/${ticketId}/todos`, { method: 'POST', body: JSON.stringify(data) }),
+  updateTicketTodo: (id, data) => api.fetch(`/ticket-todos/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTicketTodo: (id) => api.fetch(`/ticket-todos/${id}`, { method: 'DELETE' }),
+  closeTicket: (ticketId, data) => api.fetch(`/tickets/${ticketId}/close`, { method: 'POST', body: JSON.stringify(data) }),
+  getCloseFlowConfig: () => api.fetch('/close-flow-config'),
+  getResolutionCategories: () => api.fetch('/resolution-categories'),
+  
+  // Templates
+  getTemplates: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return api.fetch(`/templates${query ? `?${query}` : ''}`)
+  },
+  createTemplate: (data) => api.fetch('/templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateTemplate: (id, data) => api.fetch(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTemplate: (id) => api.fetch(`/templates/${id}`, { method: 'DELETE' }),
+  renderTemplate: (data) => api.fetch('/templates/render', { method: 'POST', body: JSON.stringify(data) }),
+  
+  // API Keys
+  getApiKeys: () => api.fetch('/api-keys'),
+  createApiKey: (data) => api.fetch('/api-keys', { method: 'POST', body: JSON.stringify(data) }),
+  updateApiKey: (id, data) => api.fetch(`/api-keys/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteApiKey: (id) => api.fetch(`/api-keys/${id}`, { method: 'DELETE' }),
+  regenerateApiKey: (data) => api.fetch('/api-keys/regenerate', { method: 'POST', body: JSON.stringify(data) }),
+  getApiScopes: () => api.fetch('/api-scopes'),
+  
+  // Webhooks
+  getWebhooks: () => api.fetch('/webhook-subscriptions'),
+  createWebhook: (data) => api.fetch('/webhook-subscriptions', { method: 'POST', body: JSON.stringify(data) }),
+  updateWebhook: (id, data) => api.fetch(`/webhook-subscriptions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteWebhook: (id) => api.fetch(`/webhook-subscriptions/${id}`, { method: 'DELETE' }),
+  testWebhook: (id) => api.fetch(`/webhook-subscriptions/${id}/test`, { method: 'POST' }),
+  
+  // OpenAPI Spec
+  getOpenAPISpec: () => api.fetch('/openapi.json'),
+  
   // Automation Engine (Phase 7)
   runAutomation: (data) => api.fetch('/automations/run', { method: 'POST', body: JSON.stringify(data) }),
   checkSLA: () => api.fetch('/automations/check-sla', { method: 'POST' }),

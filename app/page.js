@@ -98,6 +98,12 @@ const ASSET_ICONS = {
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'inbox', label: 'Posteingang', icon: Mail },
+  { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare, highlight: true },
+  { id: 'crm', label: 'CRM', icon: Users, submenu: [
+    { id: 'contacts', label: 'Kontakte' },
+    { id: 'companies', label: 'Unternehmen' },
+    { id: 'deals', label: 'Deals' },
+  ]},
   { id: 'tickets', label: 'Tickets', icon: Ticket },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
   { id: 'onboarding', label: 'Onboarding', icon: Users },

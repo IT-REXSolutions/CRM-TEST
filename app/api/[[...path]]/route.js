@@ -5912,7 +5912,7 @@ async function handleGetTimeReport(params) {
   
   let query = supabaseAdmin
     .from('time_entries')
-    .select('*, users(name), tickets(ticket_number, subject), organizations(name)')
+    .select('*, tickets(ticket_number, subject), organizations(name)')
   
   if (start_date) query = query.gte('date', start_date)
   if (end_date) query = query.lte('date', end_date)
@@ -5923,6 +5923,18 @@ async function handleGetTimeReport(params) {
   const { data: entries, error } = await query
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  
+  // Also get user names separately
+  const userIds = [...new Set((entries || []).map(e => e.user_id).filter(Boolean))]
+  const { data: users } = await supabaseAdmin
+    .from('users')
+    .select('id, name')
+    .in('id', userIds.length > 0 ? userIds : [''])
+  
+  const userMap = {}
+  for (const u of (users || [])) {
+    userMap[u.id] = u.name
   }
   
   const stats = {
@@ -5957,7 +5969,7 @@ async function handleGetTimeReport(params) {
     }
     
     // By user
-    const userName = entry.users?.name || 'Unbekannt'
+    const userName = userMap[entry.user_id] || 'Unbekannt'
     if (!stats.by_user[userName]) {
       stats.by_user[userName] = { total: 0, billable: 0 }
     }

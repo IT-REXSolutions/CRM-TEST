@@ -3148,6 +3148,114 @@ async function handleGetTags() {
 }
 
 // ============================================
+// DEALS / CRM PIPELINE HANDLERS
+// ============================================
+
+async function handleGetDeals(params) {
+  const { stage, contact_id, organization_id, pipeline_id } = params
+  
+  let query = supabaseAdmin
+    .from('deals')
+    .select('*, contacts(first_name, last_name), organizations(name)')
+    .order('created_at', { ascending: false })
+  
+  if (stage) query = query.eq('stage', stage)
+  if (contact_id) query = query.eq('contact_id', contact_id)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  if (pipeline_id) query = query.eq('pipeline_id', pipeline_id)
+  
+  const { data, error } = await query
+  
+  if (error) {
+    // Table might not exist, return empty array
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleGetDeal(id) {
+  const { data, error } = await supabaseAdmin
+    .from('deals')
+    .select('*, contacts(first_name, last_name, email, phone), organizations(name)')
+    .eq('id', id)
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleCreateDeal(body) {
+  const { name, value, stage, contact_id, organization_id, expected_close_date, probability, source, notes, owner_id, pipeline_id } = body
+  
+  if (!name) {
+    return NextResponse.json({ error: 'Name ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('deals')
+    .insert([{
+      id: uuidv4(),
+      name,
+      value: value || 0,
+      stage: stage || 'lead',
+      contact_id: contact_id || null,
+      organization_id: organization_id || null,
+      expected_close_date: expected_close_date || null,
+      probability: probability || 50,
+      source,
+      notes,
+      owner_id: owner_id || null,
+      pipeline_id: pipeline_id || 'default',
+    }])
+    .select()
+    .single()
+  
+  if (error) {
+    // Create table if not exists
+    if (error.code === '42P01') {
+      return NextResponse.json({ error: 'Deals table not found. Please create it in the database.' }, { status: 500 })
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data)
+}
+
+async function handleUpdateDeal(id, body) {
+  const allowedFields = ['name', 'value', 'stage', 'contact_id', 'organization_id', 'expected_close_date', 'probability', 'source', 'notes', 'owner_id', 'closed_at', 'lost_reason']
+  
+  const updateData = { updated_at: new Date().toISOString() }
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) updateData[field] = body[field]
+  }
+  
+  // Auto-set closed_at when moving to won/lost
+  if (body.stage === 'won' || body.stage === 'lost') {
+    updateData.closed_at = new Date().toISOString()
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('deals')
+    .update(updateData)
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDeleteDeal(id) {
+  const { error } = await supabaseAdmin
+    .from('deals')
+    .delete()
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
 // BOARDS & TASKS HANDLERS
 // ============================================
 

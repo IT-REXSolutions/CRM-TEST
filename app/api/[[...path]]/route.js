@@ -2233,38 +2233,516 @@ async function handleCreateInvoiceDraft(body) {
 // WEBHOOK HANDLERS (for Placetel)
 // ============================================
 
+// ============================================
+// PLACETEL WEBHOOK HANDLER - Production Implementation
+// ============================================
+
 async function handlePlacetelWebhook(body) {
-  // This would handle incoming webhooks from Placetel
-  const { event_type, call_id, caller, callee, duration, recording_url } = body
-  
-  // Log the call
-  const callData = {
-    id: uuidv4(),
-    external_id: call_id,
-    direction: event_type === 'incoming_call' ? 'inbound' : 'outbound',
-    caller_number: caller,
-    callee_number: callee,
-    duration_seconds: duration,
-    recording_url: recording_url || null,
-    status: event_type,
-    started_at: new Date().toISOString(),
+  const placetelEnabled = await getSetting('placetel_enabled', false)
+  if (!placetelEnabled) {
+    return NextResponse.json({ error: 'Placetel-Integration ist deaktiviert' }, { status: 400 })
   }
   
-  // Try to find matching contact by phone number
-  const { data: contact } = await supabaseAdmin
-    .from('contacts')
-    .select('id, organization_id')
-    .or(`phone.eq.${caller},mobile.eq.${caller}`)
+  const { 
+    event_type, 
+    call_id, 
+    caller, 
+    callee, 
+    duration, 
+    recording_url,
+    timestamp,
+    direction: callDirection 
+  } = body
+  
+  console.log('Placetel Webhook received:', { event_type, call_id, caller })
+  
+  const callId = uuidv4()
+  const callData = {
+    id: callId,
+    external_id: call_id,
+    direction: callDirection || (event_type === 'incoming_call' || event_type === 'call.incoming' ? 'inbound' : 'outbound'),
+    caller_number: caller,
+    callee_number: callee,
+    duration_seconds: duration || 0,
+    recording_url: recording_url || null,
+    status: event_type,
+    started_at: timestamp ? new Date(timestamp).toISOString() : new Date().toISOString(),
+  }
+  
+  // Step 1: Find matching contact/organization by phone number
+  let contact = null
+  let organization = null
+  
+  // Normalize phone number for search
+  const normalizedCaller = caller?.replace(/[^0-9+]/g, '') || ''
+  const searchPatterns = [
+    normalizedCaller,
+    normalizedCaller.replace(/^0/, '+49'), // German format
+    normalizedCaller.replace(/^\+49/, '0'),
+  ]
+  
+  // Search in contacts
+  for (const pattern of searchPatterns) {
+    if (!pattern) continue
+    const { data: foundContact } = await supabaseAdmin
+      .from('contacts')
+      .select('id, organization_id, first_name, last_name, email')
+      .or(`phone.ilike.%${pattern}%,mobile.ilike.%${pattern}%`)
+      .limit(1)
+      .single()
+    
+    if (foundContact) {
+      contact = foundContact
+      callData.contact_id = contact.id
+      callData.organization_id = contact.organization_id
+      break
+    }
+  }
+  
+  // Get organization details if found
+  if (callData.organization_id) {
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name, email')
+      .eq('id', callData.organization_id)
+      .single()
+    organization = org
+  }
+  
+  // Step 2: Insert call log
+  const { data: callLog, error: callError } = await supabaseAdmin
+    .from('call_logs')
+    .insert([callData])
+    .select()
     .single()
   
-  if (contact) {
-    callData.contact_id = contact.id
-    callData.organization_id = contact.organization_id
+  if (callError) {
+    console.error('Call log insert error:', callError)
+    return NextResponse.json({ error: callError.message }, { status: 500 })
+  }
+  
+  // Step 3: Handle call completion events (when we have duration/recording)
+  if (event_type === 'call.completed' || event_type === 'call_ended' || duration > 0) {
+    
+    // Step 3a: Create or find existing ticket for this call
+    let ticketId = null
+    const ticketSubject = `Telefonanruf von ${caller}${organization ? ` (${organization.name})` : ''}`
+    
+    // Check if there's an open ticket from this caller recently
+    const { data: existingTicket } = await supabaseAdmin
+      .from('tickets')
+      .select('id')
+      .eq('source', 'phone')
+      .in('status', ['open', 'pending', 'in_progress'])
+      .or(contact ? `contact_id.eq.${contact.id}` : `subject.ilike.%${caller}%`)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+    
+    if (existingTicket) {
+      ticketId = existingTicket.id
+    } else {
+      // Create new ticket from call
+      const defaultPriority = await getSetting('default_ticket_priority', 'medium')
+      
+      // Get system user for automated ticket creation
+      const { data: systemUser } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('email', 'admin@servicedesk.de')
+        .single()
+      
+      const newTicket = {
+        id: uuidv4(),
+        subject: ticketSubject,
+        description: `Eingehender Anruf\n\nAnrufer: ${caller}\nDauer: ${Math.round((duration || 0) / 60)} Minuten\n\n---\nWeitere Details werden nach Transkription hinzugefügt.`,
+        status: 'open',
+        priority: defaultPriority,
+        source: 'phone',
+        organization_id: organization?.id || null,
+        contact_id: contact?.id || null,
+        created_by_id: systemUser?.id || null,
+      }
+      
+      const { data: createdTicket, error: ticketError } = await supabaseAdmin
+        .from('tickets')
+        .insert([newTicket])
+        .select()
+        .single()
+      
+      if (!ticketError && createdTicket) {
+        ticketId = createdTicket.id
+        
+        // Add ticket history
+        await supabaseAdmin.from('ticket_history').insert([{
+          id: uuidv4(),
+          ticket_id: ticketId,
+          action: 'created',
+          metadata: { source: 'phone', call_id: callId },
+        }])
+      }
+    }
+    
+    // Link call to ticket
+    if (ticketId) {
+      await supabaseAdmin
+        .from('call_logs')
+        .update({ ticket_id: ticketId })
+        .eq('id', callId)
+    }
+    
+    // Step 3b: Process recording for transcription if available
+    if (recording_url && ticketId) {
+      // Queue transcription (in production, this would be async)
+      processCallRecording(callId, recording_url, ticketId, {
+        callerNumber: caller,
+        organizationName: organization?.name,
+        duration: duration,
+      }).catch(err => console.error('Transcription error:', err))
+    }
+    
+    return NextResponse.json({ 
+      success: true, 
+      call_id: callId, 
+      ticket_id: ticketId,
+      contact_found: !!contact,
+      organization_found: !!organization,
+    })
+  }
+  
+  return NextResponse.json({ success: true, call_id: callId })
+}
+
+// Async function to process call recording
+async function processCallRecording(callId, recordingUrl, ticketId, metadata) {
+  try {
+    const openaiEnabled = await getSetting('openai_enabled', false)
+    if (!openaiEnabled) {
+      console.log('OpenAI not enabled, skipping transcription')
+      return
+    }
+    
+    // Fetch the recording
+    const response = await fetch(recordingUrl)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch recording: ${response.status}`)
+    }
+    
+    const audioBuffer = await response.arrayBuffer()
+    
+    // Transcribe with Whisper
+    const transcription = await transcribeAudioWithWhisper(
+      Buffer.from(audioBuffer), 
+      'recording.webm'
+    )
+    
+    if (!transcription.success) {
+      console.error('Transcription failed:', transcription.error)
+      // Still update call log with error
+      await supabaseAdmin
+        .from('call_logs')
+        .update({ transcription: `[Transkription fehlgeschlagen: ${transcription.error}]` })
+        .eq('id', callId)
+      return
+    }
+    
+    // Update call log with transcription
+    await supabaseAdmin
+      .from('call_logs')
+      .update({ transcription: transcription.text })
+      .eq('id', callId)
+    
+    // Generate AI summary
+    const summary = await generateCallSummary(transcription.text, metadata)
+    
+    if (summary.success) {
+      // Update call log with AI summary
+      await supabaseAdmin
+        .from('call_logs')
+        .update({ ai_summary: JSON.stringify(summary.summary) })
+        .eq('id', callId)
+      
+      // Add summary as system note to ticket
+      const formattedSummary = formatCallSummary(summary.summary, transcription.text)
+      
+      // Get system user
+      const { data: systemUser } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('email', 'admin@servicedesk.de')
+        .single()
+      
+      // Add internal comment with summary
+      await supabaseAdmin.from('ticket_comments').insert([{
+        id: uuidv4(),
+        ticket_id: ticketId,
+        user_id: systemUser?.id || null,
+        content: formattedSummary,
+        is_internal: true,
+      }])
+      
+      // Update ticket with AI summary
+      await supabaseAdmin
+        .from('tickets')
+        .update({ ai_summary: formattedSummary })
+        .eq('id', ticketId)
+      
+      // Update ticket priority if suggested
+      if (summary.summary.urgency) {
+        const priorityMap = {
+          'niedrig': 'low',
+          'mittel': 'medium',
+          'hoch': 'high',
+          'kritisch': 'critical',
+        }
+        const newPriority = priorityMap[summary.summary.urgency] || summary.summary.urgency
+        if (['low', 'medium', 'high', 'critical'].includes(newPriority)) {
+          await supabaseAdmin
+            .from('tickets')
+            .update({ priority: newPriority })
+            .eq('id', ticketId)
+        }
+      }
+      
+      // Add ticket history
+      await supabaseAdmin.from('ticket_history').insert([{
+        id: uuidv4(),
+        ticket_id: ticketId,
+        action: 'ai_summary_added',
+        metadata: { call_id: callId, summary: summary.summary },
+      }])
+    }
+    
+    console.log(`Successfully processed recording for call ${callId}`)
+  } catch (error) {
+    console.error('Error processing call recording:', error)
+  }
+}
+
+// Format call summary for display
+function formatCallSummary(summary, transcript) {
+  let formatted = '## 📞 Anruf-Zusammenfassung (KI-generiert)\n\n'
+  
+  if (summary.problem) {
+    formatted += `### Problem\n${summary.problem}\n\n`
+  }
+  
+  if (summary.actions && summary.actions.length > 0) {
+    formatted += `### Durchgeführte Maßnahmen\n`
+    summary.actions.forEach(action => {
+      formatted += `- ${action}\n`
+    })
+    formatted += '\n'
+  }
+  
+  if (summary.nextSteps && summary.nextSteps.length > 0) {
+    formatted += `### Nächste Schritte\n`
+    summary.nextSteps.forEach(step => {
+      formatted += `- ${step}\n`
+    })
+    formatted += '\n'
+  }
+  
+  if (summary.keyPoints && summary.keyPoints.length > 0) {
+    formatted += `### Wichtige Punkte\n`
+    summary.keyPoints.forEach(point => {
+      formatted += `- ${point}\n`
+    })
+    formatted += '\n'
+  }
+  
+  formatted += `---\n\n<details>\n<summary>Vollständiges Transkript anzeigen</summary>\n\n${transcript}\n\n</details>`
+  
+  return formatted
+}
+
+// ============================================
+// DICTATION HANDLERS - Phase 5
+// ============================================
+
+async function handleDictation(body) {
+  const { audio_data, type, user_id, context } = body
+  
+  const openaiEnabled = await getSetting('openai_enabled', false)
+  if (!openaiEnabled) {
+    return NextResponse.json({ error: 'OpenAI ist nicht aktiviert' }, { status: 400 })
+  }
+  
+  if (!audio_data) {
+    return NextResponse.json({ error: 'audio_data ist erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Decode base64 audio
+    const audioBuffer = Buffer.from(audio_data, 'base64')
+    
+    // Transcribe
+    const transcription = await transcribeAudioWithWhisper(audioBuffer, 'dictation.webm')
+    
+    if (!transcription.success) {
+      return NextResponse.json({ error: transcription.error }, { status: 500 })
+    }
+    
+    // Parse dictation into structured data
+    const parsed = await parseDictationWithAI(transcription.text, type || 'ticket')
+    
+    return NextResponse.json({
+      success: true,
+      transcription: transcription.text,
+      parsed: parsed.success ? parsed.data : null,
+      type: type || 'ticket',
+    })
+  } catch (error) {
+    console.error('Dictation error:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleDictationCreateTicket(body) {
+  const { transcription, parsed_data, user_id, organization_id } = body
+  
+  if (!parsed_data || !parsed_data.subject) {
+    return NextResponse.json({ error: 'Keine gültigen Ticket-Daten' }, { status: 400 })
+  }
+  
+  const ticket = {
+    id: uuidv4(),
+    subject: parsed_data.subject,
+    description: parsed_data.description || transcription,
+    priority: parsed_data.priority || 'medium',
+    category: parsed_data.category || null,
+    status: 'open',
+    source: 'dictation',
+    organization_id: organization_id || null,
+    created_by_id: user_id,
   }
   
   const { data, error } = await supabaseAdmin
-    .from('call_logs')
-    .insert([callData])
+    .from('tickets')
+    .insert([ticket])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Add history
+  await supabaseAdmin.from('ticket_history').insert([{
+    id: uuidv4(),
+    ticket_id: data.id,
+    user_id: user_id,
+    action: 'created',
+    metadata: { source: 'dictation', transcription },
+  }])
+  
+  return NextResponse.json(data)
+}
+
+async function handleDictationCreateTask(body) {
+  const { transcription, parsed_data, user_id, board_id, column_id } = body
+  
+  if (!parsed_data || !parsed_data.title) {
+    return NextResponse.json({ error: 'Keine gültigen Aufgaben-Daten' }, { status: 400 })
+  }
+  
+  // Get default board/column if not provided
+  let targetBoardId = board_id
+  let targetColumnId = column_id
+  
+  if (!targetBoardId) {
+    const { data: defaultBoard } = await supabaseAdmin
+      .from('boards')
+      .select('id')
+      .limit(1)
+      .single()
+    targetBoardId = defaultBoard?.id
+  }
+  
+  if (!targetColumnId && targetBoardId) {
+    const { data: firstColumn } = await supabaseAdmin
+      .from('board_columns')
+      .select('id')
+      .eq('board_id', targetBoardId)
+      .order('position')
+      .limit(1)
+      .single()
+    targetColumnId = firstColumn?.id
+  }
+  
+  if (!targetBoardId || !targetColumnId) {
+    return NextResponse.json({ error: 'Kein Board/Spalte verfügbar' }, { status: 400 })
+  }
+  
+  const task = {
+    id: uuidv4(),
+    board_id: targetBoardId,
+    column_id: targetColumnId,
+    title: parsed_data.title,
+    description: parsed_data.description || transcription,
+    priority: parsed_data.priority || 'medium',
+    created_by_id: user_id,
+    position: 0,
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('tasks')
+    .insert([task])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDictationCreateComment(body) {
+  const { transcription, parsed_data, user_id, ticket_id } = body
+  
+  if (!ticket_id) {
+    return NextResponse.json({ error: 'ticket_id ist erforderlich' }, { status: 400 })
+  }
+  
+  const comment = {
+    id: uuidv4(),
+    ticket_id,
+    user_id,
+    content: parsed_data?.content || transcription,
+    is_internal: parsed_data?.is_internal || false,
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_comments')
+    .insert([comment])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleDictationCreateTimeEntry(body) {
+  const { transcription, parsed_data, user_id, ticket_id, organization_id } = body
+  
+  if (!parsed_data) {
+    return NextResponse.json({ error: 'Keine gültigen Zeiterfassungs-Daten' }, { status: 400 })
+  }
+  
+  // Get default hourly rate from settings or user
+  const defaultRate = await getSetting('default_hourly_rate', 85)
+  
+  const entry = {
+    id: uuidv4(),
+    user_id,
+    ticket_id: ticket_id || null,
+    organization_id: organization_id || null,
+    description: parsed_data.description || transcription,
+    duration_minutes: parsed_data.duration_minutes || 30,
+    is_billable: parsed_data.is_billable !== false,
+    hourly_rate: defaultRate,
+    started_at: new Date().toISOString(),
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('time_entries')
+    .insert([entry])
     .select()
     .single()
   
@@ -2273,13 +2751,469 @@ async function handlePlacetelWebhook(body) {
 }
 
 // ============================================
-// TEST CONNECTION HANDLERS
+// LEXOFFICE INVOICE HANDLERS - Phase 6
+// ============================================
+
+async function handleCreateInvoiceFromTimeEntries(body) {
+  const { organization_id, time_entry_ids, user_id } = body
+  
+  if (!organization_id) {
+    return NextResponse.json({ error: 'organization_id ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get organization details
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('*')
+    .eq('id', organization_id)
+    .single()
+  
+  if (!org) {
+    return NextResponse.json({ error: 'Organisation nicht gefunden' }, { status: 404 })
+  }
+  
+  // Get time entries
+  let query = supabaseAdmin
+    .from('time_entries')
+    .select('*')
+    .eq('organization_id', organization_id)
+    .eq('is_billable', true)
+    .eq('is_invoiced', false)
+  
+  if (time_entry_ids && time_entry_ids.length > 0) {
+    query = query.in('id', time_entry_ids)
+  }
+  
+  const { data: timeEntries } = await query
+  
+  if (!timeEntries || timeEntries.length === 0) {
+    return NextResponse.json({ error: 'Keine abrechenbaren Zeiteinträge gefunden' }, { status: 400 })
+  }
+  
+  // Create line items
+  const lineItems = timeEntries.map(e => ({
+    time_entry_id: e.id,
+    description: e.description,
+    quantity: Math.round((e.duration_minutes / 60) * 100) / 100,
+    unit: 'Stunden',
+    unit_price: e.hourly_rate || 85,
+    total: Math.round(((e.duration_minutes / 60) * (e.hourly_rate || 85)) * 100) / 100,
+  }))
+  
+  const subtotal = lineItems.reduce((sum, item) => sum + item.total, 0)
+  const taxRate = 19
+  const taxAmount = Math.round(subtotal * (taxRate / 100) * 100) / 100
+  const total = Math.round((subtotal + taxAmount) * 100) / 100
+  
+  // Create invoice draft in our system
+  const invoiceId = uuidv4()
+  const invoiceNumber = `RE-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`
+  
+  const { data: invoice, error } = await supabaseAdmin
+    .from('invoice_drafts')
+    .insert([{
+      id: invoiceId,
+      organization_id,
+      invoice_number: invoiceNumber,
+      status: 'draft',
+      line_items: lineItems,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      total,
+      invoice_date: new Date().toISOString().split('T')[0],
+      due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      created_by_id: user_id || null,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Mark time entries as invoiced
+  await supabaseAdmin
+    .from('time_entries')
+    .update({ is_invoiced: true, invoice_id: invoiceId })
+    .in('id', timeEntries.map(e => e.id))
+  
+  return NextResponse.json(invoice)
+}
+
+async function handleSyncInvoiceToLexoffice(body) {
+  const { invoice_id } = body
+  
+  if (!invoice_id) {
+    return NextResponse.json({ error: 'invoice_id ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get invoice
+  const { data: invoice } = await supabaseAdmin
+    .from('invoice_drafts')
+    .select('*, organizations(*)')
+    .eq('id', invoice_id)
+    .single()
+  
+  if (!invoice) {
+    return NextResponse.json({ error: 'Rechnung nicht gefunden' }, { status: 404 })
+  }
+  
+  // Check if Lexoffice is configured
+  const lexofficeEnabled = await getSetting('lexoffice_enabled', false)
+  if (!lexofficeEnabled) {
+    return NextResponse.json({ error: 'Lexoffice ist nicht aktiviert' }, { status: 400 })
+  }
+  
+  // Create invoice in Lexoffice
+  const result = await createLexofficeInvoice({
+    customer_name: invoice.organizations?.name || 'Unbekannt',
+    customer_address: {
+      street: '',
+      zip: '',
+      city: '',
+    },
+    line_items: invoice.line_items,
+    invoice_date: invoice.invoice_date,
+    payment_terms: '14 Tage netto',
+  })
+  
+  if (!result.success) {
+    return NextResponse.json({ error: result.error }, { status: 500 })
+  }
+  
+  // Update invoice with Lexoffice ID
+  await supabaseAdmin
+    .from('invoice_drafts')
+    .update({ 
+      lexoffice_id: result.lexoffice_id,
+      status: 'sent',
+      synced_at: new Date().toISOString(),
+    })
+    .eq('id', invoice_id)
+  
+  return NextResponse.json({ 
+    success: true, 
+    lexoffice_id: result.lexoffice_id,
+  })
+}
+
+// ============================================
+// AUTOMATION ENGINE - Phase 7
+// ============================================
+
+async function handleRunAutomations(body) {
+  const { trigger_type, trigger_data } = body
+  
+  // Get active automations for this trigger
+  const { data: automations } = await supabaseAdmin
+    .from('automation_rules')
+    .select('*')
+    .eq('is_active', true)
+    .eq('trigger_type', trigger_type)
+  
+  if (!automations || automations.length === 0) {
+    return NextResponse.json({ executed: 0 })
+  }
+  
+  const results = []
+  
+  for (const automation of automations) {
+    try {
+      const shouldRun = evaluateConditions(automation.trigger_conditions, trigger_data)
+      
+      if (shouldRun) {
+        const actionResult = await executeAction(automation.action_type, automation.action_config, trigger_data)
+        
+        // Log automation execution
+        await supabaseAdmin.from('automation_logs').insert([{
+          id: uuidv4(),
+          rule_id: automation.id,
+          ticket_id: trigger_data.ticket_id || null,
+          task_id: trigger_data.task_id || null,
+          status: actionResult.success ? 'success' : 'failed',
+          message: actionResult.message,
+          metadata: { trigger_data, action_result: actionResult },
+        }])
+        
+        // Update last run time
+        await supabaseAdmin
+          .from('automation_rules')
+          .update({ last_run_at: new Date().toISOString() })
+          .eq('id', automation.id)
+        
+        results.push({
+          automation_id: automation.id,
+          name: automation.name,
+          success: actionResult.success,
+        })
+      }
+    } catch (error) {
+      console.error(`Automation ${automation.id} error:`, error)
+      results.push({
+        automation_id: automation.id,
+        name: automation.name,
+        success: false,
+        error: error.message,
+      })
+    }
+  }
+  
+  return NextResponse.json({ executed: results.length, results })
+}
+
+function evaluateConditions(conditions, data) {
+  if (!conditions || Object.keys(conditions).length === 0) {
+    return true // No conditions = always match
+  }
+  
+  for (const [field, expected] of Object.entries(conditions)) {
+    const actual = data[field]
+    
+    if (typeof expected === 'object') {
+      // Complex condition
+      if (expected.equals !== undefined && actual !== expected.equals) return false
+      if (expected.notEquals !== undefined && actual === expected.notEquals) return false
+      if (expected.contains !== undefined && !String(actual).includes(expected.contains)) return false
+      if (expected.in !== undefined && !expected.in.includes(actual)) return false
+    } else {
+      // Simple equality
+      if (actual !== expected) return false
+    }
+  }
+  
+  return true
+}
+
+async function executeAction(actionType, actionConfig, triggerData) {
+  const ticketId = triggerData.ticket_id
+  const taskId = triggerData.task_id
+  
+  switch (actionType) {
+    case 'assign':
+      if (ticketId && actionConfig.assignee_id) {
+        await supabaseAdmin
+          .from('tickets')
+          .update({ assignee_id: actionConfig.assignee_id })
+          .eq('id', ticketId)
+        return { success: true, message: 'Ticket zugewiesen' }
+      }
+      break
+      
+    case 'change_status':
+      if (ticketId && actionConfig.status) {
+        await supabaseAdmin
+          .from('tickets')
+          .update({ status: actionConfig.status })
+          .eq('id', ticketId)
+        
+        await supabaseAdmin.from('ticket_history').insert([{
+          id: uuidv4(),
+          ticket_id: ticketId,
+          action: 'status_changed',
+          field_name: 'status',
+          new_value: actionConfig.status,
+          metadata: { automation: true },
+        }])
+        return { success: true, message: `Status auf ${actionConfig.status} geändert` }
+      }
+      break
+      
+    case 'change_priority':
+      if (ticketId && actionConfig.priority) {
+        await supabaseAdmin
+          .from('tickets')
+          .update({ priority: actionConfig.priority })
+          .eq('id', ticketId)
+        
+        await supabaseAdmin.from('ticket_history').insert([{
+          id: uuidv4(),
+          ticket_id: ticketId,
+          action: 'priority_changed',
+          field_name: 'priority',
+          new_value: actionConfig.priority,
+          metadata: { automation: true },
+        }])
+        return { success: true, message: `Priorität auf ${actionConfig.priority} geändert` }
+      }
+      break
+      
+    case 'add_tag':
+      if (ticketId && actionConfig.tag_id) {
+        await supabaseAdmin.from('ticket_tag_relations').insert([{
+          id: uuidv4(),
+          ticket_id: ticketId,
+          tag_id: actionConfig.tag_id,
+        }]).onConflict(['ticket_id', 'tag_id']).ignore()
+        return { success: true, message: 'Tag hinzugefügt' }
+      }
+      break
+      
+    case 'send_notification':
+      // Would integrate with email system
+      console.log('Would send notification:', actionConfig)
+      return { success: true, message: 'Benachrichtigung gesendet (simuliert)' }
+      
+    case 'create_task':
+      if (actionConfig.title) {
+        // Get first board/column
+        const { data: board } = await supabaseAdmin
+          .from('boards')
+          .select('id')
+          .limit(1)
+          .single()
+        
+        const { data: column } = await supabaseAdmin
+          .from('board_columns')
+          .select('id')
+          .eq('board_id', board?.id)
+          .order('position')
+          .limit(1)
+          .single()
+        
+        if (board && column) {
+          const { data: systemUser } = await supabaseAdmin
+            .from('users')
+            .select('id')
+            .eq('email', 'admin@servicedesk.de')
+            .single()
+          
+          await supabaseAdmin.from('tasks').insert([{
+            id: uuidv4(),
+            board_id: board.id,
+            column_id: column.id,
+            ticket_id: ticketId || null,
+            title: actionConfig.title,
+            description: actionConfig.description || '',
+            priority: actionConfig.priority || 'medium',
+            created_by_id: systemUser?.id,
+            position: 0,
+          }])
+          return { success: true, message: 'Aufgabe erstellt' }
+        }
+      }
+      break
+      
+    case 'escalate':
+      if (ticketId) {
+        await supabaseAdmin
+          .from('tickets')
+          .update({ 
+            priority: 'critical',
+            status: 'in_progress',
+          })
+          .eq('id', ticketId)
+        
+        await supabaseAdmin.from('ticket_history').insert([{
+          id: uuidv4(),
+          ticket_id: ticketId,
+          action: 'escalated',
+          metadata: { automation: true, reason: actionConfig.reason },
+        }])
+        return { success: true, message: 'Ticket eskaliert' }
+      }
+      break
+  }
+  
+  return { success: false, message: 'Aktion konnte nicht ausgeführt werden' }
+}
+
+// SLA Breach Check (would be called by scheduled job)
+async function checkSLABreaches() {
+  const now = new Date()
+  
+  // Find tickets with breached SLA
+  const { data: breachedTickets } = await supabaseAdmin
+    .from('tickets')
+    .select('id, sla_response_due, sla_resolution_due, sla_response_met, sla_resolution_met')
+    .in('status', ['open', 'pending', 'in_progress'])
+    .not('sla_response_due', 'is', null)
+  
+  for (const ticket of (breachedTickets || [])) {
+    const responseDue = new Date(ticket.sla_response_due)
+    const resolutionDue = ticket.sla_resolution_due ? new Date(ticket.sla_resolution_due) : null
+    
+    // Check response SLA
+    if (ticket.sla_response_met === null && responseDue < now) {
+      await supabaseAdmin
+        .from('tickets')
+        .update({ sla_response_met: false })
+        .eq('id', ticket.id)
+      
+      // Trigger automation
+      await handleRunAutomations({
+        trigger_type: 'sla_breach',
+        trigger_data: { 
+          ticket_id: ticket.id, 
+          breach_type: 'response',
+        },
+      })
+    }
+    
+    // Check resolution SLA
+    if (resolutionDue && ticket.sla_resolution_met === null && resolutionDue < now) {
+      await supabaseAdmin
+        .from('tickets')
+        .update({ sla_resolution_met: false })
+        .eq('id', ticket.id)
+      
+      // Trigger automation
+      await handleRunAutomations({
+        trigger_type: 'sla_breach',
+        trigger_data: { 
+          ticket_id: ticket.id, 
+          breach_type: 'resolution',
+        },
+      })
+    }
+  }
+  
+  return NextResponse.json({ checked: breachedTickets?.length || 0 })
+}
+
+// ============================================
+// TEST CONNECTION HANDLERS - Updated
 // ============================================
 
 async function handleTestConnection(body) {
-  const { type, config } = body
+  const { type } = body
   
   switch (type) {
+    case 'openai':
+      const openai = await getOpenAIClient()
+      if (!openai) {
+        return NextResponse.json({ success: false, message: 'OpenAI API-Schlüssel nicht konfiguriert' })
+      }
+      try {
+        // Simple test call
+        const response = await openai.chat.completions.create({
+          model: await getOpenAIModel(),
+          messages: [{ role: 'user', content: 'Test' }],
+          max_tokens: 5,
+        })
+        return NextResponse.json({ success: true, message: 'OpenAI-Verbindung erfolgreich' })
+      } catch (error) {
+        return NextResponse.json({ success: false, message: `OpenAI-Fehler: ${error.message}` })
+      }
+    
+    case 'lexoffice':
+      const lexClient = await getLexofficeClient()
+      if (!lexClient) {
+        return NextResponse.json({ success: false, message: 'Lexoffice API-Schlüssel nicht konfiguriert' })
+      }
+      try {
+        await lexClient.request('/profile')
+        return NextResponse.json({ success: true, message: 'Lexoffice-Verbindung erfolgreich' })
+      } catch (error) {
+        return NextResponse.json({ success: false, message: `Lexoffice-Fehler: ${error.message}` })
+      }
+    
+    case 'placetel':
+      const placetelClient = await getPlacetelClient()
+      if (!placetelClient) {
+        return NextResponse.json({ success: false, message: 'Placetel API-Schlüssel nicht konfiguriert' })
+      }
+      // Placetel doesn't have a simple test endpoint, so we just verify the key exists
+      return NextResponse.json({ success: true, message: 'Placetel-Konfiguration vorhanden' })
+    
     case 'smtp':
       // Would test SMTP connection
       return NextResponse.json({ success: true, message: 'SMTP-Verbindung erfolgreich (Test-Modus)' })
@@ -2287,20 +3221,6 @@ async function handleTestConnection(body) {
     case 'imap':
       // Would test IMAP connection
       return NextResponse.json({ success: true, message: 'IMAP-Verbindung erfolgreich (Test-Modus)' })
-    
-    case 'lexoffice':
-      // Would test Lexoffice API
-      if (!config?.api_key) {
-        return NextResponse.json({ success: false, message: 'API-Schlüssel fehlt' })
-      }
-      return NextResponse.json({ success: true, message: 'Lexoffice-Verbindung erfolgreich (Test-Modus)' })
-    
-    case 'placetel':
-      // Would test Placetel API
-      if (!config?.api_key) {
-        return NextResponse.json({ success: false, message: 'API-Schlüssel fehlt' })
-      }
-      return NextResponse.json({ success: true, message: 'Placetel-Verbindung erfolgreich (Test-Modus)' })
     
     default:
       return NextResponse.json({ success: false, message: 'Unbekannter Verbindungstyp' })

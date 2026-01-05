@@ -3887,8 +3887,6 @@ async function handleLogTemplateUsage(body) {
 // D) PUBLIC API HANDLERS
 // =============================================
 
-import crypto from 'crypto'
-
 function generateApiKey() {
   const key = 'sk_' + crypto.randomBytes(32).toString('hex')
   const hash = crypto.createHash('sha256').update(key).digest('hex')

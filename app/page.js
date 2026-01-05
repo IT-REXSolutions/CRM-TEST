@@ -800,10 +800,12 @@ function Sidebar({ currentPage, setCurrentPage, collapsed, setCollapsed, user, i
       <div className="p-4 flex items-center justify-between border-b border-slate-700">
         {!collapsed && (
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold">
-              SD
-            </div>
-            <span className="font-semibold">{isCustomerPortal ? 'Kundenportal' : 'ServiceDesk'}</span>
+            <img 
+              src="https://customer-assets.emergentagent.com/job_v1-itsm-completion/artifacts/w6ojc37j_logo_itrex.png" 
+              alt="IT REX" 
+              className="h-8 w-8 object-contain bg-white rounded p-0.5"
+            />
+            <span className="font-semibold text-sm">{isCustomerPortal ? 'Kundenportal' : 'IT REX ServiceDesk'}</span>
           </div>
         )}
         <Button

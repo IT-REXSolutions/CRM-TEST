@@ -8558,22 +8558,22 @@ async function handleRoute(request, { params }) {
     
     if (route === '/users/2fa/enable' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleEnable2FA(body)))
+      return handleCORS(await handleEnable2FA(body))
     }
     
     if (route === '/users/2fa/verify' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleVerify2FA(body)))
+      return handleCORS(await handleVerify2FA(body))
     }
     
     if (route === '/users/2fa/disable' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleDisable2FA(body)))
+      return handleCORS(await handleDisable2FA(body))
     }
     
     if (route === '/auth/login-2fa' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleLoginWith2FA(body)))
+      return handleCORS(await handleLoginWith2FA(body))
     }
     
     // ============================================================
@@ -8582,17 +8582,17 @@ async function handleRoute(request, { params }) {
     
     if (route === '/admin/users/disable' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleAdminDisableUser(body)))
+      return handleCORS(await handleAdminDisableUser(body))
     }
     
     if (route === '/admin/users/enable' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleAdminEnableUser(body)))
+      return handleCORS(await handleAdminEnableUser(body))
     }
     
     if (route === '/admin/users/reset-password' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleAdminResetUserPassword(body)))
+      return handleCORS(await handleAdminResetUserPassword(body))
     }
     
     // ============================================================
@@ -8601,22 +8601,22 @@ async function handleRoute(request, { params }) {
     
     if (route === '/tickets/merge' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleMergeTickets(body)))
+      return handleCORS(await handleMergeTickets(body))
     }
     
     if (route === '/tickets/split' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleSplitTicket(body)))
+      return handleCORS(await handleSplitTicket(body))
     }
     
     if (route === '/tickets/dependencies' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleAddTicketDependency(body)))
+      return handleCORS(await handleAddTicketDependency(body))
     }
     
     if (route === '/tickets/dependencies' && method === 'DELETE') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleRemoveTicketDependency(body)))
+      return handleCORS(await handleRemoveTicketDependency(body))
     }
     
     // ============================================================
@@ -8624,33 +8624,33 @@ async function handleRoute(request, { params }) {
     // ============================================================
     
     if (route === '/task-boards' && method === 'GET') {
-      return handleCORS(NextResponse.json(await handleGetTaskBoards()))
+      return handleCORS(await handleGetTaskBoards())
     }
     
     if (route === '/standalone-tasks' && method === 'GET') {
       const params = Object.fromEntries(url.searchParams)
-      return handleCORS(NextResponse.json(await handleGetTasks(params)))
+      return handleCORS(await handleGetTasks(params))
     }
     
     if (route === '/standalone-tasks' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleCreateTask(body)))
+      return handleCORS(await handleCreateTask(body))
     }
     
     if (route.match(/^\/standalone-tasks\/[^/]+$/) && method === 'PUT') {
       const id = route.split('/')[2]
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleUpdateTask(id, body)))
+      return handleCORS(await handleUpdateTask(id, body))
     }
     
     if (route.match(/^\/standalone-tasks\/[^/]+$/) && method === 'DELETE') {
       const id = route.split('/')[2]
-      return handleCORS(NextResponse.json(await handleDeleteTask(id)))
+      return handleCORS(await handleDeleteTask(id))
     }
     
     if (route === '/standalone-tasks/move' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(NextResponse.json(await handleMoveTask(body)))
+      return handleCORS(await handleMoveTask(body))
     }
     
     // Route not found

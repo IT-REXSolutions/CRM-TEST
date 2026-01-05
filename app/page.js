@@ -207,10 +207,36 @@ const api = {
   // Roles & SLA
   getRoles: () => api.fetch('/roles'),
   getSLAProfiles: () => api.fetch('/sla-profiles'),
+  createSLAProfile: (data) => api.fetch('/sla-profiles', { method: 'POST', body: JSON.stringify(data) }),
+  updateSLAProfile: (id, data) => api.fetch(`/sla-profiles/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSLAProfile: (id) => api.fetch(`/sla-profiles/${id}`, { method: 'DELETE' }),
   
   // AI
   aiSummarize: (data) => api.fetch('/ai/summarize', { method: 'POST', body: JSON.stringify(data) }),
   aiParseDictation: (data) => api.fetch('/ai/parse-dictation', { method: 'POST', body: JSON.stringify(data) }),
+  
+  // Settings
+  getSettings: (category) => api.fetch(`/settings${category ? `?category=${category}` : ''}`),
+  updateSetting: (data) => api.fetch('/settings', { method: 'POST', body: JSON.stringify(data) }),
+  bulkUpdateSettings: (data) => api.fetch('/settings/bulk', { method: 'POST', body: JSON.stringify(data) }),
+  testConnection: (data) => api.fetch('/test-connection', { method: 'POST', body: JSON.stringify(data) }),
+  
+  // Automations
+  getAutomations: () => api.fetch('/automations'),
+  createAutomation: (data) => api.fetch('/automations', { method: 'POST', body: JSON.stringify(data) }),
+  updateAutomation: (id, data) => api.fetch(`/automations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAutomation: (id) => api.fetch(`/automations/${id}`, { method: 'DELETE' }),
+  
+  // Recurring Tickets
+  getRecurringTickets: () => api.fetch('/recurring-tickets'),
+  createRecurringTicket: (data) => api.fetch('/recurring-tickets', { method: 'POST', body: JSON.stringify(data) }),
+  updateRecurringTicket: (id, data) => api.fetch(`/recurring-tickets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteRecurringTicket: (id) => api.fetch(`/recurring-tickets/${id}`, { method: 'DELETE' }),
+  
+  // Tags
+  createTag: (data) => api.fetch('/tags', { method: 'POST', body: JSON.stringify(data) }),
+  updateTag: (id, data) => api.fetch(`/tags/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTag: (id) => api.fetch(`/tags/${id}`, { method: 'DELETE' }),
 }
 
 // ============================================

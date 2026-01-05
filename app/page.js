@@ -2244,18 +2244,1427 @@ function CustomerNewTicketPage({ user, onCreated }) {
 // ============================================
 
 function SettingsPage() {
+  const [activeTab, setActiveTab] = useState('general')
+  const [settings, setSettings] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [automations, setAutomations] = useState([])
+  const [recurringTickets, setRecurringTickets] = useState([])
+  const [showPassword, setShowPassword] = useState({})
+  const [testingConnection, setTestingConnection] = useState(null)
+  const [users, setUsers] = useState([])
+  const [organizations, setOrganizations] = useState([])
+  const [slaProfiles, setSlaProfiles] = useState([])
+  
+  // Form states for dialogs
+  const [showAutomationDialog, setShowAutomationDialog] = useState(false)
+  const [showRecurringDialog, setShowRecurringDialog] = useState(false)
+  const [editingAutomation, setEditingAutomation] = useState(null)
+  const [editingRecurring, setEditingRecurring] = useState(null)
+  
+  // Form state for new automation
+  const [automationForm, setAutomationForm] = useState({
+    name: '',
+    description: '',
+    trigger_type: 'ticket_created',
+    trigger_conditions: {},
+    action_type: 'assign',
+    action_config: {},
+    is_active: true
+  })
+  
+  // Form state for recurring ticket
+  const [recurringForm, setRecurringForm] = useState({
+    name: '',
+    subject: '',
+    description: '',
+    priority: 'medium',
+    schedule_type: 'weekly',
+    schedule_day: 1,
+    schedule_time: '09:00',
+    organization_id: '',
+    assignee_id: '',
+    is_active: true
+  })
+
+  useEffect(() => {
+    loadData()
+  }, [])
+  
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [settingsData, automationsData, recurringData, usersData, orgsData, slaData] = await Promise.all([
+        api.getSettings().catch(() => ({})),
+        api.getAutomations().catch(() => []),
+        api.getRecurringTickets().catch(() => []),
+        api.getUsers().catch(() => []),
+        api.getOrganizations().catch(() => []),
+        api.getSLAProfiles().catch(() => [])
+      ])
+      
+      // Parse settings values
+      const parsedSettings = {}
+      Object.entries(settingsData).forEach(([key, value]) => {
+        try {
+          parsedSettings[key] = typeof value === 'string' ? JSON.parse(value) : value
+        } catch {
+          parsedSettings[key] = value
+        }
+      })
+      
+      setSettings(parsedSettings)
+      setAutomations(automationsData)
+      setRecurringTickets(recurringData)
+      setUsers(usersData)
+      setOrganizations(orgsData)
+      setSlaProfiles(slaData)
+    } catch (error) {
+      toast.error('Fehler beim Laden der Einstellungen')
+    }
+    setLoading(false)
+  }
+  
+  const updateSetting = async (key, value) => {
+    setSettings(prev => ({ ...prev, [key]: value }))
+  }
+  
+  const saveSetting = async (key, value) => {
+    try {
+      await api.updateSetting({ key, value: JSON.stringify(value) })
+      toast.success('Einstellung gespeichert')
+    } catch (error) {
+      toast.error('Fehler beim Speichern')
+    }
+  }
+  
+  const saveAllSettings = async (category) => {
+    setSaving(true)
+    try {
+      const categorySettings = {}
+      const categoryKeys = {
+        general: ['company_name', 'company_email', 'company_phone', 'timezone', 'locale'],
+        tickets: ['default_ticket_priority', 'default_ticket_status', 'auto_assign_enabled', 'sla_enabled'],
+        integrations: ['openai_api_key', 'openai_model', 'openai_enabled', 'placetel_api_key', 'placetel_enabled', 'lexoffice_api_key', 'lexoffice_enabled'],
+        email: ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from_address', 'imap_host', 'imap_port', 'imap_user', 'imap_password', 'email_to_ticket_enabled'],
+        audit: ['log_retention_days', 'backup_enabled', 'backup_schedule']
+      }
+      
+      const keysToSave = categoryKeys[category] || []
+      keysToSave.forEach(key => {
+        if (settings[key] !== undefined) {
+          categorySettings[key] = settings[key]
+        }
+      })
+      
+      await api.bulkUpdateSettings({ settings: categorySettings })
+      toast.success('Einstellungen gespeichert')
+    } catch (error) {
+      toast.error('Fehler beim Speichern')
+    }
+    setSaving(false)
+  }
+  
+  const testConnection = async (type) => {
+    setTestingConnection(type)
+    try {
+      const config = {}
+      if (type === 'smtp') {
+        config.host = settings.smtp_host
+        config.port = settings.smtp_port
+        config.user = settings.smtp_user
+        config.password = settings.smtp_password
+      } else if (type === 'lexoffice') {
+        config.api_key = settings.lexoffice_api_key
+      } else if (type === 'placetel') {
+        config.api_key = settings.placetel_api_key
+      } else if (type === 'openai') {
+        config.api_key = settings.openai_api_key
+      }
+      
+      const result = await api.testConnection({ type, config })
+      if (result.success) {
+        toast.success(result.message || 'Verbindung erfolgreich')
+      } else {
+        toast.error(result.message || 'Verbindung fehlgeschlagen')
+      }
+    } catch (error) {
+      toast.error('Verbindungstest fehlgeschlagen')
+    }
+    setTestingConnection(null)
+  }
+  
+  const handleCreateAutomation = async () => {
+    try {
+      if (editingAutomation) {
+        await api.updateAutomation(editingAutomation.id, automationForm)
+        toast.success('Automation aktualisiert')
+      } else {
+        await api.createAutomation(automationForm)
+        toast.success('Automation erstellt')
+      }
+      setShowAutomationDialog(false)
+      setEditingAutomation(null)
+      setAutomationForm({
+        name: '',
+        description: '',
+        trigger_type: 'ticket_created',
+        trigger_conditions: {},
+        action_type: 'assign',
+        action_config: {},
+        is_active: true
+      })
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Speichern der Automation')
+    }
+  }
+  
+  const handleDeleteAutomation = async (id) => {
+    if (!confirm('Automation wirklich löschen?')) return
+    try {
+      await api.deleteAutomation(id)
+      toast.success('Automation gelöscht')
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const handleToggleAutomation = async (automation) => {
+    try {
+      await api.updateAutomation(automation.id, { is_active: !automation.is_active })
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren')
+    }
+  }
+  
+  const handleCreateRecurring = async () => {
+    try {
+      if (editingRecurring) {
+        await api.updateRecurringTicket(editingRecurring.id, recurringForm)
+        toast.success('Wiederkehrendes Ticket aktualisiert')
+      } else {
+        await api.createRecurringTicket(recurringForm)
+        toast.success('Wiederkehrendes Ticket erstellt')
+      }
+      setShowRecurringDialog(false)
+      setEditingRecurring(null)
+      setRecurringForm({
+        name: '',
+        subject: '',
+        description: '',
+        priority: 'medium',
+        schedule_type: 'weekly',
+        schedule_day: 1,
+        schedule_time: '09:00',
+        organization_id: '',
+        assignee_id: '',
+        is_active: true
+      })
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Speichern')
+    }
+  }
+  
+  const handleDeleteRecurring = async (id) => {
+    if (!confirm('Wiederkehrendes Ticket wirklich löschen?')) return
+    try {
+      await api.deleteRecurringTicket(id)
+      toast.success('Gelöscht')
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const editAutomation = (automation) => {
+    setEditingAutomation(automation)
+    setAutomationForm({
+      name: automation.name,
+      description: automation.description || '',
+      trigger_type: automation.trigger_type,
+      trigger_conditions: automation.trigger_conditions || {},
+      action_type: automation.action_type,
+      action_config: automation.action_config || {},
+      is_active: automation.is_active
+    })
+    setShowAutomationDialog(true)
+  }
+  
+  const editRecurring = (recurring) => {
+    setEditingRecurring(recurring)
+    setRecurringForm({
+      name: recurring.name,
+      subject: recurring.subject,
+      description: recurring.description || '',
+      priority: recurring.priority || 'medium',
+      schedule_type: recurring.schedule_type,
+      schedule_day: recurring.schedule_day || 1,
+      schedule_time: recurring.schedule_time || '09:00',
+      organization_id: recurring.organization_id || '',
+      assignee_id: recurring.assignee_id || '',
+      is_active: recurring.is_active
+    })
+    setShowRecurringDialog(true)
+  }
+  
+  const togglePasswordVisibility = (field) => {
+    setShowPassword(prev => ({ ...prev, [field]: !prev[field] }))
+  }
+  
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text)
+    toast.success('In Zwischenablage kopiert')
+  }
+  
+  const TRIGGER_TYPES = {
+    ticket_created: 'Ticket erstellt',
+    ticket_updated: 'Ticket aktualisiert',
+    status_changed: 'Status geändert',
+    sla_breach: 'SLA-Verletzung',
+    scheduled: 'Zeitgesteuert',
+    task_due: 'Aufgabe fällig'
+  }
+  
+  const ACTION_TYPES = {
+    assign: 'Zuweisen',
+    change_status: 'Status ändern',
+    change_priority: 'Priorität ändern',
+    add_tag: 'Tag hinzufügen',
+    send_notification: 'Benachrichtigung senden',
+    create_task: 'Aufgabe erstellen',
+    escalate: 'Eskalieren'
+  }
+  
+  const SCHEDULE_TYPES = {
+    daily: 'Täglich',
+    weekly: 'Wöchentlich',
+    monthly: 'Monatlich',
+    yearly: 'Jährlich'
+  }
+  
+  const WEEKDAYS = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      </div>
+    )
+  }
+
   return (
     <div className="p-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Einstellungen</CardTitle>
-          <CardDescription>Systemkonfiguration</CardDescription>
-        </CardHeader>
-        <CardContent className="py-12 text-center text-slate-500">
-          <Settings className="h-12 w-12 mx-auto text-slate-300 mb-4" />
-          Einstellungen werden in der nächsten Phase implementiert
-        </CardContent>
-      </Card>
+      <div className="flex gap-6">
+        {/* Sidebar Navigation */}
+        <div className="w-64 shrink-0">
+          <Card>
+            <CardContent className="p-2">
+              <nav className="space-y-1">
+                {[
+                  { id: 'general', label: 'Allgemein', icon: Settings },
+                  { id: 'tickets', label: 'Ticket-Standards', icon: Ticket },
+                  { id: 'integrations', label: 'Integrationen', icon: Cloud },
+                  { id: 'email', label: 'E-Mail', icon: Mail },
+                  { id: 'automations', label: 'Automationen', icon: Zap },
+                  { id: 'recurring', label: 'Wiederkehrende Tickets', icon: Repeat },
+                  { id: 'audit', label: 'Audit & Backup', icon: Shield },
+                ].map(item => (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                      activeTab === item.id 
+                        ? 'bg-blue-50 text-blue-700 font-medium' 
+                        : 'text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </button>
+                ))}
+              </nav>
+            </CardContent>
+          </Card>
+        </div>
+        
+        {/* Content Area */}
+        <div className="flex-1 space-y-6">
+          {/* General Settings */}
+          {activeTab === 'general' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings className="h-5 w-5" />
+                  Allgemeine Einstellungen
+                </CardTitle>
+                <CardDescription>Grundlegende Systemkonfiguration</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label>Firmenname</Label>
+                    <Input
+                      value={settings.company_name || ''}
+                      onChange={(e) => updateSetting('company_name', e.target.value)}
+                      placeholder="ServiceDesk Pro"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Support E-Mail</Label>
+                    <Input
+                      type="email"
+                      value={settings.company_email || ''}
+                      onChange={(e) => updateSetting('company_email', e.target.value)}
+                      placeholder="support@example.de"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Telefonnummer</Label>
+                    <Input
+                      value={settings.company_phone || ''}
+                      onChange={(e) => updateSetting('company_phone', e.target.value)}
+                      placeholder="+49 123 456789"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Zeitzone</Label>
+                    <Select
+                      value={settings.timezone || 'Europe/Berlin'}
+                      onValueChange={(v) => updateSetting('timezone', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Europe/Berlin">Europe/Berlin</SelectItem>
+                        <SelectItem value="Europe/Vienna">Europe/Vienna</SelectItem>
+                        <SelectItem value="Europe/Zurich">Europe/Zurich</SelectItem>
+                        <SelectItem value="UTC">UTC</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Sprache</Label>
+                    <Select
+                      value={settings.locale || 'de-DE'}
+                      onValueChange={(v) => updateSetting('locale', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="de-DE">Deutsch</SelectItem>
+                        <SelectItem value="en-US">English</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="flex justify-end pt-4 border-t">
+                  <Button onClick={() => saveAllSettings('general')} disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                    Speichern
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Ticket Standards */}
+          {activeTab === 'tickets' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Ticket className="h-5 w-5" />
+                  Ticket-Standards
+                </CardTitle>
+                <CardDescription>Standardwerte und Verhaltensweisen für Tickets</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label>Standard-Priorität</Label>
+                    <Select
+                      value={settings.default_ticket_priority || 'medium'}
+                      onValueChange={(v) => updateSetting('default_ticket_priority', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Niedrig</SelectItem>
+                        <SelectItem value="medium">Mittel</SelectItem>
+                        <SelectItem value="high">Hoch</SelectItem>
+                        <SelectItem value="critical">Kritisch</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Standard-Status</Label>
+                    <Select
+                      value={settings.default_ticket_status || 'open'}
+                      onValueChange={(v) => updateSetting('default_ticket_status', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="open">Offen</SelectItem>
+                        <SelectItem value="pending">Wartend</SelectItem>
+                        <SelectItem value="in_progress">In Bearbeitung</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
+                <Separator />
+                
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-base">Automatische Zuweisung</Label>
+                      <p className="text-sm text-slate-500">Tickets automatisch an verfügbare Agenten zuweisen</p>
+                    </div>
+                    <Switch
+                      checked={settings.auto_assign_enabled === true || settings.auto_assign_enabled === 'true'}
+                      onCheckedChange={(v) => updateSetting('auto_assign_enabled', v)}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-base">SLA-Überwachung</Label>
+                      <p className="text-sm text-slate-500">SLA-Zeiten automatisch berechnen und überwachen</p>
+                    </div>
+                    <Switch
+                      checked={settings.sla_enabled !== false && settings.sla_enabled !== 'false'}
+                      onCheckedChange={(v) => updateSetting('sla_enabled', v)}
+                    />
+                  </div>
+                </div>
+                
+                <div className="flex justify-end pt-4 border-t">
+                  <Button onClick={() => saveAllSettings('tickets')} disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                    Speichern
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Integrations */}
+          {activeTab === 'integrations' && (
+            <div className="space-y-6">
+              {/* OpenAI Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-green-100 rounded-lg">
+                        <Zap className="h-5 w-5 text-green-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">OpenAI</CardTitle>
+                        <CardDescription>KI-gestützte Funktionen (Zusammenfassungen, Diktat)</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.openai_enabled === true || settings.openai_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('openai_enabled', v)
+                        saveSetting('openai_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>API-Schlüssel</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={showPassword.openai ? 'text' : 'password'}
+                          value={settings.openai_api_key || ''}
+                          onChange={(e) => updateSetting('openai_api_key', e.target.value)}
+                          placeholder="sk-..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('openai')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.openai ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => testConnection('openai')}
+                        disabled={testingConnection === 'openai'}
+                      >
+                        {testingConnection === 'openai' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Testen'}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Wird für Ticket-Zusammenfassungen und Sprach-zu-Text verwendet
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Modell</Label>
+                    <Select
+                      value={settings.openai_model || 'gpt-4o-mini'}
+                      onValueChange={(v) => {
+                        updateSetting('openai_model', v)
+                        saveSetting('openai_model', v)
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gpt-4o-mini">GPT-4o Mini (schnell, günstig)</SelectItem>
+                        <SelectItem value="gpt-4o">GPT-4o (beste Qualität)</SelectItem>
+                        <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={() => saveSetting('openai_api_key', settings.openai_api_key)} size="sm">
+                      <Save className="h-4 w-4 mr-2" />
+                      API-Key speichern
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* Placetel Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-100 rounded-lg">
+                        <PhoneCall className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">Placetel</CardTitle>
+                        <CardDescription>Telefonie-Integration (Anrufe, Webhooks)</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.placetel_enabled === true || settings.placetel_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('placetel_enabled', v)
+                        saveSetting('placetel_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>API-Schlüssel</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={showPassword.placetel ? 'text' : 'password'}
+                          value={settings.placetel_api_key || ''}
+                          onChange={(e) => updateSetting('placetel_api_key', e.target.value)}
+                          placeholder="Placetel API Key..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('placetel')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.placetel ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => testConnection('placetel')}
+                        disabled={testingConnection === 'placetel'}
+                      >
+                        {testingConnection === 'placetel' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Testen'}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Webhook-URL</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        readOnly
+                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/placetel`}
+                        className="bg-slate-50"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="icon"
+                        onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/placetel`)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Diese URL in Placetel als Webhook-Empfänger eintragen
+                    </p>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={() => saveSetting('placetel_api_key', settings.placetel_api_key)} size="sm">
+                      <Save className="h-4 w-4 mr-2" />
+                      API-Key speichern
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* Lexoffice Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-purple-100 rounded-lg">
+                        <CreditCard className="h-5 w-5 text-purple-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">Lexoffice</CardTitle>
+                        <CardDescription>Buchhaltung & Rechnungen</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.lexoffice_enabled === true || settings.lexoffice_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('lexoffice_enabled', v)
+                        saveSetting('lexoffice_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>API-Schlüssel</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={showPassword.lexoffice ? 'text' : 'password'}
+                          value={settings.lexoffice_api_key || ''}
+                          onChange={(e) => updateSetting('lexoffice_api_key', e.target.value)}
+                          placeholder="Lexoffice API Key..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('lexoffice')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.lexoffice ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => testConnection('lexoffice')}
+                        disabled={testingConnection === 'lexoffice'}
+                      >
+                        {testingConnection === 'lexoffice' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Testen'}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Für automatische Rechnungserstellung aus Zeiteinträgen
+                    </p>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={() => saveSetting('lexoffice_api_key', settings.lexoffice_api_key)} size="sm">
+                      <Save className="h-4 w-4 mr-2" />
+                      API-Key speichern
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Email Settings */}
+          {activeTab === 'email' && (
+            <div className="space-y-6">
+              {/* SMTP */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Mail className="h-5 w-5" />
+                    SMTP (Ausgehende E-Mails)
+                  </CardTitle>
+                  <CardDescription>Konfiguration für den E-Mail-Versand</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>SMTP-Server</Label>
+                      <Input
+                        value={settings.smtp_host || ''}
+                        onChange={(e) => updateSetting('smtp_host', e.target.value)}
+                        placeholder="smtp.example.de"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Port</Label>
+                      <Input
+                        value={settings.smtp_port || '587'}
+                        onChange={(e) => updateSetting('smtp_port', e.target.value)}
+                        placeholder="587"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Benutzername</Label>
+                      <Input
+                        value={settings.smtp_user || ''}
+                        onChange={(e) => updateSetting('smtp_user', e.target.value)}
+                        placeholder="user@example.de"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Passwort</Label>
+                      <div className="relative">
+                        <Input
+                          type={showPassword.smtp ? 'text' : 'password'}
+                          value={settings.smtp_password || ''}
+                          onChange={(e) => updateSetting('smtp_password', e.target.value)}
+                          placeholder="••••••••"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('smtp')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.smtp ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2 col-span-2">
+                      <Label>Absender-Adresse</Label>
+                      <Input
+                        type="email"
+                        value={settings.smtp_from_address || ''}
+                        onChange={(e) => updateSetting('smtp_from_address', e.target.value)}
+                        placeholder="support@example.de"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => testConnection('smtp')}
+                      disabled={testingConnection === 'smtp'}
+                    >
+                      {testingConnection === 'smtp' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                      Verbindung testen
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* IMAP */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Mail className="h-5 w-5" />
+                        IMAP (E-Mail zu Ticket)
+                      </CardTitle>
+                      <CardDescription>Eingehende E-Mails automatisch als Tickets anlegen</CardDescription>
+                    </div>
+                    <Switch
+                      checked={settings.email_to_ticket_enabled === true || settings.email_to_ticket_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('email_to_ticket_enabled', v)
+                        saveSetting('email_to_ticket_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>IMAP-Server</Label>
+                      <Input
+                        value={settings.imap_host || ''}
+                        onChange={(e) => updateSetting('imap_host', e.target.value)}
+                        placeholder="imap.example.de"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Port</Label>
+                      <Input
+                        value={settings.imap_port || '993'}
+                        onChange={(e) => updateSetting('imap_port', e.target.value)}
+                        placeholder="993"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Benutzername</Label>
+                      <Input
+                        value={settings.imap_user || ''}
+                        onChange={(e) => updateSetting('imap_user', e.target.value)}
+                        placeholder="user@example.de"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Passwort</Label>
+                      <div className="relative">
+                        <Input
+                          type={showPassword.imap ? 'text' : 'password'}
+                          value={settings.imap_password || ''}
+                          onChange={(e) => updateSetting('imap_password', e.target.value)}
+                          placeholder="••••••••"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('imap')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.imap ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => testConnection('imap')}
+                      disabled={testingConnection === 'imap'}
+                    >
+                      {testingConnection === 'imap' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                      Verbindung testen
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <div className="flex justify-end">
+                <Button onClick={() => saveAllSettings('email')} disabled={saving}>
+                  {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+                  Alle E-Mail-Einstellungen speichern
+                </Button>
+              </div>
+            </div>
+          )}
+          
+          {/* Automations */}
+          {activeTab === 'automations' && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Zap className="h-5 w-5" />
+                      Automationen
+                    </CardTitle>
+                    <CardDescription>Automatische Aktionen basierend auf Triggern (WENN... DANN...)</CardDescription>
+                  </div>
+                  <Button onClick={() => {
+                    setEditingAutomation(null)
+                    setAutomationForm({
+                      name: '',
+                      description: '',
+                      trigger_type: 'ticket_created',
+                      trigger_conditions: {},
+                      action_type: 'assign',
+                      action_config: {},
+                      is_active: true
+                    })
+                    setShowAutomationDialog(true)
+                  }}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Neue Automation
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {automations.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <Zap className="h-12 w-12 mx-auto text-slate-300 mb-4" />
+                    <p>Noch keine Automationen konfiguriert</p>
+                    <p className="text-sm">Erstellen Sie Regeln, um wiederkehrende Aufgaben zu automatisieren</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {automations.map(automation => (
+                      <div 
+                        key={automation.id}
+                        className={`flex items-center justify-between p-4 rounded-lg border ${
+                          automation.is_active ? 'bg-white' : 'bg-slate-50 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <Switch
+                            checked={automation.is_active}
+                            onCheckedChange={() => handleToggleAutomation(automation)}
+                          />
+                          <div>
+                            <div className="font-medium">{automation.name}</div>
+                            <div className="text-sm text-slate-500">
+                              WENN <Badge variant="secondary">{TRIGGER_TYPES[automation.trigger_type]}</Badge>
+                              {' → '}
+                              DANN <Badge variant="secondary">{ACTION_TYPES[automation.action_type]}</Badge>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => editAutomation(automation)}>
+                            Bearbeiten
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteAutomation(automation.id)}>
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Recurring Tickets */}
+          {activeTab === 'recurring' && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Repeat className="h-5 w-5" />
+                      Wiederkehrende Tickets
+                    </CardTitle>
+                    <CardDescription>Automatisch erstellte Tickets nach Zeitplan</CardDescription>
+                  </div>
+                  <Button onClick={() => {
+                    setEditingRecurring(null)
+                    setRecurringForm({
+                      name: '',
+                      subject: '',
+                      description: '',
+                      priority: 'medium',
+                      schedule_type: 'weekly',
+                      schedule_day: 1,
+                      schedule_time: '09:00',
+                      organization_id: '',
+                      assignee_id: '',
+                      is_active: true
+                    })
+                    setShowRecurringDialog(true)
+                  }}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Neues wiederkehrendes Ticket
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {recurringTickets.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <Repeat className="h-12 w-12 mx-auto text-slate-300 mb-4" />
+                    <p>Keine wiederkehrenden Tickets konfiguriert</p>
+                    <p className="text-sm">Erstellen Sie Tickets, die automatisch nach Zeitplan erstellt werden</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Aktiv</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Betreff</TableHead>
+                        <TableHead>Zeitplan</TableHead>
+                        <TableHead>Nächste Ausführung</TableHead>
+                        <TableHead></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recurringTickets.map(recurring => (
+                        <TableRow key={recurring.id} className={!recurring.is_active ? 'opacity-50' : ''}>
+                          <TableCell>
+                            <Switch
+                              checked={recurring.is_active}
+                              onCheckedChange={async () => {
+                                await api.updateRecurringTicket(recurring.id, { is_active: !recurring.is_active })
+                                loadData()
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="font-medium">{recurring.name}</TableCell>
+                          <TableCell>{recurring.subject}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {SCHEDULE_TYPES[recurring.schedule_type]}
+                              {recurring.schedule_type === 'weekly' && `, ${WEEKDAYS[recurring.schedule_day]}`}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {recurring.next_run_at ? formatDateTime(recurring.next_run_at) : '-'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => editRecurring(recurring)}>
+                                Bearbeiten
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleDeleteRecurring(recurring.id)}>
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Audit & Backup */}
+          {activeTab === 'audit' && (
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <History className="h-5 w-5" />
+                    Audit-Protokollierung
+                  </CardTitle>
+                  <CardDescription>Einstellungen für Protokollierung und Datenhaltung</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Log-Aufbewahrungsdauer (Tage)</Label>
+                    <Select
+                      value={String(settings.log_retention_days || '90')}
+                      onValueChange={(v) => {
+                        updateSetting('log_retention_days', parseInt(v))
+                        saveSetting('log_retention_days', parseInt(v))
+                      }}
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="30">30 Tage</SelectItem>
+                        <SelectItem value="60">60 Tage</SelectItem>
+                        <SelectItem value="90">90 Tage</SelectItem>
+                        <SelectItem value="180">180 Tage</SelectItem>
+                        <SelectItem value="365">1 Jahr</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-500">
+                      Ältere Protokolleinträge werden automatisch gelöscht
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Archive className="h-5 w-5" />
+                        Backup-Einstellungen
+                      </CardTitle>
+                      <CardDescription>Datensicherung und Wiederherstellung</CardDescription>
+                    </div>
+                    <Switch
+                      checked={settings.backup_enabled === true || settings.backup_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('backup_enabled', v)
+                        saveSetting('backup_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Backup-Zeitplan</Label>
+                    <Select
+                      value={settings.backup_schedule || 'daily'}
+                      onValueChange={(v) => {
+                        updateSetting('backup_schedule', v)
+                        saveSetting('backup_schedule', v)
+                      }}
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Täglich</SelectItem>
+                        <SelectItem value="weekly">Wöchentlich</SelectItem>
+                        <SelectItem value="monthly">Monatlich</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="space-y-4">
+                    <Label>Manuelles Backup</Label>
+                    <div className="flex gap-4">
+                      <Button variant="outline">
+                        <Download className="h-4 w-4 mr-2" />
+                        Backup erstellen
+                      </Button>
+                      <Button variant="outline">
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Backup wiederherstellen
+                      </Button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Hinweis: Backups werden über Supabase verwaltet. Diese Funktionen sind derzeit im Test-Modus.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Automation Dialog */}
+      <Dialog open={showAutomationDialog} onOpenChange={setShowAutomationDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingAutomation ? 'Automation bearbeiten' : 'Neue Automation'}</DialogTitle>
+            <DialogDescription>
+              Definieren Sie Trigger und Aktionen für automatische Workflows
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input
+                value={automationForm.name}
+                onChange={(e) => setAutomationForm(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="z.B. Kritische Tickets automatisch eskalieren"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Beschreibung</Label>
+              <Textarea
+                value={automationForm.description}
+                onChange={(e) => setAutomationForm(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Beschreibung der Automation..."
+                rows={2}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>WENN (Trigger)</Label>
+                <Select
+                  value={automationForm.trigger_type}
+                  onValueChange={(v) => setAutomationForm(prev => ({ ...prev, trigger_type: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(TRIGGER_TYPES).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>DANN (Aktion)</Label>
+                <Select
+                  value={automationForm.action_type}
+                  onValueChange={(v) => setAutomationForm(prev => ({ ...prev, action_type: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(ACTION_TYPES).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={automationForm.is_active}
+                onCheckedChange={(v) => setAutomationForm(prev => ({ ...prev, is_active: v }))}
+              />
+              <Label>Automation aktivieren</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAutomationDialog(false)}>Abbrechen</Button>
+            <Button onClick={handleCreateAutomation} disabled={!automationForm.name}>
+              {editingAutomation ? 'Speichern' : 'Erstellen'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Recurring Ticket Dialog */}
+      <Dialog open={showRecurringDialog} onOpenChange={setShowRecurringDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingRecurring ? 'Wiederkehrendes Ticket bearbeiten' : 'Neues wiederkehrendes Ticket'}</DialogTitle>
+            <DialogDescription>
+              Definieren Sie ein Ticket, das automatisch nach Zeitplan erstellt wird
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Interner Name</Label>
+              <Input
+                value={recurringForm.name}
+                onChange={(e) => setRecurringForm(prev => ({ ...prev, name: e.target.value }))}
+                placeholder="z.B. Wöchentliche Server-Wartung"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Ticket-Betreff</Label>
+              <Input
+                value={recurringForm.subject}
+                onChange={(e) => setRecurringForm(prev => ({ ...prev, subject: e.target.value }))}
+                placeholder="z.B. Server-Wartung KW {week}"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Beschreibung</Label>
+              <Textarea
+                value={recurringForm.description}
+                onChange={(e) => setRecurringForm(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Ticket-Beschreibung..."
+                rows={3}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Zeitplan</Label>
+                <Select
+                  value={recurringForm.schedule_type}
+                  onValueChange={(v) => setRecurringForm(prev => ({ ...prev, schedule_type: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(SCHEDULE_TYPES).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {recurringForm.schedule_type === 'weekly' && (
+                <div className="space-y-2">
+                  <Label>Wochentag</Label>
+                  <Select
+                    value={String(recurringForm.schedule_day)}
+                    onValueChange={(v) => setRecurringForm(prev => ({ ...prev, schedule_day: parseInt(v) }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {WEEKDAYS.map((day, i) => (
+                        <SelectItem key={i} value={String(i)}>{day}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {recurringForm.schedule_type === 'monthly' && (
+                <div className="space-y-2">
+                  <Label>Tag im Monat</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={28}
+                    value={recurringForm.schedule_day}
+                    onChange={(e) => setRecurringForm(prev => ({ ...prev, schedule_day: parseInt(e.target.value) }))}
+                  />
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Uhrzeit</Label>
+                <Input
+                  type="time"
+                  value={recurringForm.schedule_time}
+                  onChange={(e) => setRecurringForm(prev => ({ ...prev, schedule_time: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Priorität</Label>
+                <Select
+                  value={recurringForm.priority}
+                  onValueChange={(v) => setRecurringForm(prev => ({ ...prev, priority: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">Niedrig</SelectItem>
+                    <SelectItem value="medium">Mittel</SelectItem>
+                    <SelectItem value="high">Hoch</SelectItem>
+                    <SelectItem value="critical">Kritisch</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Organisation</Label>
+                <Select
+                  value={recurringForm.organization_id || 'none'}
+                  onValueChange={(v) => setRecurringForm(prev => ({ ...prev, organization_id: v === 'none' ? '' : v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Keine" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Keine</SelectItem>
+                    {organizations.map(org => (
+                      <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Zugewiesen an</Label>
+                <Select
+                  value={recurringForm.assignee_id || 'none'}
+                  onValueChange={(v) => setRecurringForm(prev => ({ ...prev, assignee_id: v === 'none' ? '' : v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Nicht zugewiesen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nicht zugewiesen</SelectItem>
+                    {users.filter(u => u.user_type === 'internal').map(user => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.first_name} {user.last_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={recurringForm.is_active}
+                onCheckedChange={(v) => setRecurringForm(prev => ({ ...prev, is_active: v }))}
+              />
+              <Label>Aktiv</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRecurringDialog(false)}>Abbrechen</Button>
+            <Button onClick={handleCreateRecurring} disabled={!recurringForm.name || !recurringForm.subject}>
+              {editingRecurring ? 'Speichern' : 'Erstellen'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

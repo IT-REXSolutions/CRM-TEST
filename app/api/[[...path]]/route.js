@@ -7387,6 +7387,8 @@ async function sendEmailNotification({ to, subject, body }) {
     return false
   }
 }
+
+async function handleGetApiAuditLogs(params) {
   const { api_key_id, limit, offset } = params
   
   let query = supabaseAdmin

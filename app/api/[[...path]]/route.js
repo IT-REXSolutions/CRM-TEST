@@ -3636,6 +3636,165 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json(result))
     }
     
+    // =============================================
+    // A) TICKET KANBAN VIEWS
+    // =============================================
+    
+    if (route === '/ticket-kanban-views' && method === 'GET') {
+      return handleCORS(await handleGetTicketKanbanViews(searchParams))
+    }
+    if (route === '/ticket-kanban-views' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateTicketKanbanView(body))
+    }
+    if (route.match(/^\/ticket-kanban-views\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      return handleCORS(await handleGetTicketKanbanView(id))
+    }
+    if (route.match(/^\/ticket-kanban-views\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateTicketKanbanView(id, body))
+    }
+    if (route.match(/^\/ticket-kanban-views\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTicketKanbanView(id))
+    }
+    if (route === '/ticket-kanban' && method === 'GET') {
+      return handleCORS(await handleGetTicketKanbanData(searchParams))
+    }
+    if (route === '/tickets/move' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleMoveTicketStatus(body))
+    }
+    
+    // =============================================
+    // B) TICKET CLOSE FLOW - TODOS & WORKLOGS
+    // =============================================
+    
+    if (route.match(/^\/tickets\/[^/]+\/todos$/) && method === 'GET') {
+      const ticketId = path[1]
+      return handleCORS(await handleGetTicketTodos(ticketId))
+    }
+    if (route.match(/^\/tickets\/[^/]+\/todos$/) && method === 'POST') {
+      const ticketId = path[1]
+      const body = await request.json()
+      return handleCORS(await handleCreateTicketTodo(ticketId, body))
+    }
+    if (route.match(/^\/ticket-todos\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateTicketTodo(id, body))
+    }
+    if (route.match(/^\/ticket-todos\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTicketTodo(id))
+    }
+    if (route.match(/^\/tickets\/[^/]+\/close$/) && method === 'POST') {
+      const ticketId = path[1]
+      const body = await request.json()
+      return handleCORS(await handleCloseTicket(ticketId, body))
+    }
+    if (route === '/close-flow-config' && method === 'GET') {
+      return handleCORS(await handleGetCloseFlowConfig())
+    }
+    if (route === '/resolution-categories' && method === 'GET') {
+      return handleCORS(await handleGetResolutionCategories())
+    }
+    
+    // =============================================
+    // C) TEMPLATES SYSTEM
+    // =============================================
+    
+    if (route === '/templates' && method === 'GET') {
+      return handleCORS(await handleGetTemplates(searchParams))
+    }
+    if (route === '/templates' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateTemplate(body))
+    }
+    if (route.match(/^\/templates\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      return handleCORS(await handleGetTemplate(id))
+    }
+    if (route.match(/^\/templates\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateTemplate(id, body))
+    }
+    if (route.match(/^\/templates\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteTemplate(id))
+    }
+    if (route === '/templates/render' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleRenderTemplate(body))
+    }
+    if (route === '/templates/log-usage' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleLogTemplateUsage(body))
+    }
+    
+    // =============================================
+    // D) PUBLIC API SYSTEM
+    // =============================================
+    
+    if (route === '/api-keys' && method === 'GET') {
+      return handleCORS(await handleGetApiKeys(searchParams))
+    }
+    if (route === '/api-keys' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateApiKey(body))
+    }
+    if (route.match(/^\/api-keys\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateApiKey(id, body))
+    }
+    if (route.match(/^\/api-keys\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteApiKey(id))
+    }
+    if (route === '/api-keys/regenerate' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleRegenerateApiKey(body))
+    }
+    if (route === '/api-scopes' && method === 'GET') {
+      return handleCORS(await handleGetApiScopes())
+    }
+    
+    // Webhooks
+    if (route === '/webhook-subscriptions' && method === 'GET') {
+      return handleCORS(await handleGetWebhookSubscriptions(searchParams))
+    }
+    if (route === '/webhook-subscriptions' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateWebhookSubscription(body))
+    }
+    if (route.match(/^\/webhook-subscriptions\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateWebhookSubscription(id, body))
+    }
+    if (route.match(/^\/webhook-subscriptions\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteWebhookSubscription(id))
+    }
+    if (route.match(/^\/webhook-subscriptions\/[^/]+\/test$/) && method === 'POST') {
+      const id = path[1]
+      return handleCORS(await handleTestWebhook(id))
+    }
+    
+    // API Audit Logs
+    if (route === '/api-audit-logs' && method === 'GET') {
+      return handleCORS(await handleGetApiAuditLogs(searchParams))
+    }
+    
+    // OpenAPI Spec
+    if (route === '/openapi.json' && method === 'GET') {
+      return handleCORS(await handleGetOpenAPISpec())
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

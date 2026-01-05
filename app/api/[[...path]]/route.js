@@ -7784,20 +7784,20 @@ async function handleRoute(request, { params }) {
     // --- TASKS ---
     if (route === '/tasks' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(await handleCreateTask(body))
+      return handleCORS(await handleCreateBoardTask(body))
     }
     if (route.match(/^\/tasks\/[^/]+$/) && method === 'PUT') {
       const id = path[1]
       const body = await request.json()
-      return handleCORS(await handleUpdateTask(id, body))
+      return handleCORS(await handleUpdateBoardTask(id, body))
     }
     if (route.match(/^\/tasks\/[^/]+$/) && method === 'DELETE') {
       const id = path[1]
-      return handleCORS(await handleDeleteTask(id))
+      return handleCORS(await handleDeleteBoardTask(id))
     }
     if (route === '/tasks/move' && method === 'POST') {
       const body = await request.json()
-      return handleCORS(await handleMoveTask(body))
+      return handleCORS(await handleMoveBoardTask(body))
     }
     
     // --- ASSETS ---

@@ -4566,7 +4566,15 @@ Klassifiziere diese Nachricht:`
     return { success: false, error: 'Keine gültige Klassifizierung' }
   } catch (error) {
     console.error('Classification error:', error)
-    return { success: false, error: error.message }
+    // Fallback to keyword classification on error
+    console.log('Falling back to keyword classification due to API error')
+    const classification = keywordClassification(text)
+    return { 
+      success: true, 
+      classification,
+      method: 'keyword_fallback',
+      original_error: error.message
+    }
   }
 }
 

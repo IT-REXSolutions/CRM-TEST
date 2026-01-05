@@ -6629,7 +6629,7 @@ async function handleGetChatwootConversations(params) {
 
 async function handleN8nTicketCreated(body) {
   // This endpoint receives data from n8n when a ticket should be created
-  const { subject, description, priority, organization_id, contact_id, source, custom_fields } = body
+  const { subject, description, priority, organization_id, contact_id, source, custom_fields, created_by_id } = body
   
   try {
     // Get next ticket number
@@ -6641,6 +6641,17 @@ async function handleN8nTicketCreated(body) {
       .single()
     
     const ticketNumber = (lastTicket?.ticket_number || 1000) + 1
+    
+    // Get system user if no created_by_id provided
+    let creatorId = created_by_id
+    if (!creatorId) {
+      const { data: systemUser } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('email', 'admin@servicedesk.de')
+        .single()
+      creatorId = systemUser?.id
+    }
     
     const { data: ticket, error } = await supabaseAdmin
       .from('tickets')
@@ -6654,6 +6665,7 @@ async function handleN8nTicketCreated(body) {
         organization_id: organization_id || null,
         contact_id: contact_id || null,
         source: source || 'n8n',
+        created_by_id: creatorId,
       }])
       .select()
       .single()

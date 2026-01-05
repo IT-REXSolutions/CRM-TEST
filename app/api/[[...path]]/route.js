@@ -3559,6 +3559,58 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handlePlacetelWebhook(body))
     }
     
+    // --- DICTATION (Phase 5) ---
+    if (route === '/dictation/transcribe' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleDictation(body))
+    }
+    if (route === '/dictation/create-ticket' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleDictationCreateTicket(body))
+    }
+    if (route === '/dictation/create-task' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleDictationCreateTask(body))
+    }
+    if (route === '/dictation/create-comment' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleDictationCreateComment(body))
+    }
+    if (route === '/dictation/create-time-entry' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleDictationCreateTimeEntry(body))
+    }
+    
+    // --- INVOICES (Phase 6) ---
+    if (route === '/invoices/create-from-time' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateInvoiceFromTimeEntries(body))
+    }
+    if (route === '/invoices/sync-lexoffice' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleSyncInvoiceToLexoffice(body))
+    }
+    
+    // --- AUTOMATIONS ENGINE (Phase 7) ---
+    if (route === '/automations/run' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleRunAutomations(body))
+    }
+    if (route === '/automations/check-sla' && method === 'POST') {
+      return handleCORS(await checkSLABreaches())
+    }
+    
+    // --- AI ENDPOINTS (Updated) ---
+    if (route === '/ai/summarize-call' && method === 'POST') {
+      const body = await request.json()
+      const { transcript, metadata } = body
+      if (!transcript) {
+        return handleCORS(NextResponse.json({ error: 'transcript ist erforderlich' }, { status: 400 }))
+      }
+      const result = await generateCallSummary(transcript, metadata || {})
+      return handleCORS(NextResponse.json(result))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

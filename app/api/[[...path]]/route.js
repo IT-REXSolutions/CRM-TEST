@@ -69,19 +69,32 @@ function clearSettingsCache() {
 // ============================================
 
 async function getOpenAIClient() {
+  // First check settings
   const apiKey = await getSetting('openai_api_key')
   const enabled = await getSetting('openai_enabled', false)
   
-  if (!enabled || !apiKey) {
+  // Fall back to environment variable if no settings key
+  const envKey = process.env.EMERGENT_LLM_KEY || process.env.OPENAI_API_KEY
+  
+  const finalKey = apiKey || envKey
+  
+  // If no key at all, return null
+  if (!finalKey) {
     return null
   }
   
-  // Use Emergent API endpoint if it's an Emergent key, otherwise standard OpenAI
-  const isEmergentKey = apiKey.startsWith('ek_') || apiKey.startsWith('emergent')
+  // If settings-based key exists but is not enabled, also return null (unless we're using env key as fallback)
+  if (apiKey && !enabled) {
+    // Use env key as fallback if settings key is disabled
+    if (!envKey) return null
+  }
+  
+  // Determine the correct API endpoint
+  const isEmergentKey = finalKey.startsWith('sk-emergent') || finalKey.startsWith('ek_') || finalKey.startsWith('emergent')
   
   return new OpenAI({
-    apiKey: apiKey,
-    baseURL: isEmergentKey ? 'https://api.emergent.sh/v1/openai' : undefined,
+    apiKey: finalKey,
+    baseURL: isEmergentKey ? 'https://api.emergentintegrations.ai/api/v1/openai' : undefined,
   })
 }
 

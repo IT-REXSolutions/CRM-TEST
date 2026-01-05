@@ -6632,19 +6632,27 @@ async function handleN8nTicketCreated(body) {
   const { subject, description, priority, organization_id, contact_id, source, custom_fields } = body
   
   try {
-    const ticketNumber = `N8N-${Date.now()}`
+    // Get next ticket number
+    const { data: lastTicket } = await supabaseAdmin
+      .from('tickets')
+      .select('ticket_number')
+      .order('ticket_number', { ascending: false })
+      .limit(1)
+      .single()
+    
+    const ticketNumber = (lastTicket?.ticket_number || 1000) + 1
     
     const { data: ticket, error } = await supabaseAdmin
       .from('tickets')
       .insert([{
         id: uuidv4(),
         ticket_number: ticketNumber,
-        subject,
+        subject: subject || 'Ticket via n8n',
         description,
         priority: priority || 'medium',
         status: 'new',
-        organization_id,
-        contact_id,
+        organization_id: organization_id || null,
+        contact_id: contact_id || null,
         source: source || 'n8n',
       }])
       .select()

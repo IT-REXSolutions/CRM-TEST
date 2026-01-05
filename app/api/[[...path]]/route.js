@@ -10724,17 +10724,36 @@ async function handleRoute(request, { params }) {
       const user = await getUserFromRequest(request)
       let query = supabaseAdmin
         .from('kb_articles')
-        .select('*, created_by:users!created_by_id(first_name, last_name), organization:organizations(name)')
+        .select('*, created_by:users!created_by_id(first_name, last_name)')
+        .eq('is_archived', false)
         .order('created_at', { ascending: false })
       
       // Filter by organization visibility for customers
-      if (user?.user_type === 'customer') {
+      if (user?.user_type === 'customer' && user?.organization_id) {
         query = query.or(`is_internal.eq.false,organization_id.eq.${user.organization_id},organization_id.is.null`)
       }
       
       const { data, error } = await query
       if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
-      return handleCORS(NextResponse.json(data || []))
+      
+      // Fetch organization names separately if needed
+      const orgIds = [...new Set(data?.filter(a => a.organization_id).map(a => a.organization_id) || [])]
+      let orgMap = {}
+      if (orgIds.length > 0) {
+        const { data: orgs } = await supabaseAdmin
+          .from('organizations')
+          .select('id, name')
+          .in('id', orgIds)
+        orgMap = Object.fromEntries((orgs || []).map(o => [o.id, o]))
+      }
+      
+      // Add organization info
+      const articlesWithOrg = (data || []).map(a => ({
+        ...a,
+        organization: a.organization_id ? orgMap[a.organization_id] : null
+      }))
+      
+      return handleCORS(NextResponse.json(articlesWithOrg))
     }
     if (route === '/kb-articles' && method === 'POST') {
       const body = await request.json()

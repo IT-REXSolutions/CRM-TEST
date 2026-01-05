@@ -10036,11 +10036,29 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       return handleCORS(await handleCreateContact(body))
     }
+    if (route.match(/^\/contacts\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateContact(id, body))
+    }
+    if (route.match(/^\/contacts\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteContact(id))
+    }
     
     // --- LOCATIONS ---
     if (route === '/locations' && method === 'POST') {
       const body = await request.json()
       return handleCORS(await handleCreateLocation(body))
+    }
+    if (route.match(/^\/locations\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateLocation(id, body))
+    }
+    if (route.match(/^\/locations\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteLocation(id))
     }
     
     // --- SLA PROFILES ---

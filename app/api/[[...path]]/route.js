@@ -1926,10 +1926,10 @@ async function handleDeleteTag(id) {
 }
 
 // ============================================
-// TICKET TEMPLATES HANDLERS
+// TICKET TEMPLATES HANDLERS (Legacy)
 // ============================================
 
-async function handleGetTemplates() {
+async function handleGetTicketTemplates() {
   const { data, error } = await supabaseAdmin
     .from('ticket_templates')
     .select('*')
@@ -1940,7 +1940,7 @@ async function handleGetTemplates() {
   return NextResponse.json(data || [])
 }
 
-async function handleCreateTemplate(body) {
+async function handleCreateTicketTemplate(body) {
   const { name, category, subject, description, priority } = body
   
   if (!name || !subject) {

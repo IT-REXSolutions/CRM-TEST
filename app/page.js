@@ -1065,26 +1065,35 @@ function TicketsPage({ currentUser, onOpenTicket }) {
             Aktualisieren
           </Button>
         </div>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Neues Ticket
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Neues Ticket erstellen</DialogTitle>
-            </DialogHeader>
-            <CreateTicketForm
-              organizations={organizations}
-              slaProfiles={slaProfiles}
-              users={users}
-              onSubmit={handleCreateTicket}
-              onCancel={() => setShowCreateDialog(false)}
-            />
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2">
+          <DictationButton 
+            type="ticket" 
+            onComplete={() => {
+              loadTickets()
+              toast.success('Ticket per Diktat erstellt')
+            }}
+          />
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                Neues Ticket
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Neues Ticket erstellen</DialogTitle>
+              </DialogHeader>
+              <CreateTicketForm
+                organizations={organizations}
+                slaProfiles={slaProfiles}
+                users={users}
+                onSubmit={handleCreateTicket}
+                onCancel={() => setShowCreateDialog(false)}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
       
       <Card>

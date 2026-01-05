@@ -3747,11 +3747,11 @@ async function handleGetResolutionCategories() {
 // =============================================
 
 async function handleGetTemplates(params) {
-  const { type, category, organization_id, is_active } = params
+  const { type, category, organization_id, is_active } = params || {}
   
   let query = supabaseAdmin
     .from('templates')
-    .select('*, created_by:users!templates_created_by_id_fkey (first_name, last_name)')
+    .select('*')
     .order('name')
   
   if (type) query = query.eq('type', type)

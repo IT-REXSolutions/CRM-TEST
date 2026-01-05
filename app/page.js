@@ -95,12 +95,15 @@ const ASSET_ICONS = {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'inbox', label: 'Posteingang', icon: Mail },
   { id: 'tickets', label: 'Tickets', icon: Ticket },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
+  { id: 'onboarding', label: 'Onboarding', icon: Users },
   { id: 'organizations', label: 'Organisationen', icon: Building2 },
   { id: 'users', label: 'Benutzer', icon: Users },
   { id: 'assets', label: 'Assets', icon: Package },
   { id: 'time', label: 'Zeiterfassung', icon: Clock },
+  { id: 'knowledge', label: 'Wissensdatenbank', icon: HelpCircle },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'settings', label: 'Einstellungen', icon: Settings },
 ]

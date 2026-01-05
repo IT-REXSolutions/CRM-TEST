@@ -589,6 +589,1029 @@ async function handlePasswordResetConfirm(body) {
 }
 
 // ============================================
+// WIKI / KNOWLEDGE BASE HANDLERS
+// ============================================
+
+async function handleGetWikiSpaces(user, organizationId) {
+  let query = supabaseAdmin.from('wiki_spaces').select('*')
+  
+  // Filter based on user type
+  if (user?.user_type === 'customer') {
+    // Customers see global + their org wiki only
+    query = query.or(`space_type.eq.global,organization_id.eq.${organizationId || user.organization_id}`)
+  }
+  
+  const { data, error } = await query.eq('is_active', true).order('space_type').order('name')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleGetWikiSpace(spaceId, user) {
+  const { data, error } = await supabaseAdmin
+    .from('wiki_spaces')
+    .select(`*, wiki_categories(*), organization:organizations(name)`)
+    .eq('id', spaceId)
+    .single()
+  
+  if (error || !data) {
+    return NextResponse.json({ error: 'Wiki-Bereich nicht gefunden' }, { status: 404 })
+  }
+  
+  // Permission check for org wikis
+  if (data.space_type === 'organization' && user?.user_type === 'customer') {
+    if (data.organization_id !== user.organization_id) {
+      return NextResponse.json({ error: 'Kein Zugriff' }, { status: 403 })
+    }
+  }
+  
+  return NextResponse.json(data)
+}
+
+async function handleCreateWikiSpace(body) {
+  const { name, slug, description, space_type, organization_id, created_by_id } = body
+  
+  if (!name || !slug) {
+    return NextResponse.json({ error: 'Name und Slug sind erforderlich' }, { status: 400 })
+  }
+  
+  // For org wikis, ensure org exists
+  if (space_type === 'organization' && !organization_id) {
+    return NextResponse.json({ error: 'Organization ID erforderlich für Organisations-Wiki' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('wiki_spaces')
+    .insert([{
+      id: uuidv4(),
+      name,
+      slug: slug.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+      description,
+      space_type: space_type || 'global',
+      organization_id: space_type === 'organization' ? organization_id : null,
+      created_by_id,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleGetWikiCategories(spaceId) {
+  const { data, error } = await supabaseAdmin
+    .from('wiki_categories')
+    .select('*')
+    .eq('space_id', spaceId)
+    .eq('is_active', true)
+    .order('position')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateWikiCategory(body) {
+  const { space_id, name, slug, description, parent_id, position } = body
+  
+  if (!space_id || !name) {
+    return NextResponse.json({ error: 'space_id und name sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('wiki_categories')
+    .insert([{
+      id: uuidv4(),
+      space_id,
+      name,
+      slug: slug || name.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+      description,
+      parent_id,
+      position: position || 0,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleGetWikiPages(spaceId, params, user) {
+  let query = supabaseAdmin
+    .from('wiki_pages')
+    .select(`
+      id, title, slug, excerpt, status, visibility, position, is_featured, is_pinned,
+      view_count, current_version, tags, created_at, updated_at,
+      category:wiki_categories(id, name, slug),
+      parent:wiki_pages!parent_id(id, title, slug),
+      created_by:users!created_by_id(id, first_name, last_name)
+    `)
+    .eq('space_id', spaceId)
+  
+  // Filter by status (customers only see published)
+  if (user?.user_type === 'customer') {
+    query = query.eq('status', 'published')
+    query = query.in('visibility', ['all', 'customers'])
+  } else if (params.status) {
+    query = query.eq('status', params.status)
+  }
+  
+  if (params.category_id) {
+    query = query.eq('category_id', params.category_id)
+  }
+  
+  if (params.parent_id) {
+    query = query.eq('parent_id', params.parent_id)
+  } else if (params.root_only === 'true') {
+    query = query.is('parent_id', null)
+  }
+  
+  if (params.featured === 'true') {
+    query = query.eq('is_featured', true)
+  }
+  
+  const { data, error } = await query.order('position').order('title')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleGetWikiPage(pageIdOrSlug, user) {
+  // Try to find by ID first, then by slug
+  let query = supabaseAdmin
+    .from('wiki_pages')
+    .select(`
+      *,
+      category:wiki_categories(id, name, slug),
+      parent:wiki_pages!parent_id(id, title, slug),
+      space:wiki_spaces(id, name, slug, space_type, organization_id),
+      created_by:users!created_by_id(id, first_name, last_name, email),
+      updated_by:users!updated_by_id(id, first_name, last_name)
+    `)
+  
+  // Check if it's a UUID
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pageIdOrSlug)
+  
+  if (isUUID) {
+    query = query.eq('id', pageIdOrSlug)
+  } else {
+    query = query.eq('slug', pageIdOrSlug)
+  }
+  
+  const { data: page, error } = await query.single()
+  
+  if (error || !page) {
+    return NextResponse.json({ error: 'Seite nicht gefunden' }, { status: 404 })
+  }
+  
+  // Permission check
+  if (user?.user_type === 'customer') {
+    if (page.status !== 'published') {
+      return NextResponse.json({ error: 'Seite nicht verfügbar' }, { status: 404 })
+    }
+    if (!['all', 'customers'].includes(page.visibility)) {
+      return NextResponse.json({ error: 'Kein Zugriff' }, { status: 403 })
+    }
+    // Check org wiki access
+    if (page.space?.space_type === 'organization' && page.space?.organization_id !== user.organization_id) {
+      return NextResponse.json({ error: 'Kein Zugriff' }, { status: 403 })
+    }
+  }
+  
+  // Increment view count
+  await supabaseAdmin
+    .from('wiki_pages')
+    .update({ view_count: (page.view_count || 0) + 1 })
+    .eq('id', page.id)
+  
+  // Get children pages
+  const { data: children } = await supabaseAdmin
+    .from('wiki_pages')
+    .select('id, title, slug, position')
+    .eq('parent_id', page.id)
+    .eq('status', 'published')
+    .order('position')
+  
+  // Get attachments
+  const { data: attachments } = await supabaseAdmin
+    .from('wiki_attachments')
+    .select('*')
+    .eq('page_id', page.id)
+  
+  return NextResponse.json({ ...page, children: children || [], attachments: attachments || [] })
+}
+
+async function handleCreateWikiPage(body, user) {
+  const { space_id, category_id, parent_id, title, content, content_format, excerpt, tags, status, visibility } = body
+  
+  if (!space_id || !title) {
+    return NextResponse.json({ error: 'space_id und title sind erforderlich' }, { status: 400 })
+  }
+  
+  const slug = title.toLowerCase()
+    .replace(/[äöüß]/g, c => ({ 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' }[c] || c))
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+  
+  const pageId = uuidv4()
+  const now = new Date().toISOString()
+  
+  const { data: page, error } = await supabaseAdmin
+    .from('wiki_pages')
+    .insert([{
+      id: pageId,
+      space_id,
+      category_id,
+      parent_id,
+      title,
+      slug,
+      content: content || '',
+      content_format: content_format || 'markdown',
+      excerpt,
+      tags: tags || [],
+      status: status || 'draft',
+      visibility: visibility || 'all',
+      current_version: 1,
+      created_by_id: user?.id,
+      updated_by_id: user?.id,
+      published_at: status === 'published' ? now : null,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Create initial version
+  await supabaseAdmin.from('wiki_page_versions').insert([{
+    id: uuidv4(),
+    page_id: pageId,
+    version_number: 1,
+    title,
+    content: content || '',
+    content_format: content_format || 'markdown',
+    change_summary: 'Erste Version erstellt',
+    changed_by_id: user?.id,
+  }])
+  
+  // Audit log
+  await logFieldChange('wiki_page', pageId, 'created', null, title, user?.id)
+  
+  return NextResponse.json(page)
+}
+
+async function handleUpdateWikiPage(pageId, body, user) {
+  // Get current page
+  const { data: currentPage } = await supabaseAdmin
+    .from('wiki_pages')
+    .select('*')
+    .eq('id', pageId)
+    .single()
+  
+  if (!currentPage) {
+    return NextResponse.json({ error: 'Seite nicht gefunden' }, { status: 404 })
+  }
+  
+  const updateData = {}
+  const allowedFields = ['category_id', 'parent_id', 'title', 'content', 'content_format', 'excerpt', 'meta_description', 'meta_keywords', 'tags', 'icon', 'cover_image', 'position', 'status', 'visibility', 'is_featured', 'is_pinned']
+  
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) updateData[field] = body[field]
+  }
+  
+  // Check if content changed (for versioning)
+  const contentChanged = body.content !== undefined && body.content !== currentPage.content
+  
+  if (contentChanged) {
+    updateData.current_version = currentPage.current_version + 1
+  }
+  
+  updateData.updated_at = new Date().toISOString()
+  updateData.updated_by_id = user?.id
+  
+  if (body.status === 'published' && currentPage.status !== 'published') {
+    updateData.published_at = new Date().toISOString()
+  }
+  
+  const { error } = await supabaseAdmin
+    .from('wiki_pages')
+    .update(updateData)
+    .eq('id', pageId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Create new version if content changed
+  if (contentChanged) {
+    await supabaseAdmin.from('wiki_page_versions').insert([{
+      id: uuidv4(),
+      page_id: pageId,
+      version_number: updateData.current_version,
+      title: body.title || currentPage.title,
+      content: body.content,
+      content_format: body.content_format || currentPage.content_format,
+      change_summary: body.change_summary || 'Inhalt aktualisiert',
+      changed_by_id: user?.id,
+    }])
+  }
+  
+  // Audit log
+  await logFieldChange('wiki_page', pageId, 'updated', JSON.stringify(currentPage), JSON.stringify(updateData), user?.id)
+  
+  return NextResponse.json({ success: true, version: updateData.current_version || currentPage.current_version })
+}
+
+async function handleDeleteWikiPage(pageId, user) {
+  const { error } = await supabaseAdmin
+    .from('wiki_pages')
+    .delete()
+    .eq('id', pageId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await logFieldChange('wiki_page', pageId, 'deleted', pageId, null, user?.id)
+  
+  return NextResponse.json({ success: true })
+}
+
+async function handleGetWikiPageVersions(pageId) {
+  const { data, error } = await supabaseAdmin
+    .from('wiki_page_versions')
+    .select(`
+      *,
+      changed_by:users!changed_by_id(id, first_name, last_name)
+    `)
+    .eq('page_id', pageId)
+    .order('version_number', { ascending: false })
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleRestoreWikiPageVersion(pageId, versionId, user) {
+  // Get the version
+  const { data: version } = await supabaseAdmin
+    .from('wiki_page_versions')
+    .select('*')
+    .eq('id', versionId)
+    .eq('page_id', pageId)
+    .single()
+  
+  if (!version) {
+    return NextResponse.json({ error: 'Version nicht gefunden' }, { status: 404 })
+  }
+  
+  // Get current page
+  const { data: currentPage } = await supabaseAdmin
+    .from('wiki_pages')
+    .select('current_version')
+    .eq('id', pageId)
+    .single()
+  
+  const newVersion = (currentPage?.current_version || 0) + 1
+  
+  // Update page with old content
+  await supabaseAdmin
+    .from('wiki_pages')
+    .update({
+      title: version.title,
+      content: version.content,
+      content_format: version.content_format,
+      current_version: newVersion,
+      updated_at: new Date().toISOString(),
+      updated_by_id: user?.id,
+    })
+    .eq('id', pageId)
+  
+  // Create new version record
+  await supabaseAdmin.from('wiki_page_versions').insert([{
+    id: uuidv4(),
+    page_id: pageId,
+    version_number: newVersion,
+    title: version.title,
+    content: version.content,
+    content_format: version.content_format,
+    change_summary: `Wiederhergestellt von Version ${version.version_number}`,
+    changed_by_id: user?.id,
+  }])
+  
+  return NextResponse.json({ success: true, new_version: newVersion })
+}
+
+async function handleSearchWiki(params, user) {
+  const { q, space_id, limit = 20 } = params
+  
+  if (!q || q.length < 2) {
+    return NextResponse.json({ error: 'Suchbegriff zu kurz' }, { status: 400 })
+  }
+  
+  let query = supabaseAdmin
+    .from('wiki_pages')
+    .select(`
+      id, title, slug, excerpt, status, visibility, space_id,
+      space:wiki_spaces(id, name, slug, space_type, organization_id)
+    `)
+    .or(`title.ilike.%${q}%,content.ilike.%${q}%,excerpt.ilike.%${q}%`)
+    .eq('status', 'published')
+    .limit(parseInt(limit))
+  
+  if (space_id) {
+    query = query.eq('space_id', space_id)
+  }
+  
+  // Filter based on user permissions
+  if (user?.user_type === 'customer') {
+    query = query.in('visibility', ['all', 'customers'])
+  }
+  
+  const { data, error } = await query
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Filter out org wikis user doesn't have access to
+  let results = data || []
+  if (user?.user_type === 'customer') {
+    results = results.filter(p => 
+      p.space?.space_type === 'global' || 
+      p.space?.organization_id === user.organization_id
+    )
+  }
+  
+  return NextResponse.json(results)
+}
+
+// ============================================
+// CUSTOM FIELDS HANDLERS
+// ============================================
+
+async function handleGetCustomFields(params) {
+  let query = supabaseAdmin
+    .from('custom_field_definitions')
+    .select('*')
+    .eq('is_active', true)
+  
+  if (params.entity_type) {
+    query = query.eq('entity_type', params.entity_type)
+  }
+  
+  if (params.organization_id) {
+    query = query.or(`organization_id.is.null,organization_id.eq.${params.organization_id}`)
+  } else if (params.scope === 'global') {
+    query = query.is('organization_id', null)
+  }
+  
+  const { data, error } = await query.order('position').order('label')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateCustomField(body, user) {
+  const { name, label, entity_type, field_type, field_options, default_value, placeholder, validation_rules, visibility, editable_by, scope, organization_id, position, show_in_list, show_in_filter, searchable } = body
+  
+  if (!name || !label || !entity_type || !field_type) {
+    return NextResponse.json({ error: 'name, label, entity_type und field_type sind erforderlich' }, { status: 400 })
+  }
+  
+  // Validate field_type
+  const validTypes = ['text', 'textarea', 'number', 'decimal', 'boolean', 'select', 'multiselect', 'date', 'datetime', 'email', 'phone', 'url', 'user_ref', 'org_ref', 'ticket_ref', 'file', 'json']
+  if (!validTypes.includes(field_type)) {
+    return NextResponse.json({ error: `Ungültiger Feldtyp. Erlaubt: ${validTypes.join(', ')}` }, { status: 400 })
+  }
+  
+  const fieldId = uuidv4()
+  const { data, error } = await supabaseAdmin
+    .from('custom_field_definitions')
+    .insert([{
+      id: fieldId,
+      name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      label,
+      entity_type,
+      field_type,
+      field_options: field_options || {},
+      default_value,
+      placeholder,
+      validation_rules: validation_rules || {},
+      visibility: visibility || 'all',
+      editable_by: editable_by || ['admin', 'agent'],
+      scope: scope || 'global',
+      organization_id: scope === 'organization' ? organization_id : null,
+      position: position || 0,
+      show_in_list: show_in_list || false,
+      show_in_filter: show_in_filter || false,
+      searchable: searchable || false,
+      created_by_id: user?.id,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  await logFieldChange('custom_field', fieldId, 'created', null, label, user?.id)
+  
+  return NextResponse.json(data)
+}
+
+async function handleUpdateCustomField(fieldId, body, user) {
+  const allowedFields = ['label', 'description', 'field_options', 'default_value', 'placeholder', 'validation_rules', 'visibility', 'editable_by', 'position', 'is_active', 'show_in_list', 'show_in_filter', 'searchable']
+  
+  const updateData = {}
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) updateData[field] = body[field]
+  }
+  
+  updateData.updated_at = new Date().toISOString()
+  
+  const { error } = await supabaseAdmin
+    .from('custom_field_definitions')
+    .update(updateData)
+    .eq('id', fieldId)
+    .eq('is_system', false) // Cannot update system fields
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  await logFieldChange('custom_field', fieldId, 'updated', null, JSON.stringify(updateData), user?.id)
+  
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteCustomField(fieldId, user) {
+  // Check if it's a system field
+  const { data: field } = await supabaseAdmin
+    .from('custom_field_definitions')
+    .select('is_system')
+    .eq('id', fieldId)
+    .single()
+  
+  if (field?.is_system) {
+    return NextResponse.json({ error: 'Systemfelder können nicht gelöscht werden' }, { status: 400 })
+  }
+  
+  // Delete field values first
+  await supabaseAdmin
+    .from('custom_field_values')
+    .delete()
+    .eq('field_id', fieldId)
+  
+  const { error } = await supabaseAdmin
+    .from('custom_field_definitions')
+    .delete()
+    .eq('id', fieldId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  await logFieldChange('custom_field', fieldId, 'deleted', fieldId, null, user?.id)
+  
+  return NextResponse.json({ success: true })
+}
+
+async function handleGetCustomFieldValues(entityType, entityId) {
+  const { data, error } = await supabaseAdmin
+    .from('custom_field_values')
+    .select(`
+      *,
+      field:custom_field_definitions(*)
+    `)
+    .eq('entity_type', entityType)
+    .eq('entity_id', entityId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Transform to key-value format
+  const values = {}
+  ;(data || []).forEach(v => {
+    const fieldType = v.field?.field_type
+    let value
+    switch (fieldType) {
+      case 'number':
+      case 'decimal':
+        value = v.value_number
+        break
+      case 'boolean':
+        value = v.value_boolean
+        break
+      case 'date':
+        value = v.value_date
+        break
+      case 'datetime':
+        value = v.value_datetime
+        break
+      case 'json':
+      case 'multiselect':
+        value = v.value_json
+        break
+      default:
+        value = v.value_text
+    }
+    values[v.field?.name || v.field_id] = value
+  })
+  
+  return NextResponse.json(values)
+}
+
+async function handleSetCustomFieldValue(body, user) {
+  const { field_id, entity_type, entity_id, value } = body
+  
+  if (!field_id || !entity_type || !entity_id) {
+    return NextResponse.json({ error: 'field_id, entity_type und entity_id sind erforderlich' }, { status: 400 })
+  }
+  
+  // Get field definition
+  const { data: field } = await supabaseAdmin
+    .from('custom_field_definitions')
+    .select('*')
+    .eq('id', field_id)
+    .single()
+  
+  if (!field) {
+    return NextResponse.json({ error: 'Feld nicht gefunden' }, { status: 404 })
+  }
+  
+  // Validate value based on field type and rules
+  const validation = field.validation_rules || {}
+  if (validation.required && (value === null || value === undefined || value === '')) {
+    return NextResponse.json({ error: `${field.label} ist erforderlich` }, { status: 400 })
+  }
+  
+  // Prepare value data
+  const valueData = {
+    field_id,
+    entity_type,
+    entity_id,
+    value_text: null,
+    value_number: null,
+    value_boolean: null,
+    value_date: null,
+    value_datetime: null,
+    value_json: null,
+    value_array: null,
+  }
+  
+  switch (field.field_type) {
+    case 'number':
+    case 'decimal':
+      valueData.value_number = parseFloat(value)
+      break
+    case 'boolean':
+      valueData.value_boolean = Boolean(value)
+      break
+    case 'date':
+      valueData.value_date = value
+      break
+    case 'datetime':
+      valueData.value_datetime = value
+      break
+    case 'json':
+    case 'multiselect':
+      valueData.value_json = typeof value === 'string' ? JSON.parse(value) : value
+      break
+    default:
+      valueData.value_text = String(value)
+  }
+  
+  // Get old value for audit
+  const { data: oldValue } = await supabaseAdmin
+    .from('custom_field_values')
+    .select('*')
+    .eq('field_id', field_id)
+    .eq('entity_id', entity_id)
+    .single()
+  
+  // Upsert value
+  const { error } = await supabaseAdmin
+    .from('custom_field_values')
+    .upsert([{ ...valueData, updated_at: new Date().toISOString() }], {
+      onConflict: 'field_id,entity_id'
+    })
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Audit log
+  await logFieldChange(entity_type, entity_id, field.name, 
+    oldValue ? JSON.stringify(oldValue) : null, 
+    JSON.stringify(value), 
+    user?.id
+  )
+  
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// FORM BUILDER HANDLERS
+// ============================================
+
+async function handleGetForms(params) {
+  let query = supabaseAdmin
+    .from('form_definitions')
+    .select(`
+      *,
+      organization:organizations(id, name),
+      ticket_type:ticket_types(id, name, code)
+    `)
+    .eq('is_active', true)
+  
+  if (params.form_type) {
+    query = query.eq('form_type', params.form_type)
+  }
+  
+  if (params.entity_type) {
+    query = query.eq('entity_type', params.entity_type)
+  }
+  
+  if (params.organization_id) {
+    query = query.or(`organization_id.is.null,organization_id.eq.${params.organization_id}`)
+  }
+  
+  if (params.ticket_type_id) {
+    query = query.or(`ticket_type_id.is.null,ticket_type_id.eq.${params.ticket_type_id}`)
+  }
+  
+  const { data, error } = await query.order('is_default', { ascending: false }).order('name')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleGetForm(formId) {
+  const { data: form, error } = await supabaseAdmin
+    .from('form_definitions')
+    .select('*')
+    .eq('id', formId)
+    .single()
+  
+  if (error || !form) {
+    return NextResponse.json({ error: 'Formular nicht gefunden' }, { status: 404 })
+  }
+  
+  // Get sections with fields
+  const { data: sections } = await supabaseAdmin
+    .from('form_sections')
+    .select('*')
+    .eq('form_id', formId)
+    .order('position')
+  
+  const { data: formFields } = await supabaseAdmin
+    .from('form_fields')
+    .select(`
+      *,
+      field:custom_field_definitions(*)
+    `)
+    .eq('form_id', formId)
+    .order('position')
+  
+  return NextResponse.json({
+    ...form,
+    sections: sections || [],
+    fields: formFields || [],
+  })
+}
+
+async function handleCreateForm(body, user) {
+  const { name, description, form_type, entity_type, organization_id, ticket_type_id, layout, conditions, settings, is_default } = body
+  
+  if (!name || !form_type || !entity_type) {
+    return NextResponse.json({ error: 'name, form_type und entity_type sind erforderlich' }, { status: 400 })
+  }
+  
+  // If setting as default, unset other defaults
+  if (is_default) {
+    await supabaseAdmin
+      .from('form_definitions')
+      .update({ is_default: false })
+      .eq('form_type', form_type)
+      .eq('entity_type', entity_type)
+      .is('organization_id', organization_id ? null : null) // Same scope
+  }
+  
+  const formId = uuidv4()
+  const { data, error } = await supabaseAdmin
+    .from('form_definitions')
+    .insert([{
+      id: formId,
+      name,
+      description,
+      form_type,
+      entity_type,
+      organization_id,
+      ticket_type_id,
+      layout: layout || { sections: [] },
+      conditions: conditions || {},
+      settings: settings || {},
+      is_default: is_default || false,
+      created_by_id: user?.id,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateForm(formId, body, user) {
+  const allowedFields = ['name', 'description', 'layout', 'conditions', 'settings', 'is_default', 'is_active', 'organization_id', 'ticket_type_id']
+  
+  const updateData = {}
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) updateData[field] = body[field]
+  }
+  
+  // If setting as default, unset other defaults
+  if (body.is_default) {
+    const { data: currentForm } = await supabaseAdmin
+      .from('form_definitions')
+      .select('form_type, entity_type, organization_id')
+      .eq('id', formId)
+      .single()
+    
+    if (currentForm) {
+      let unsetQuery = supabaseAdmin
+        .from('form_definitions')
+        .update({ is_default: false })
+        .eq('form_type', currentForm.form_type)
+        .eq('entity_type', currentForm.entity_type)
+        .neq('id', formId)
+      
+      if (currentForm.organization_id) {
+        unsetQuery = unsetQuery.eq('organization_id', currentForm.organization_id)
+      } else {
+        unsetQuery = unsetQuery.is('organization_id', null)
+      }
+      
+      await unsetQuery
+    }
+  }
+  
+  updateData.updated_at = new Date().toISOString()
+  updateData.version = supabaseAdmin.rpc('increment_version', { row_id: formId }) // If you have this function
+  
+  const { error } = await supabaseAdmin
+    .from('form_definitions')
+    .update(updateData)
+    .eq('id', formId)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteForm(formId) {
+  const { error } = await supabaseAdmin
+    .from('form_definitions')
+    .delete()
+    .eq('id', formId)
+    .eq('is_default', false) // Cannot delete default forms
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleAddFormField(body) {
+  const { form_id, section_id, field_id, system_field, position, is_required, is_readonly, is_hidden, visibility_condition, custom_label, custom_placeholder, custom_help_text, width } = body
+  
+  if (!form_id || (!field_id && !system_field)) {
+    return NextResponse.json({ error: 'form_id und field_id oder system_field sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('form_fields')
+    .insert([{
+      id: uuidv4(),
+      form_id,
+      section_id,
+      field_id,
+      system_field,
+      position: position || 0,
+      is_required: is_required || false,
+      is_readonly: is_readonly || false,
+      is_hidden: is_hidden || false,
+      visibility_condition,
+      custom_label,
+      custom_placeholder,
+      custom_help_text,
+      width: width || 'full',
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleGetEffectiveForm(formType, entityType, params) {
+  const { organization_id, ticket_type_id } = params
+  
+  // Priority: Org+TicketType > Org > TicketType > Default
+  let form = null
+  
+  // Try org + ticket type specific
+  if (organization_id && ticket_type_id) {
+    const { data } = await supabaseAdmin
+      .from('form_definitions')
+      .select('*')
+      .eq('form_type', formType)
+      .eq('entity_type', entityType)
+      .eq('organization_id', organization_id)
+      .eq('ticket_type_id', ticket_type_id)
+      .eq('is_active', true)
+      .single()
+    if (data) form = data
+  }
+  
+  // Try org specific
+  if (!form && organization_id) {
+    const { data } = await supabaseAdmin
+      .from('form_definitions')
+      .select('*')
+      .eq('form_type', formType)
+      .eq('entity_type', entityType)
+      .eq('organization_id', organization_id)
+      .is('ticket_type_id', null)
+      .eq('is_active', true)
+      .single()
+    if (data) form = data
+  }
+  
+  // Try ticket type specific
+  if (!form && ticket_type_id) {
+    const { data } = await supabaseAdmin
+      .from('form_definitions')
+      .select('*')
+      .eq('form_type', formType)
+      .eq('entity_type', entityType)
+      .is('organization_id', null)
+      .eq('ticket_type_id', ticket_type_id)
+      .eq('is_active', true)
+      .single()
+    if (data) form = data
+  }
+  
+  // Fall back to default
+  if (!form) {
+    const { data } = await supabaseAdmin
+      .from('form_definitions')
+      .select('*')
+      .eq('form_type', formType)
+      .eq('entity_type', entityType)
+      .is('organization_id', null)
+      .is('ticket_type_id', null)
+      .eq('is_default', true)
+      .eq('is_active', true)
+      .single()
+    if (data) form = data
+  }
+  
+  if (!form) {
+    return NextResponse.json({ error: 'Kein passendes Formular gefunden' }, { status: 404 })
+  }
+  
+  // Get fields for this form
+  const { data: formFields } = await supabaseAdmin
+    .from('form_fields')
+    .select(`
+      *,
+      field:custom_field_definitions(*)
+    `)
+    .eq('form_id', form.id)
+    .order('position')
+  
+  // Get custom fields for this entity type + org
+  let fieldsQuery = supabaseAdmin
+    .from('custom_field_definitions')
+    .select('*')
+    .eq('entity_type', entityType)
+    .eq('is_active', true)
+  
+  if (organization_id) {
+    fieldsQuery = fieldsQuery.or(`organization_id.is.null,organization_id.eq.${organization_id}`)
+  } else {
+    fieldsQuery = fieldsQuery.is('organization_id', null)
+  }
+  
+  const { data: customFields } = await fieldsQuery.order('position')
+  
+  return NextResponse.json({
+    form,
+    form_fields: formFields || [],
+    custom_fields: customFields || [],
+  })
+}
+
+// Utility function for logging field changes
+async function logFieldChange(entityType, entityId, fieldName, oldValue, newValue, userId) {
+  try {
+    await supabaseAdmin.from('field_change_history').insert([{
+      id: uuidv4(),
+      entity_type: entityType,
+      entity_id: entityId,
+      field_name: fieldName,
+      old_value: oldValue,
+      new_value: newValue,
+      changed_by_id: userId,
+      changed_at: new Date().toISOString(),
+    }])
+  } catch (err) {
+    console.error('Field change logging error:', err)
+  }
+}
+
+// ============================================
 // 2FA / TOTP AUTHENTICATION
 // ============================================
 

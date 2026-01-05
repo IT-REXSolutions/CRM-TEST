@@ -251,3 +251,133 @@ backend:
 ## Database Schema Required
 note: "User must execute /app/public/schema-phase4-5-6-7.sql in Supabase SQL Editor"
 
+
+#====================================================================================================
+# AI-ITSM Platform Implementation Status - Updated 2026-01-05
+#====================================================================================================
+
+## AI-ITSM Core Features - IMPLEMENTED
+
+### Central Inbox (Posteingang)
+backend:
+  - task: "Conversations API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET/POST /api/conversations - Central inbox for all channels"
+
+frontend:
+  - task: "Inbox Page UI"
+    implemented: true
+    working: true
+    file: "app/page.js"
+    priority: "high"
+    comment: "Full inbox with message list, detail view, classification buttons"
+
+### AI Classification Engine
+backend:
+  - task: "AI Classify Endpoint"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "POST /api/ai/classify with keyword fallback when OpenAI unavailable"
+
+  - task: "Ticket Types API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET/POST /api/ticket-types - 8 default types configured"
+
+### Onboarding/Offboarding Automation
+backend:
+  - task: "Onboarding Requests API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "Full CRUD with automatic checklist generation"
+
+  - task: "Offboarding Requests API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET/POST /api/offboarding-requests"
+
+frontend:
+  - task: "Onboarding Page UI"
+    implemented: true
+    working: true
+    file: "app/page.js"
+    priority: "high"
+    comment: "Tabs for on/offboarding, new request dialog with M365 options"
+
+### Knowledge Base
+backend:
+  - task: "KB Articles API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET/POST /api/kb-articles"
+
+frontend:
+  - task: "Knowledge Base Page UI"
+    implemented: true
+    working: true
+    file: "app/page.js"
+    priority: "high"
+    comment: "Article grid with search, create dialog, detail modal"
+
+### Communication Templates
+backend:
+  - task: "Comm Templates API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET /api/comm-templates - 3 default templates"
+
+### Kanban Board
+backend:
+  - task: "Ticket Kanban API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET /api/ticket-kanban, POST /api/tickets/move"
+
+### Settings & Integrations
+backend:
+  - task: "Settings API"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    priority: "high"
+    comment: "GET/POST /api/settings - 13+ settings configured"
+
+## API Endpoints Summary (Verified Working):
+- GET /api/tickets - ✅
+- GET /api/ticket-types - ✅ (8 types)
+- GET /api/ticket-kanban - ✅
+- POST /api/tickets/move - ✅
+- GET /api/settings - ✅ (13 settings)
+- POST /api/settings - ✅
+- GET /api/conversations - ✅
+- POST /api/ai/classify - ✅ (with keyword fallback)
+- GET /api/onboarding-requests - ✅
+- POST /api/onboarding-requests - ✅
+- GET /api/offboarding-requests - ✅
+- GET /api/kb-articles - ✅
+- GET /api/comm-templates - ✅ (3 templates)
+- GET /api/close-flow-config - ✅
+- GET /api/resolution-categories - ✅ (9 categories)
+
+## Notes:
+- OpenAI/Emergent LLM Key Integration: Configured but external API endpoint currently offline
+- Keyword-based fallback classification is active and working
+- External preview showing "Unavailable" due to CDN caching - app works internally
+- All new database tables created and populated with default data

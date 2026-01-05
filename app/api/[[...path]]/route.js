@@ -1975,7 +1975,7 @@ async function handleUpdateTemplate(id, body) {
   return NextResponse.json({ success: true })
 }
 
-async function handleDeleteTemplate(id) {
+async function handleDeleteTicketTemplate(id) {
   const { error } = await supabaseAdmin.from('ticket_templates').update({ is_active: false }).eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })

@@ -5029,7 +5029,30 @@ function SettingsPage() {
                 </CardContent>
               </Card>
               
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <Button 
+                  variant="outline"
+                  onClick={async () => {
+                    const email = prompt('Test-E-Mail senden an:')
+                    if (!email) return
+                    try {
+                      await api.fetch('/email/send', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                          to: email,
+                          subject: 'ServiceDesk Pro - Test-E-Mail',
+                          body: 'Diese E-Mail bestätigt, dass Ihre SMTP-Einstellungen korrekt konfiguriert sind.\n\nMit freundlichen Grüßen,\nServiceDesk Pro'
+                        })
+                      })
+                      toast.success('Test-E-Mail wurde gesendet!')
+                    } catch (error) {
+                      toast.error('Fehler beim Senden: ' + (error.message || 'Unbekannter Fehler'))
+                    }
+                  }}
+                >
+                  <Send className="h-4 w-4 mr-2" />
+                  Test-E-Mail senden
+                </Button>
                 <Button onClick={() => saveAllSettings('email')} disabled={saving}>
                   {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
                   Alle E-Mail-Einstellungen speichern

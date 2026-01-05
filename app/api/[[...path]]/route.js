@@ -3595,6 +3595,16 @@ async function handleMoveTicketStatus(body) {
     return NextResponse.json({ error: 'ticket_id und new_status sind erforderlich' }, { status: 400 })
   }
   
+  // If moving to 'closed', require close wizard
+  if (new_status === 'closed') {
+    return NextResponse.json({ 
+      error: 'close_wizard_required',
+      message: 'Zum Schließen muss der Close-Wizard verwendet werden',
+      ticket_id,
+      redirect: `/tickets/${ticket_id}/close`
+    }, { status: 400 })
+  }
+  
   // Get current ticket
   const { data: ticket } = await supabaseAdmin
     .from('tickets')

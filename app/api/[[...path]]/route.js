@@ -1774,26 +1774,42 @@ async function handleUpdateSetting(body) {
     else if (key.includes('backup') || key.includes('log_')) settingCategory = 'audit'
   }
   
+  // Ensure value is properly formatted for JSONB
+  let jsonValue = value
+  if (typeof value === 'string') {
+    try {
+      // Try to parse if it's already a JSON string
+      jsonValue = JSON.parse(value)
+    } catch {
+      // If not valid JSON, wrap it as a string
+      jsonValue = value
+    }
+  }
+  
+  const insertData = {
+    key,
+    value: jsonValue,
+    category: settingCategory,
+    description: `Setting: ${key}`,
+    updated_at: new Date().toISOString(),
+    updated_by_id: userId || null,
+  }
+  
   const { data, error } = await supabaseAdmin
     .from('settings')
-    .upsert({
-      key,
-      value: value, // Store as-is, the frontend already sends JSON strings
-      category: settingCategory,
-      updated_at: new Date().toISOString(),
-      updated_by_id: userId || null,
-    }, { onConflict: 'key' })
+    .upsert(insertData, { onConflict: 'key' })
     .select()
-    .single()
   
   // Clear settings cache
   clearSettingsCache()
   
   if (error) {
-    console.error('Settings update error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    console.error('Settings update error:', error.message, error.details)
+    return NextResponse.json({ error: error.message, details: error.details }, { status: 500 })
   }
-  return NextResponse.json(data || {})
+  
+  return NextResponse.json(data?.[0] || { success: true })
+}
 }
 
 async function handleBulkUpdateSettings(body) {

@@ -10360,6 +10360,79 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handlePlacetelWebhook(body))
     }
     
+    // --- CHATWOOT INTEGRATION ---
+    if (route === '/webhooks/chatwoot' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleChatwootWebhook(body))
+    }
+    if (route === '/chatwoot/contacts/sync' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleChatwootContactSync(body))
+    }
+    if (route === '/chatwoot/sso' && method === 'GET') {
+      return handleCORS(await handleChatwootSSO(searchParams))
+    }
+    if (route === '/chatwoot/conversations' && method === 'GET') {
+      return handleCORS(await handleGetChatwootConversations(searchParams))
+    }
+    
+    // --- N8N WEBHOOKS ---
+    if (route === '/webhooks/n8n/ticket-created' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleN8nTicketCreated(body))
+    }
+    if (route === '/webhooks/n8n/ticket-updated' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleN8nTicketUpdated(body))
+    }
+    if (route === '/webhooks/n8n/message-received' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleN8nMessageReceived(body))
+    }
+    if (route === '/webhooks/n8n/contact-updated' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleN8nContactUpdated(body))
+    }
+    
+    // --- SLA NOTIFICATIONS ---
+    if (route === '/sla/check-breaches' && method === 'POST') {
+      return handleCORS(await handleCheckSLABreaches())
+    }
+    if (route === '/sla/send-notifications' && method === 'POST') {
+      return handleCORS(await handleSendSLANotifications())
+    }
+    
+    // --- LICENSE REMINDERS ---
+    if (route === '/assets/check-expiring' && method === 'GET') {
+      return handleCORS(await handleCheckExpiringAssets(searchParams))
+    }
+    if (route === '/assets/send-reminders' && method === 'POST') {
+      return handleCORS(await handleSendAssetReminders())
+    }
+    
+    // --- AI DAILY ASSISTANT ---
+    if (route === '/ai/daily-summary' && method === 'GET') {
+      return handleCORS(await handleGetDailySummary(searchParams))
+    }
+    if (route === '/ai/suggest-actions' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleSuggestActions(body))
+    }
+    if (route === '/ai/draft-reply' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleDraftReply(body))
+    }
+    
+    // --- REPORTS EXPORT ---
+    if (route === '/reports/export/pdf' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleExportPDF(body))
+    }
+    if (route === '/reports/export/csv' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleExportCSV(body))
+    }
+    
     // --- DICTATION (Phase 5) ---
     if (route === '/dictation/transcribe' && method === 'POST') {
       const body = await request.json()

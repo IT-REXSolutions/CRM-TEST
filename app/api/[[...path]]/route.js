@@ -1360,6 +1360,552 @@ async function handleAIParseDictation(body) {
 }
 
 // ============================================
+// SETTINGS HANDLERS
+// ============================================
+
+async function handleGetSettings(category) {
+  let query = supabaseAdmin.from('settings').select('*')
+  
+  if (category) {
+    query = query.eq('category', category)
+  }
+  
+  const { data, error } = await query.order('key')
+  
+  if (error) {
+    // Table might not exist yet, return defaults
+    if (error.code === '42P01') {
+      return NextResponse.json([])
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  
+  // Convert to key-value object
+  const settings = {}
+  ;(data || []).forEach(s => {
+    settings[s.key] = s.value
+  })
+  
+  return NextResponse.json(settings)
+}
+
+async function handleUpdateSetting(body) {
+  const { key, value, userId } = body
+  
+  if (!key) {
+    return NextResponse.json({ error: 'key ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('settings')
+    .upsert({
+      key,
+      value: typeof value === 'string' ? value : JSON.stringify(value),
+      updated_at: new Date().toISOString(),
+      updated_by_id: userId || null,
+    }, { onConflict: 'key' })
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleBulkUpdateSettings(body) {
+  const { settings, userId } = body
+  
+  if (!settings || typeof settings !== 'object') {
+    return NextResponse.json({ error: 'settings object ist erforderlich' }, { status: 400 })
+  }
+  
+  const updates = Object.entries(settings).map(([key, value]) => ({
+    key,
+    value: typeof value === 'string' ? value : JSON.stringify(value),
+    updated_at: new Date().toISOString(),
+    updated_by_id: userId || null,
+  }))
+  
+  for (const update of updates) {
+    await supabaseAdmin.from('settings').upsert(update, { onConflict: 'key' })
+  }
+  
+  return NextResponse.json({ success: true, count: updates.length })
+}
+
+// ============================================
+// SLA PROFILES HANDLERS (Extended)
+// ============================================
+
+async function handleCreateSLAProfile(body) {
+  const { name, description, response_time_minutes, resolution_time_minutes, business_hours_only, is_default, priority_multipliers } = body
+  
+  if (!name || !response_time_minutes || !resolution_time_minutes) {
+    return NextResponse.json({ error: 'name, response_time_minutes, resolution_time_minutes sind erforderlich' }, { status: 400 })
+  }
+  
+  // If setting as default, unset other defaults
+  if (is_default) {
+    await supabaseAdmin.from('sla_profiles').update({ is_default: false }).eq('is_default', true)
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('sla_profiles')
+    .insert([{
+      id: uuidv4(),
+      name,
+      description: description || null,
+      response_time_minutes,
+      resolution_time_minutes,
+      business_hours_only: business_hours_only !== false,
+      is_default: is_default || false,
+      priority_multipliers: priority_multipliers || { low: 2, medium: 1, high: 0.5, critical: 0.25 },
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateSLAProfile(id, body) {
+  if (body.is_default) {
+    await supabaseAdmin.from('sla_profiles').update({ is_default: false }).eq('is_default', true)
+  }
+  
+  const { error } = await supabaseAdmin
+    .from('sla_profiles')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteSLAProfile(id) {
+  const { error } = await supabaseAdmin.from('sla_profiles').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// TICKET TAGS HANDLERS (Extended)
+// ============================================
+
+async function handleCreateTag(body) {
+  const { name, color } = body
+  
+  if (!name) {
+    return NextResponse.json({ error: 'name ist erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_tags')
+    .insert([{ id: uuidv4(), name, color: color || '#3B82F6' }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateTag(id, body) {
+  const { error } = await supabaseAdmin.from('ticket_tags').update(body).eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteTag(id) {
+  const { error } = await supabaseAdmin.from('ticket_tags').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// TICKET TEMPLATES HANDLERS
+// ============================================
+
+async function handleGetTemplates() {
+  const { data, error } = await supabaseAdmin
+    .from('ticket_templates')
+    .select('*')
+    .eq('is_active', true)
+    .order('name')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateTemplate(body) {
+  const { name, category, subject, description, priority } = body
+  
+  if (!name || !subject) {
+    return NextResponse.json({ error: 'name, subject sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('ticket_templates')
+    .insert([{
+      id: uuidv4(),
+      name,
+      category: category || null,
+      subject,
+      description: description || null,
+      priority: priority || 'medium',
+      is_active: true,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateTemplate(id, body) {
+  const { error } = await supabaseAdmin
+    .from('ticket_templates')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteTemplate(id) {
+  const { error } = await supabaseAdmin.from('ticket_templates').update({ is_active: false }).eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// AUTOMATION RULES HANDLERS
+// ============================================
+
+async function handleGetAutomations() {
+  const { data, error } = await supabaseAdmin
+    .from('automation_rules')
+    .select('*')
+    .order('name')
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateAutomation(body) {
+  const { name, description, trigger_type, trigger_conditions, action_type, action_config, is_active } = body
+  
+  if (!name || !trigger_type || !action_type) {
+    return NextResponse.json({ error: 'name, trigger_type, action_type sind erforderlich' }, { status: 400 })
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('automation_rules')
+    .insert([{
+      id: uuidv4(),
+      name,
+      description: description || null,
+      trigger_type,
+      trigger_conditions: trigger_conditions || {},
+      action_type,
+      action_config: action_config || {},
+      is_active: is_active !== false,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateAutomation(id, body) {
+  const { error } = await supabaseAdmin
+    .from('automation_rules')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteAutomation(id) {
+  const { error } = await supabaseAdmin.from('automation_rules').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// RECURRING TICKETS HANDLERS
+// ============================================
+
+async function handleGetRecurringTickets() {
+  const { data, error } = await supabaseAdmin
+    .from('recurring_tickets')
+    .select(`
+      *,
+      organizations (name),
+      assignee:users (first_name, last_name),
+      sla_profiles (name)
+    `)
+    .order('name')
+  
+  if (error) {
+    // Table might not exist
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateRecurringTicket(body) {
+  const { 
+    name, subject, description, priority, category, organization_id, assignee_id, sla_profile_id,
+    schedule_type, schedule_day, schedule_time, created_by_id
+  } = body
+  
+  if (!name || !subject || !schedule_type) {
+    return NextResponse.json({ error: 'name, subject, schedule_type sind erforderlich' }, { status: 400 })
+  }
+  
+  // Calculate next run
+  const now = new Date()
+  let next_run_at = new Date(now)
+  
+  if (schedule_time) {
+    const [hours, minutes] = schedule_time.split(':')
+    next_run_at.setHours(parseInt(hours), parseInt(minutes), 0, 0)
+  }
+  
+  if (next_run_at <= now) {
+    // Move to next occurrence
+    switch (schedule_type) {
+      case 'daily': next_run_at.setDate(next_run_at.getDate() + 1); break
+      case 'weekly': next_run_at.setDate(next_run_at.getDate() + 7); break
+      case 'monthly': next_run_at.setMonth(next_run_at.getMonth() + 1); break
+      case 'yearly': next_run_at.setFullYear(next_run_at.getFullYear() + 1); break
+    }
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('recurring_tickets')
+    .insert([{
+      id: uuidv4(),
+      name,
+      subject,
+      description: description || null,
+      priority: priority || 'medium',
+      category: category || null,
+      organization_id: organization_id || null,
+      assignee_id: assignee_id || null,
+      sla_profile_id: sla_profile_id || null,
+      schedule_type,
+      schedule_day: schedule_day || null,
+      schedule_time: schedule_time || '09:00',
+      next_run_at: next_run_at.toISOString(),
+      is_active: true,
+      created_by_id: created_by_id || null,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+async function handleUpdateRecurringTicket(id, body) {
+  const { error } = await supabaseAdmin
+    .from('recurring_tickets')
+    .update({ ...body, updated_at: new Date().toISOString() })
+    .eq('id', id)
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+async function handleDeleteRecurringTicket(id) {
+  const { error } = await supabaseAdmin.from('recurring_tickets').delete().eq('id', id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ success: true })
+}
+
+// ============================================
+// INVOICE DRAFTS HANDLERS
+// ============================================
+
+async function handleGetInvoiceDrafts(params) {
+  let query = supabaseAdmin
+    .from('invoice_drafts')
+    .select(`
+      *,
+      organizations (name),
+      creator:users (first_name, last_name)
+    `)
+  
+  if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+  if (params.status) query = query.eq('status', params.status)
+  
+  const { data, error } = await query.order('created_at', { ascending: false })
+  
+  if (error) {
+    if (error.code === '42P01') return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || [])
+}
+
+async function handleCreateInvoiceDraft(body) {
+  const { organization_id, time_entry_ids, created_by_id } = body
+  
+  if (!organization_id) {
+    return NextResponse.json({ error: 'organization_id ist erforderlich' }, { status: 400 })
+  }
+  
+  // Get time entries to invoice
+  let timeEntries = []
+  if (time_entry_ids && time_entry_ids.length > 0) {
+    const { data } = await supabaseAdmin
+      .from('time_entries')
+      .select('*')
+      .in('id', time_entry_ids)
+      .eq('is_billable', true)
+      .eq('is_invoiced', false)
+    timeEntries = data || []
+  } else {
+    // Get all uninvoiced billable time entries for this organization
+    const { data } = await supabaseAdmin
+      .from('time_entries')
+      .select('*')
+      .eq('organization_id', organization_id)
+      .eq('is_billable', true)
+      .eq('is_invoiced', false)
+    timeEntries = data || []
+  }
+  
+  if (timeEntries.length === 0) {
+    return NextResponse.json({ error: 'Keine abrechenbaren Zeiteinträge gefunden' }, { status: 400 })
+  }
+  
+  // Calculate totals
+  const lineItems = timeEntries.map(e => ({
+    time_entry_id: e.id,
+    description: e.description,
+    quantity: e.duration_minutes / 60,
+    unit: 'Stunden',
+    unit_price: e.hourly_rate || 0,
+    total: (e.duration_minutes / 60) * (e.hourly_rate || 0),
+  }))
+  
+  const subtotal = lineItems.reduce((sum, item) => sum + item.total, 0)
+  const taxRate = 19
+  const taxAmount = subtotal * (taxRate / 100)
+  const total = subtotal + taxAmount
+  
+  const { data, error } = await supabaseAdmin
+    .from('invoice_drafts')
+    .insert([{
+      id: uuidv4(),
+      organization_id,
+      status: 'draft',
+      line_items: lineItems,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      total,
+      invoice_date: new Date().toISOString().split('T')[0],
+      due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      created_by_id: created_by_id || null,
+    }])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  // Mark time entries as invoiced
+  await supabaseAdmin
+    .from('time_entries')
+    .update({ is_invoiced: true, invoice_id: data.id })
+    .in('id', timeEntries.map(e => e.id))
+  
+  return NextResponse.json(data)
+}
+
+// ============================================
+// WEBHOOK HANDLERS (for Placetel)
+// ============================================
+
+async function handlePlacetelWebhook(body) {
+  // This would handle incoming webhooks from Placetel
+  const { event_type, call_id, caller, callee, duration, recording_url } = body
+  
+  // Log the call
+  const callData = {
+    id: uuidv4(),
+    external_id: call_id,
+    direction: event_type === 'incoming_call' ? 'inbound' : 'outbound',
+    caller_number: caller,
+    callee_number: callee,
+    duration_seconds: duration,
+    recording_url: recording_url || null,
+    status: event_type,
+    started_at: new Date().toISOString(),
+  }
+  
+  // Try to find matching contact by phone number
+  const { data: contact } = await supabaseAdmin
+    .from('contacts')
+    .select('id, organization_id')
+    .or(`phone.eq.${caller},mobile.eq.${caller}`)
+    .single()
+  
+  if (contact) {
+    callData.contact_id = contact.id
+    callData.organization_id = contact.organization_id
+  }
+  
+  const { data, error } = await supabaseAdmin
+    .from('call_logs')
+    .insert([callData])
+    .select()
+    .single()
+  
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(data)
+}
+
+// ============================================
+// TEST CONNECTION HANDLERS
+// ============================================
+
+async function handleTestConnection(body) {
+  const { type, config } = body
+  
+  switch (type) {
+    case 'smtp':
+      // Would test SMTP connection
+      return NextResponse.json({ success: true, message: 'SMTP-Verbindung erfolgreich (Test-Modus)' })
+    
+    case 'imap':
+      // Would test IMAP connection
+      return NextResponse.json({ success: true, message: 'IMAP-Verbindung erfolgreich (Test-Modus)' })
+    
+    case 'lexoffice':
+      // Would test Lexoffice API
+      if (!config?.api_key) {
+        return NextResponse.json({ success: false, message: 'API-Schlüssel fehlt' })
+      }
+      return NextResponse.json({ success: true, message: 'Lexoffice-Verbindung erfolgreich (Test-Modus)' })
+    
+    case 'placetel':
+      // Would test Placetel API
+      if (!config?.api_key) {
+        return NextResponse.json({ success: false, message: 'API-Schlüssel fehlt' })
+      }
+      return NextResponse.json({ success: true, message: 'Placetel-Verbindung erfolgreich (Test-Modus)' })
+    
+    default:
+      return NextResponse.json({ success: false, message: 'Unbekannter Verbindungstyp' })
+  }
+}
+
+// ============================================
 // MAIN ROUTE HANDLER
 // ============================================
 

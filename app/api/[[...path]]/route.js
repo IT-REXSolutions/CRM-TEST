@@ -5770,6 +5770,189 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleGetOpenAPISpec())
     }
     
+    // =============================================
+    // E) AI-ITSM MODULE ROUTES
+    // =============================================
+    
+    // Ticket Types
+    if (route === '/ticket-types' && method === 'GET') {
+      const { data, error } = await supabaseAdmin
+        .from('ticket_types')
+        .select('*')
+        .order('position', { ascending: true })
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data || []))
+    }
+    if (route === '/ticket-types' && method === 'POST') {
+      const body = await request.json()
+      const { code, name, description, icon, color, keywords, default_priority, default_queue } = body
+      if (!code || !name) {
+        return handleCORS(NextResponse.json({ error: 'code und name sind erforderlich' }, { status: 400 }))
+      }
+      const { data, error } = await supabaseAdmin
+        .from('ticket_types')
+        .insert([{ id: uuidv4(), code, name, description, icon, color, keywords, default_priority, default_queue }])
+        .select()
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
+    // AI Classification
+    if (route === '/ai/classify' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleClassifyMessage(body))
+    }
+    
+    // Conversations (Central Inbox)
+    if (route === '/conversations' && method === 'GET') {
+      return handleCORS(await handleGetConversations(searchParams))
+    }
+    if (route === '/conversations' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateConversation(body))
+    }
+    if (route.match(/^\/conversations\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      const { data, error } = await supabaseAdmin
+        .from('conversations')
+        .select('*, tickets(*)')
+        .eq('id', id)
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    if (route.match(/^\/conversations\/[^/]+\/process$/) && method === 'POST') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleProcessConversation(id, body))
+    }
+    
+    // Dynamic Forms
+    if (route === '/dynamic-forms' && method === 'GET') {
+      return handleCORS(await handleGetDynamicForms(searchParams))
+    }
+    if (route === '/dynamic-forms' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateDynamicForm(body))
+    }
+    if (route.match(/^\/dynamic-forms\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      const { data, error } = await supabaseAdmin
+        .from('dynamic_forms')
+        .select('*')
+        .eq('id', id)
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
+    // Form Submissions
+    if (route === '/form-submissions' && method === 'POST') {
+      const body = await request.json()
+      const { form_id, data: formData, submitted_by_id } = body
+      if (!form_id || !formData) {
+        return handleCORS(NextResponse.json({ error: 'form_id und data sind erforderlich' }, { status: 400 }))
+      }
+      const { data, error } = await supabaseAdmin
+        .from('form_submissions')
+        .insert([{ id: uuidv4(), form_id, data: formData, submitted_by_id }])
+        .select()
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
+    // Onboarding Requests
+    if (route === '/onboarding-requests' && method === 'GET') {
+      return handleCORS(await handleGetOnboardingRequests(searchParams))
+    }
+    if (route === '/onboarding-requests' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateOnboardingRequest(body))
+    }
+    if (route.match(/^\/onboarding-requests\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      const { data, error } = await supabaseAdmin
+        .from('onboarding_requests')
+        .update({ ...body, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
+    // Offboarding Requests
+    if (route === '/offboarding-requests' && method === 'GET') {
+      const { data, error } = await supabaseAdmin
+        .from('offboarding_requests')
+        .select('*, tickets(*)')
+        .order('created_at', { ascending: false })
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data || []))
+    }
+    if (route === '/offboarding-requests' && method === 'POST') {
+      const body = await request.json()
+      const { ticket_id, organization_id, employee_name, employee_email, last_day } = body
+      if (!ticket_id || !organization_id || !employee_name || !employee_email || !last_day) {
+        return handleCORS(NextResponse.json({ error: 'Pflichtfelder fehlen' }, { status: 400 }))
+      }
+      const { data, error } = await supabaseAdmin
+        .from('offboarding_requests')
+        .insert([{ id: uuidv4(), ...body }])
+        .select()
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
+    // M365 Connections
+    if (route === '/m365-connections' && method === 'GET') {
+      const { data, error } = await supabaseAdmin
+        .from('m365_connections')
+        .select('id, organization_id, tenant_id, tenant_name, is_active, last_sync_at, created_at')
+        .order('created_at', { ascending: false })
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data || []))
+    }
+    
+    // Knowledge Base
+    if (route === '/kb-articles' && method === 'GET') {
+      const { data, error } = await supabaseAdmin
+        .from('kb_articles')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data || []))
+    }
+    if (route === '/kb-articles' && method === 'POST') {
+      const body = await request.json()
+      const { title, content, category, tags, ticket_type_code, is_internal, created_by_id } = body
+      if (!title || !content) {
+        return handleCORS(NextResponse.json({ error: 'title und content sind erforderlich' }, { status: 400 }))
+      }
+      const { data, error } = await supabaseAdmin
+        .from('kb_articles')
+        .insert([{ id: uuidv4(), title, content, category, tags, ticket_type_code, is_internal, created_by_id }])
+        .select()
+        .single()
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
+    // Communication Templates
+    if (route === '/comm-templates' && method === 'GET') {
+      const { data, error } = await supabaseAdmin
+        .from('comm_templates')
+        .select('*')
+        .eq('is_active', true)
+        .order('name', { ascending: true })
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data || []))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

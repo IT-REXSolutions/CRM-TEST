@@ -6714,6 +6714,61 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json(data || []))
     }
     
+    // =============================================
+    // F) EMAIL SERVICE ROUTES
+    // =============================================
+    
+    if (route === '/email/send' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleSendEmail(body))
+    }
+    
+    if (route === '/email/onboarding-welcome' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleSendOnboardingWelcome(body))
+    }
+    
+    if (route === '/email/ticket-notification' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleSendTicketNotification(body))
+    }
+    
+    if (route === '/email/log' && method === 'GET') {
+      return handleCORS(await handleGetEmailLog(searchParams))
+    }
+    
+    // =============================================
+    // G) ADVANCED REPORTING ROUTES
+    // =============================================
+    
+    if (route === '/reports/onboarding' && method === 'GET') {
+      return handleCORS(await handleGetOnboardingReport(searchParams))
+    }
+    
+    if (route === '/reports/tickets' && method === 'GET') {
+      return handleCORS(await handleGetTicketReport(searchParams))
+    }
+    
+    if (route === '/reports/time' && method === 'GET') {
+      return handleCORS(await handleGetTimeReport(searchParams))
+    }
+    
+    if (route === '/reports/dashboard' && method === 'GET') {
+      // Combined dashboard report
+      const [onboardingReport, ticketReport, timeReport] = await Promise.all([
+        handleGetOnboardingReport(searchParams),
+        handleGetTicketReport(searchParams),
+        handleGetTimeReport(searchParams),
+      ])
+      
+      return handleCORS(NextResponse.json({
+        onboarding: await onboardingReport.json(),
+        tickets: await ticketReport.json(),
+        time: await timeReport.json(),
+        generated_at: new Date().toISOString(),
+      }))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

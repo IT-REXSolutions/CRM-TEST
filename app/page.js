@@ -2081,6 +2081,8 @@ function TimePage({ currentUser }) {
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [showInvoiceDialog, setShowInvoiceDialog] = useState(false)
+  const [selectedOrganization, setSelectedOrganization] = useState(null)
   const [tickets, setTickets] = useState([])
   const [organizations, setOrganizations] = useState([])
   
@@ -2175,6 +2177,14 @@ function TimePage({ currentUser }) {
   
   const totalMinutes = entries.reduce((sum, e) => sum + e.duration_minutes, 0)
   const billableMinutes = entries.filter(e => e.is_billable).reduce((sum, e) => sum + e.duration_minutes, 0)
+  const unbilledMinutes = entries.filter(e => e.is_billable && !e.is_invoiced).reduce((sum, e) => sum + e.duration_minutes, 0)
+  
+  // Get organizations with unbilled time
+  const orgsWithUnbilledTime = [...new Set(
+    entries
+      .filter(e => e.is_billable && !e.is_invoiced && e.organization_id)
+      .map(e => e.organization_id)
+  )].map(orgId => organizations.find(o => o?.id === orgId)).filter(Boolean)
   
   return (
     <div className="p-6 space-y-6">
@@ -2203,22 +2213,71 @@ function TimePage({ currentUser }) {
       </Card>
       
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatsCard title="Gesamt diese Woche" value={formatDuration(totalMinutes)} icon={Clock} color="blue" />
         <StatsCard title="Abrechenbar" value={formatDuration(billableMinutes)} icon={Timer} color="green" />
+        <StatsCard title="Noch nicht abgerechnet" value={formatDuration(unbilledMinutes)} icon={CreditCard} color="orange" />
         <StatsCard title="Einträge" value={entries.length} icon={FileText} color="purple" />
       </div>
+      
+      {/* Billing Section */}
+      {orgsWithUnbilledTime.length > 0 && (
+        <Card className="border-orange-200 bg-orange-50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-orange-700">
+              <CreditCard className="h-5 w-5" />
+              Offene Abrechnungen
+            </CardTitle>
+            <CardDescription>
+              Folgende Organisationen haben noch nicht abgerechnete Zeiteinträge
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {orgsWithUnbilledTime.map(org => {
+                const orgMinutes = entries
+                  .filter(e => e.is_billable && !e.is_invoiced && e.organization_id === org.id)
+                  .reduce((sum, e) => sum + e.duration_minutes, 0)
+                return (
+                  <Button
+                    key={org.id}
+                    variant="outline"
+                    className="bg-white"
+                    onClick={() => {
+                      setSelectedOrganization(org.id)
+                      setShowInvoiceDialog(true)
+                    }}
+                  >
+                    <Building2 className="h-4 w-4 mr-2" />
+                    {org.name}
+                    <Badge variant="secondary" className="ml-2">{formatDuration(orgMinutes)}</Badge>
+                  </Button>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
       
       {/* Header */}
       <div className="flex justify-between">
         <h2 className="text-lg font-semibold">Zeiteinträge</h2>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild><Button variant="outline"><Plus className="h-4 w-4 mr-2" />Manuell erfassen</Button></DialogTrigger>
-          <DialogContent>
-            <DialogHeader><DialogTitle>Zeit erfassen</DialogTitle></DialogHeader>
-            <CreateTimeEntryForm tickets={tickets} organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2">
+          <DictationButton 
+            type="time" 
+            onComplete={() => {
+              loadEntries()
+              toast.success('Zeit per Diktat erfasst')
+            }}
+          />
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild><Button variant="outline"><Plus className="h-4 w-4 mr-2" />Manuell erfassen</Button></DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Zeit erfassen</DialogTitle></DialogHeader>
+              <CreateTimeEntryForm tickets={tickets} organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
       
       {/* Entries */}
@@ -2231,6 +2290,7 @@ function TimePage({ currentUser }) {
                 <TableHead>Ticket</TableHead>
                 <TableHead>Dauer</TableHead>
                 <TableHead>Abrechenbar</TableHead>
+                <TableHead>Abgerechnet</TableHead>
                 <TableHead>Datum</TableHead>
                 <TableHead></TableHead>
               </TableRow>
@@ -2242,6 +2302,7 @@ function TimePage({ currentUser }) {
                   <TableCell>{entry.tickets ? `#${entry.tickets.ticket_number}` : '-'}</TableCell>
                   <TableCell>{formatDuration(entry.duration_minutes)}</TableCell>
                   <TableCell><Badge className={entry.is_billable ? 'bg-green-100 text-green-700' : 'bg-slate-100'}>{entry.is_billable ? 'Ja' : 'Nein'}</Badge></TableCell>
+                  <TableCell><Badge className={entry.is_invoiced ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}>{entry.is_invoiced ? 'Ja' : 'Offen'}</Badge></TableCell>
                   <TableCell>{formatDate(entry.created_at)}</TableCell>
                   <TableCell><Button variant="ghost" size="icon" onClick={() => handleDelete(entry.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
                 </TableRow>
@@ -2250,6 +2311,20 @@ function TimePage({ currentUser }) {
           </Table>
         </Card>
       )}
+      
+      {/* Invoice Dialog */}
+      <CreateInvoiceDialog
+        organizationId={selectedOrganization}
+        open={showInvoiceDialog}
+        onClose={() => {
+          setShowInvoiceDialog(false)
+          setSelectedOrganization(null)
+        }}
+        onCreated={() => {
+          loadEntries()
+          toast.success('Rechnungsentwurf erstellt')
+        }}
+      />
     </div>
   )
 }

@@ -3002,6 +3002,994 @@ function CustomerNewTicketPage({ user, onCreated }) {
 }
 
 // ============================================
+// INBOX PAGE (Central Inbox / Posteingang)
+// ============================================
+
+function InboxPage({ currentUser }) {
+  const [conversations, setConversations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selectedConversation, setSelectedConversation] = useState(null)
+  const [filter, setFilter] = useState('all')
+  const [classifying, setClassifying] = useState(false)
+  const [ticketTypes, setTicketTypes] = useState([])
+  
+  useEffect(() => {
+    loadConversations()
+    loadTicketTypes()
+  }, [filter])
+  
+  const loadConversations = async () => {
+    setLoading(true)
+    const params = filter !== 'all' ? `?status=${filter}` : ''
+    const data = await api.fetch(`/conversations${params}`)
+    setConversations(Array.isArray(data) ? data : [])
+    setLoading(false)
+  }
+  
+  const loadTicketTypes = async () => {
+    const data = await api.fetch('/ticket-types')
+    setTicketTypes(Array.isArray(data) ? data : [])
+  }
+  
+  const handleClassify = async (conversation) => {
+    if (!conversation.body) return
+    setClassifying(true)
+    try {
+      const result = await api.fetch('/ai/classify', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          text: `${conversation.subject || ''}\n\n${conversation.body}`,
+          conversation_id: conversation.id
+        })
+      })
+      if (result.classification) {
+        toast.success(`Klassifiziert als: ${result.classification.type}`)
+        loadConversations()
+      }
+    } catch (error) {
+      toast.error('Klassifizierung fehlgeschlagen')
+    }
+    setClassifying(false)
+  }
+  
+  const handleCreateTicket = async (conversation) => {
+    try {
+      const classification = conversation.ai_classification || {}
+      const ticket = await api.fetch('/tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          subject: conversation.subject || 'Neue Anfrage',
+          description: conversation.body,
+          priority: classification.priority || 'medium',
+          status: 'open',
+          ticket_type_code: classification.type,
+          organization_id: conversation.organization_id,
+          contact_id: conversation.contact_id,
+          conversation_id: conversation.id,
+        })
+      })
+      
+      // Update conversation with ticket link
+      await api.fetch(`/conversations/${conversation.id}/process`, {
+        method: 'POST',
+        body: JSON.stringify({ ticket_id: ticket.id, processed_by_id: currentUser?.id })
+      })
+      
+      toast.success(`Ticket #${ticket.ticket_number} erstellt`)
+      loadConversations()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen des Tickets')
+    }
+  }
+  
+  const getChannelIcon = (channel) => {
+    switch (channel) {
+      case 'email': return <Mail className="w-4 h-4" />
+      case 'phone': return <PhoneCall className="w-4 h-4" />
+      case 'chat': return <MessageSquare className="w-4 h-4" />
+      case 'portal': return <Globe className="w-4 h-4" />
+      default: return <Inbox className="w-4 h-4" />
+    }
+  }
+  
+  const getTypeColor = (type) => {
+    const colors = {
+      lead: 'bg-blue-100 text-blue-700',
+      support: 'bg-green-100 text-green-700',
+      onboarding: 'bg-purple-100 text-purple-700',
+      offboarding: 'bg-orange-100 text-orange-700',
+      order: 'bg-cyan-100 text-cyan-700',
+      project: 'bg-indigo-100 text-indigo-700',
+      invoice: 'bg-yellow-100 text-yellow-700',
+      inquiry: 'bg-slate-100 text-slate-700',
+    }
+    return colors[type] || 'bg-slate-100 text-slate-700'
+  }
+  
+  return (
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Posteingang</h1>
+          <p className="text-muted-foreground">Zentrale Inbox für alle eingehenden Nachrichten</p>
+        </div>
+        <div className="flex gap-2">
+          <Select value={filter} onValueChange={setFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Alle</SelectItem>
+              <SelectItem value="new">Neu</SelectItem>
+              <SelectItem value="read">Gelesen</SelectItem>
+              <SelectItem value="processed">Verarbeitet</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" onClick={loadConversations}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Aktualisieren
+          </Button>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Conversation List */}
+        <div className="lg:col-span-1">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Nachrichten ({conversations.length})</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ScrollArea className="h-[calc(100vh-280px)]">
+                {loading ? (
+                  <div className="p-4 text-center">
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto" />
+                  </div>
+                ) : conversations.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Inbox className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p>Keine Nachrichten vorhanden</p>
+                    <p className="text-sm mt-2">Neue E-Mails und Anfragen erscheinen hier</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {conversations.map((conv) => (
+                      <div
+                        key={conv.id}
+                        className={`p-3 cursor-pointer hover:bg-slate-50 transition-colors ${
+                          selectedConversation?.id === conv.id ? 'bg-slate-100' : ''
+                        } ${conv.status === 'new' ? 'bg-blue-50' : ''}`}
+                        onClick={() => setSelectedConversation(conv)}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="mt-1">{getChannelIcon(conv.channel)}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium truncate">{conv.from_name || conv.from_address || 'Unbekannt'}</span>
+                              {conv.status === 'new' && <Badge className="bg-blue-500 text-white text-xs">Neu</Badge>}
+                            </div>
+                            <p className="text-sm font-medium truncate">{conv.subject || '(Kein Betreff)'}</p>
+                            <p className="text-xs text-muted-foreground truncate">{conv.body?.substring(0, 80)}...</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              {conv.ai_classification?.type && (
+                                <Badge className={`text-xs ${getTypeColor(conv.ai_classification.type)}`}>
+                                  {conv.ai_classification.type}
+                                </Badge>
+                              )}
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(conv.created_at).toLocaleString('de-DE')}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </div>
+        
+        {/* Conversation Detail */}
+        <div className="lg:col-span-2">
+          {selectedConversation ? (
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <CardTitle>{selectedConversation.subject || '(Kein Betreff)'}</CardTitle>
+                    <CardDescription>
+                      Von: {selectedConversation.from_name || selectedConversation.from_address} • 
+                      {new Date(selectedConversation.created_at).toLocaleString('de-DE')}
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    {!selectedConversation.ticket_id && (
+                      <>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleClassify(selectedConversation)}
+                          disabled={classifying}
+                        >
+                          {classifying ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Brain className="w-4 h-4 mr-2" />}
+                          KI-Klassifizierung
+                        </Button>
+                        <Button 
+                          size="sm"
+                          onClick={() => handleCreateTicket(selectedConversation)}
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Ticket erstellen
+                        </Button>
+                      </>
+                    )}
+                    {selectedConversation.ticket_id && (
+                      <Badge className="bg-green-100 text-green-700">
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Ticket verknüpft
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {selectedConversation.ai_classification && Object.keys(selectedConversation.ai_classification).length > 0 && (
+                  <div className="mb-4 p-4 bg-purple-50 rounded-lg">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Sparkles className="w-4 h-4 text-purple-600" />
+                      <span className="font-medium text-purple-700">KI-Analyse</span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Typ:</span>
+                        <Badge className={`ml-2 ${getTypeColor(selectedConversation.ai_classification.type)}`}>
+                          {selectedConversation.ai_classification.type}
+                        </Badge>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Priorität:</span>
+                        <Badge className={`ml-2 ${PRIORITY_COLORS[selectedConversation.ai_classification.priority] || ''}`}>
+                          {PRIORITY_LABELS[selectedConversation.ai_classification.priority] || selectedConversation.ai_classification.priority}
+                        </Badge>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Konfidenz:</span>
+                        <span className="ml-2 font-medium">{Math.round((selectedConversation.ai_classification.confidence || 0) * 100)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Queue:</span>
+                        <span className="ml-2">{selectedConversation.ai_classification.suggested_queue || '-'}</span>
+                      </div>
+                    </div>
+                    {selectedConversation.ai_classification.suggested_response && (
+                      <div className="mt-3 pt-3 border-t border-purple-200">
+                        <span className="text-muted-foreground text-sm">Vorgeschlagene Antwort:</span>
+                        <p className="mt-1 text-sm">{selectedConversation.ai_classification.suggested_response}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <div className="prose prose-sm max-w-none">
+                  <div className="whitespace-pre-wrap bg-white border rounded-lg p-4">
+                    {selectedConversation.body}
+                  </div>
+                </div>
+                
+                {selectedConversation.attachments?.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="font-medium mb-2">Anhänge</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedConversation.attachments.map((att, idx) => (
+                        <Badge key={idx} variant="outline" className="cursor-pointer">
+                          <FileText className="w-3 h-3 mr-1" />
+                          {att.name || `Anhang ${idx + 1}`}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="h-[calc(100vh-200px)] flex items-center justify-center">
+              <div className="text-center text-muted-foreground">
+                <Mail className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                <p>Wählen Sie eine Nachricht aus der Liste</p>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// ONBOARDING PAGE
+// ============================================
+
+function OnboardingPage({ currentUser }) {
+  const [activeTab, setActiveTab] = useState('onboarding')
+  const [requests, setRequests] = useState([])
+  const [offboardingRequests, setOffboardingRequests] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showNewDialog, setShowNewDialog] = useState(false)
+  const [selectedRequest, setSelectedRequest] = useState(null)
+  const [organizations, setOrganizations] = useState([])
+  const [newRequest, setNewRequest] = useState({
+    first_name: '', last_name: '', email: '', start_date: '',
+    job_title: '', department: '', manager_name: '', manager_email: '',
+    location: 'office', needs_email: true, m365_license_type: 'e3',
+    needs_teams: true, needs_sharepoint: true, vpn_required: false,
+    special_requirements: '', organization_id: ''
+  })
+  
+  useEffect(() => {
+    loadData()
+  }, [])
+  
+  const loadData = async () => {
+    setLoading(true)
+    const [onReq, offReq, orgs] = await Promise.all([
+      api.fetch('/onboarding-requests'),
+      api.fetch('/offboarding-requests'),
+      api.fetch('/organizations')
+    ])
+    setRequests(Array.isArray(onReq) ? onReq : [])
+    setOffboardingRequests(Array.isArray(offReq) ? offReq : [])
+    setOrganizations(Array.isArray(orgs) ? orgs : [])
+    setLoading(false)
+  }
+  
+  const handleCreateOnboarding = async () => {
+    if (!newRequest.first_name || !newRequest.last_name || !newRequest.start_date || !newRequest.organization_id) {
+      toast.error('Bitte füllen Sie alle Pflichtfelder aus')
+      return
+    }
+    
+    try {
+      // First create a ticket
+      const ticket = await api.fetch('/tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          subject: `Onboarding: ${newRequest.first_name} ${newRequest.last_name}`,
+          description: `Neuer Mitarbeiter: ${newRequest.first_name} ${newRequest.last_name}\nStartdatum: ${newRequest.start_date}\nPosition: ${newRequest.job_title || '-'}`,
+          priority: 'high',
+          status: 'open',
+          ticket_type_code: 'onboarding',
+          organization_id: newRequest.organization_id,
+        })
+      })
+      
+      // Then create the onboarding request
+      const result = await api.fetch('/onboarding-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...newRequest,
+          ticket_id: ticket.id
+        })
+      })
+      
+      toast.success('Onboarding-Anfrage erstellt')
+      setShowNewDialog(false)
+      setNewRequest({
+        first_name: '', last_name: '', email: '', start_date: '',
+        job_title: '', department: '', manager_name: '', manager_email: '',
+        location: 'office', needs_email: true, m365_license_type: 'e3',
+        needs_teams: true, needs_sharepoint: true, vpn_required: false,
+        special_requirements: '', organization_id: ''
+      })
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen der Anfrage')
+    }
+  }
+  
+  const getStatusColor = (status) => {
+    const colors = {
+      pending: 'bg-yellow-100 text-yellow-700',
+      form_sent: 'bg-blue-100 text-blue-700',
+      form_completed: 'bg-purple-100 text-purple-700',
+      processing: 'bg-orange-100 text-orange-700',
+      completed: 'bg-green-100 text-green-700',
+    }
+    return colors[status] || 'bg-slate-100 text-slate-700'
+  }
+  
+  const getStatusLabel = (status) => {
+    const labels = {
+      pending: 'Ausstehend',
+      form_sent: 'Formular gesendet',
+      form_completed: 'Formular ausgefüllt',
+      processing: 'In Bearbeitung',
+      completed: 'Abgeschlossen',
+    }
+    return labels[status] || status
+  }
+  
+  return (
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Mitarbeiter On-/Offboarding</h1>
+          <p className="text-muted-foreground">Automatisierte Prozesse für neue und ausscheidende Mitarbeiter</p>
+        </div>
+        <Button onClick={() => setShowNewDialog(true)}>
+          <UserPlus className="w-4 h-4 mr-2" />
+          Neues Onboarding
+        </Button>
+      </div>
+      
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="onboarding" className="flex items-center gap-2">
+            <UserPlus className="w-4 h-4" />
+            Onboarding ({requests.length})
+          </TabsTrigger>
+          <TabsTrigger value="offboarding" className="flex items-center gap-2">
+            <UserMinus className="w-4 h-4" />
+            Offboarding ({offboardingRequests.length})
+          </TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="onboarding">
+          {loading ? (
+            <div className="text-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto" />
+            </div>
+          ) : requests.length === 0 ? (
+            <Card className="p-12 text-center">
+              <UserPlus className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-medium mb-2">Keine Onboarding-Anfragen</h3>
+              <p className="text-muted-foreground mb-4">Erstellen Sie eine neue Anfrage für einen neuen Mitarbeiter</p>
+              <Button onClick={() => setShowNewDialog(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Onboarding starten
+              </Button>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {requests.map((req) => (
+                <Card key={req.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <Avatar className="h-12 w-12">
+                          <AvatarFallback className="bg-purple-100 text-purple-700">
+                            {req.first_name?.[0]}{req.last_name?.[0]}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <h3 className="font-semibold">{req.first_name} {req.last_name}</h3>
+                          <p className="text-sm text-muted-foreground">{req.job_title || 'Keine Position'} • {req.department || 'Keine Abteilung'}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <Badge className={getStatusColor(req.status)}>{getStatusLabel(req.status)}</Badge>
+                            <span className="text-xs text-muted-foreground">
+                              Start: {new Date(req.start_date).toLocaleDateString('de-DE')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right text-sm">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            {req.needs_email && <Mail className="w-4 h-4" title="E-Mail" />}
+                            {req.needs_teams && <MessageSquare className="w-4 h-4" title="Teams" />}
+                            {req.vpn_required && <Shield className="w-4 h-4" title="VPN" />}
+                          </div>
+                          <p className="mt-1">{req.m365_license_type?.toUpperCase() || '-'}</p>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => setSelectedRequest(req)}>
+                          Details
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    {req.checklist?.length > 0 && (
+                      <div className="mt-4 pt-4 border-t">
+                        <p className="text-sm font-medium mb-2">Fortschritt</p>
+                        <div className="flex flex-wrap gap-2">
+                          {req.checklist.map((item, idx) => (
+                            <Badge 
+                              key={idx}
+                              variant="outline"
+                              className={item.status === 'completed' ? 'border-green-500 text-green-700' : ''}
+                            >
+                              {item.status === 'completed' && <Check className="w-3 h-3 mr-1" />}
+                              {item.task}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="offboarding">
+          {offboardingRequests.length === 0 ? (
+            <Card className="p-12 text-center">
+              <UserMinus className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+              <h3 className="text-lg font-medium mb-2">Keine Offboarding-Anfragen</h3>
+              <p className="text-muted-foreground">Offboarding-Anfragen werden hier angezeigt</p>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {offboardingRequests.map((req) => (
+                <Card key={req.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <Avatar className="h-12 w-12">
+                          <AvatarFallback className="bg-orange-100 text-orange-700">
+                            {req.employee_name?.split(' ').map(n => n[0]).join('')}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <h3 className="font-semibold">{req.employee_name}</h3>
+                          <p className="text-sm text-muted-foreground">{req.employee_email}</p>
+                          <Badge className={getStatusColor(req.status)}>{getStatusLabel(req.status)}</Badge>
+                        </div>
+                      </div>
+                      <div className="text-right text-sm">
+                        <p className="font-medium">Letzter Tag:</p>
+                        <p>{new Date(req.last_day).toLocaleDateString('de-DE')}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+      
+      {/* New Onboarding Dialog */}
+      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Neues Mitarbeiter-Onboarding</DialogTitle>
+            <DialogDescription>Erfassen Sie die Daten des neuen Mitarbeiters</DialogDescription>
+          </DialogHeader>
+          
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Vorname *</Label>
+                <Input 
+                  value={newRequest.first_name}
+                  onChange={(e) => setNewRequest({...newRequest, first_name: e.target.value})}
+                  placeholder="Max"
+                />
+              </div>
+              <div>
+                <Label>Nachname *</Label>
+                <Input 
+                  value={newRequest.last_name}
+                  onChange={(e) => setNewRequest({...newRequest, last_name: e.target.value})}
+                  placeholder="Mustermann"
+                />
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Startdatum *</Label>
+                <Input 
+                  type="date"
+                  value={newRequest.start_date}
+                  onChange={(e) => setNewRequest({...newRequest, start_date: e.target.value})}
+                />
+              </div>
+              <div>
+                <Label>Organisation *</Label>
+                <Select value={newRequest.organization_id} onValueChange={(v) => setNewRequest({...newRequest, organization_id: v})}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Auswählen..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {organizations.map((org) => (
+                      <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Position</Label>
+                <Input 
+                  value={newRequest.job_title}
+                  onChange={(e) => setNewRequest({...newRequest, job_title: e.target.value})}
+                  placeholder="Software Developer"
+                />
+              </div>
+              <div>
+                <Label>Abteilung</Label>
+                <Input 
+                  value={newRequest.department}
+                  onChange={(e) => setNewRequest({...newRequest, department: e.target.value})}
+                  placeholder="IT"
+                />
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Vorgesetzter Name</Label>
+                <Input 
+                  value={newRequest.manager_name}
+                  onChange={(e) => setNewRequest({...newRequest, manager_name: e.target.value})}
+                />
+              </div>
+              <div>
+                <Label>Vorgesetzter E-Mail</Label>
+                <Input 
+                  type="email"
+                  value={newRequest.manager_email}
+                  onChange={(e) => setNewRequest({...newRequest, manager_email: e.target.value})}
+                />
+              </div>
+            </div>
+            
+            <Separator />
+            
+            <h4 className="font-medium">IT-Anforderungen</h4>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Arbeitsort</Label>
+                <Select value={newRequest.location} onValueChange={(v) => setNewRequest({...newRequest, location: v})}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="office">Büro</SelectItem>
+                    <SelectItem value="remote">Remote</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Microsoft 365 Lizenz</Label>
+                <Select value={newRequest.m365_license_type} onValueChange={(v) => setNewRequest({...newRequest, m365_license_type: v})}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="e1">E1</SelectItem>
+                    <SelectItem value="e3">E3</SelectItem>
+                    <SelectItem value="e5">E5</SelectItem>
+                    <SelectItem value="f3">F3</SelectItem>
+                    <SelectItem value="business_basic">Business Basic</SelectItem>
+                    <SelectItem value="business_standard">Business Standard</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-4 gap-4">
+              <div className="flex items-center space-x-2">
+                <Switch 
+                  checked={newRequest.needs_email}
+                  onCheckedChange={(v) => setNewRequest({...newRequest, needs_email: v})}
+                />
+                <Label>E-Mail</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Switch 
+                  checked={newRequest.needs_teams}
+                  onCheckedChange={(v) => setNewRequest({...newRequest, needs_teams: v})}
+                />
+                <Label>Teams</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Switch 
+                  checked={newRequest.needs_sharepoint}
+                  onCheckedChange={(v) => setNewRequest({...newRequest, needs_sharepoint: v})}
+                />
+                <Label>SharePoint</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Switch 
+                  checked={newRequest.vpn_required}
+                  onCheckedChange={(v) => setNewRequest({...newRequest, vpn_required: v})}
+                />
+                <Label>VPN</Label>
+              </div>
+            </div>
+            
+            <div>
+              <Label>Besondere Anforderungen</Label>
+              <Textarea 
+                value={newRequest.special_requirements}
+                onChange={(e) => setNewRequest({...newRequest, special_requirements: e.target.value})}
+                placeholder="Z.B. spezielle Software, Zugriffsrechte, Hardware..."
+                rows={3}
+              />
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewDialog(false)}>Abbrechen</Button>
+            <Button onClick={handleCreateOnboarding}>
+              <UserPlus className="w-4 h-4 mr-2" />
+              Onboarding starten
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Request Detail Dialog */}
+      {selectedRequest && (
+        <Dialog open={!!selectedRequest} onOpenChange={() => setSelectedRequest(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{selectedRequest.first_name} {selectedRequest.last_name}</DialogTitle>
+              <DialogDescription>Onboarding-Details</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div><span className="text-muted-foreground">Position:</span> {selectedRequest.job_title || '-'}</div>
+                <div><span className="text-muted-foreground">Abteilung:</span> {selectedRequest.department || '-'}</div>
+                <div><span className="text-muted-foreground">Startdatum:</span> {new Date(selectedRequest.start_date).toLocaleDateString('de-DE')}</div>
+                <div><span className="text-muted-foreground">Arbeitsort:</span> {selectedRequest.location}</div>
+                <div><span className="text-muted-foreground">M365 Lizenz:</span> {selectedRequest.m365_license_type?.toUpperCase()}</div>
+                <div><span className="text-muted-foreground">Status:</span> <Badge className={getStatusColor(selectedRequest.status)}>{getStatusLabel(selectedRequest.status)}</Badge></div>
+              </div>
+              
+              {selectedRequest.special_requirements && (
+                <div>
+                  <h4 className="font-medium mb-2">Besondere Anforderungen</h4>
+                  <p className="text-sm bg-slate-50 p-3 rounded">{selectedRequest.special_requirements}</p>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSelectedRequest(null)}>Schließen</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+// ============================================
+// KNOWLEDGE BASE PAGE
+// ============================================
+
+function KnowledgeBasePage({ currentUser }) {
+  const [articles, setArticles] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedArticle, setSelectedArticle] = useState(null)
+  const [showNewDialog, setShowNewDialog] = useState(false)
+  const [newArticle, setNewArticle] = useState({
+    title: '', content: '', category: '', tags: '', is_internal: true
+  })
+  
+  useEffect(() => {
+    loadArticles()
+  }, [])
+  
+  const loadArticles = async () => {
+    setLoading(true)
+    const data = await api.fetch('/kb-articles')
+    setArticles(Array.isArray(data) ? data : [])
+    setLoading(false)
+  }
+  
+  const handleCreateArticle = async () => {
+    if (!newArticle.title || !newArticle.content) {
+      toast.error('Titel und Inhalt sind erforderlich')
+      return
+    }
+    
+    try {
+      await api.fetch('/kb-articles', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...newArticle,
+          tags: newArticle.tags ? newArticle.tags.split(',').map(t => t.trim()) : [],
+          created_by_id: currentUser?.id
+        })
+      })
+      toast.success('Artikel erstellt')
+      setShowNewDialog(false)
+      setNewArticle({ title: '', content: '', category: '', tags: '', is_internal: true })
+      loadArticles()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen')
+    }
+  }
+  
+  const filteredArticles = articles.filter(a => 
+    a.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    a.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    a.category?.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+  
+  return (
+    <div className="p-6">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Wissensdatenbank</h1>
+          <p className="text-muted-foreground">Lösungen, Anleitungen und Best Practices</p>
+        </div>
+        <Button onClick={() => setShowNewDialog(true)}>
+          <Plus className="w-4 h-4 mr-2" />
+          Neuer Artikel
+        </Button>
+      </div>
+      
+      <div className="mb-6">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input 
+            placeholder="Suchen..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </div>
+      
+      {loading ? (
+        <div className="text-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto" />
+        </div>
+      ) : filteredArticles.length === 0 ? (
+        <Card className="p-12 text-center">
+          <BookOpen className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
+          <h3 className="text-lg font-medium mb-2">Keine Artikel gefunden</h3>
+          <p className="text-muted-foreground mb-4">Erstellen Sie den ersten Wissensartikel</p>
+          <Button onClick={() => setShowNewDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Artikel erstellen
+          </Button>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {filteredArticles.map((article) => (
+            <Card 
+              key={article.id} 
+              className="cursor-pointer hover:shadow-md transition-shadow"
+              onClick={() => setSelectedArticle(article)}
+            >
+              <CardHeader>
+                <div className="flex items-start justify-between">
+                  <CardTitle className="text-lg">{article.title}</CardTitle>
+                  {article.is_internal && (
+                    <Badge variant="outline" className="text-xs">Intern</Badge>
+                  )}
+                </div>
+                {article.category && (
+                  <Badge className="w-fit bg-blue-100 text-blue-700">{article.category}</Badge>
+                )}
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground line-clamp-3">
+                  {article.content?.substring(0, 150)}...
+                </p>
+                <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
+                  <span>{new Date(article.created_at).toLocaleDateString('de-DE')}</span>
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-3 h-3" /> {article.views || 0}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+      
+      {/* New Article Dialog */}
+      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Neuer Wissensartikel</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div>
+              <Label>Titel *</Label>
+              <Input 
+                value={newArticle.title}
+                onChange={(e) => setNewArticle({...newArticle, title: e.target.value})}
+                placeholder="Wie man..."
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Kategorie</Label>
+                <Input 
+                  value={newArticle.category}
+                  onChange={(e) => setNewArticle({...newArticle, category: e.target.value})}
+                  placeholder="Z.B. Netzwerk, Office 365"
+                />
+              </div>
+              <div>
+                <Label>Tags (kommagetrennt)</Label>
+                <Input 
+                  value={newArticle.tags}
+                  onChange={(e) => setNewArticle({...newArticle, tags: e.target.value})}
+                  placeholder="vpn, remote, zugang"
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Inhalt *</Label>
+              <Textarea 
+                value={newArticle.content}
+                onChange={(e) => setNewArticle({...newArticle, content: e.target.value})}
+                placeholder="Beschreiben Sie die Lösung..."
+                rows={10}
+              />
+            </div>
+            <div className="flex items-center space-x-2">
+              <Switch 
+                checked={newArticle.is_internal}
+                onCheckedChange={(v) => setNewArticle({...newArticle, is_internal: v})}
+              />
+              <Label>Nur für interne Nutzung</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewDialog(false)}>Abbrechen</Button>
+            <Button onClick={handleCreateArticle}>Erstellen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Article Detail Dialog */}
+      {selectedArticle && (
+        <Dialog open={!!selectedArticle} onOpenChange={() => setSelectedArticle(null)}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{selectedArticle.title}</DialogTitle>
+              <div className="flex items-center gap-2 mt-2">
+                {selectedArticle.category && (
+                  <Badge className="bg-blue-100 text-blue-700">{selectedArticle.category}</Badge>
+                )}
+                {selectedArticle.is_internal && (
+                  <Badge variant="outline">Intern</Badge>
+                )}
+              </div>
+            </DialogHeader>
+            <div className="py-4">
+              <div className="prose prose-sm max-w-none whitespace-pre-wrap">
+                {selectedArticle.content}
+              </div>
+              
+              {selectedArticle.tags?.length > 0 && (
+                <div className="mt-6 pt-4 border-t">
+                  <h4 className="font-medium mb-2">Tags</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedArticle.tags.map((tag, idx) => (
+                      <Badge key={idx} variant="outline">{tag}</Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSelectedArticle(null)}>Schließen</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+// ============================================
 // SETTINGS PAGE
 // ============================================
 

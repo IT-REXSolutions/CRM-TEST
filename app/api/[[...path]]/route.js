@@ -6925,14 +6925,20 @@ async function handleCheckExpiringAssets(params) {
     const futureDate = new Date()
     futureDate.setDate(futureDate.getDate() + daysAhead)
     
+    // Get all assets and filter in memory since warranty_end might not exist
     const { data: assets, error } = await supabaseAdmin
       .from('assets')
       .select('*, asset_types(name), organizations(name)')
-      .lte('warranty_end', futureDate.toISOString())
-      .gte('warranty_end', new Date().toISOString())
-      .order('warranty_end', { ascending: true })
+      .order('created_at', { ascending: false })
     
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    
+    // Filter assets with expiring warranties or licenses (if column exists)
+    const expiringAssets = (assets || []).filter(asset => {
+      if (!asset.warranty_expiry && !asset.license_expiry) return false
+      const expiryDate = new Date(asset.warranty_expiry || asset.license_expiry)
+      return expiryDate <= futureDate && expiryDate >= new Date()
+    })
     
     // Group by days remaining
     const grouped = {
@@ -6941,8 +6947,9 @@ async function handleCheckExpiringAssets(params) {
       upcoming: [], // 14-30 days
     }
     
-    for (const asset of assets || []) {
-      const daysRemaining = Math.ceil((new Date(asset.warranty_end) - new Date()) / (1000 * 60 * 60 * 24))
+    for (const asset of expiringAssets) {
+      const expiryDate = new Date(asset.warranty_expiry || asset.license_expiry)
+      const daysRemaining = Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24))
       asset.days_remaining = daysRemaining
       
       if (daysRemaining < 7) grouped.critical.push(asset)
@@ -6951,7 +6958,7 @@ async function handleCheckExpiringAssets(params) {
     }
     
     return NextResponse.json({
-      total: assets?.length || 0,
+      total: expiringAssets.length,
       ...grouped,
     })
   } catch (error) {

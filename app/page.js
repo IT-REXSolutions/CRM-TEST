@@ -242,6 +242,28 @@ const api = {
   createTag: (data) => api.fetch('/tags', { method: 'POST', body: JSON.stringify(data) }),
   updateTag: (id, data) => api.fetch(`/tags/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTag: (id) => api.fetch(`/tags/${id}`, { method: 'DELETE' }),
+  
+  // Dictation (Phase 5)
+  transcribeDictation: (data) => api.fetch('/dictation/transcribe', { method: 'POST', body: JSON.stringify(data) }),
+  dictationCreateTicket: (data) => api.fetch('/dictation/create-ticket', { method: 'POST', body: JSON.stringify(data) }),
+  dictationCreateTask: (data) => api.fetch('/dictation/create-task', { method: 'POST', body: JSON.stringify(data) }),
+  dictationCreateComment: (data) => api.fetch('/dictation/create-comment', { method: 'POST', body: JSON.stringify(data) }),
+  dictationCreateTimeEntry: (data) => api.fetch('/dictation/create-time-entry', { method: 'POST', body: JSON.stringify(data) }),
+  
+  // Invoices (Phase 6)
+  getInvoiceDrafts: (params = {}) => {
+    const query = new URLSearchParams(params).toString()
+    return api.fetch(`/invoice-drafts${query ? `?${query}` : ''}`)
+  },
+  createInvoiceFromTime: (data) => api.fetch('/invoices/create-from-time', { method: 'POST', body: JSON.stringify(data) }),
+  syncInvoiceToLexoffice: (data) => api.fetch('/invoices/sync-lexoffice', { method: 'POST', body: JSON.stringify(data) }),
+  
+  // Automation Engine (Phase 7)
+  runAutomation: (data) => api.fetch('/automations/run', { method: 'POST', body: JSON.stringify(data) }),
+  checkSLA: () => api.fetch('/automations/check-sla', { method: 'POST' }),
+  
+  // AI
+  aiSummarizeCall: (data) => api.fetch('/ai/summarize-call', { method: 'POST', body: JSON.stringify(data) }),
 }
 
 // ============================================

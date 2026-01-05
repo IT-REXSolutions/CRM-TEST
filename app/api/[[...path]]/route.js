@@ -6030,6 +6030,545 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       return handleCORS(await handleLogin(body))
     }
+    if (route === '/auth/password-reset' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handlePasswordReset(body))
+    }
+    if (route === '/auth/password-reset-confirm' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handlePasswordResetConfirm(body))
+    }
+    
+    // --- M365 OAUTH FOR CUSTOMERS ---
+    if (route === '/auth/m365/login' && method === 'GET') {
+      // Generate M365 OAuth URL for customer login
+      const clientId = await getSetting('m365_client_id')
+      if (!clientId) {
+        return handleCORS(NextResponse.json({ error: 'M365 OAuth nicht konfiguriert' }, { status: 400 }))
+      }
+      const state = Buffer.from(JSON.stringify({ action: 'login', timestamp: Date.now() })).toString('base64')
+      const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/api/auth/m365/callback`
+      const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+        `client_id=${clientId}` +
+        `&response_type=code` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=${encodeURIComponent('openid profile email User.Read')}` +
+        `&state=${state}` +
+        `&prompt=select_account`
+      return handleCORS(NextResponse.json({ url: authUrl }))
+    }
+    
+    if (route === '/auth/m365/register' && method === 'GET') {
+      // Generate M365 OAuth URL for customer registration
+      const clientId = await getSetting('m365_client_id')
+      if (!clientId) {
+        return handleCORS(NextResponse.json({ error: 'M365 OAuth nicht konfiguriert' }, { status: 400 }))
+      }
+      const state = Buffer.from(JSON.stringify({ action: 'register', timestamp: Date.now() })).toString('base64')
+      const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/api/auth/m365/callback`
+      const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+        `client_id=${clientId}` +
+        `&response_type=code` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=${encodeURIComponent('openid profile email User.Read')}` +
+        `&state=${state}` +
+        `&prompt=select_account`
+      return handleCORS(NextResponse.json({ url: authUrl }))
+    }
+    
+    if (route === '/auth/m365/callback' && method === 'GET') {
+      // Handle M365 OAuth callback for customer login/register
+      const code = searchParams.code
+      const state = searchParams.state
+      const error = searchParams.error
+      
+      if (error) {
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?error=oauth_${error}`)
+      }
+      
+      if (!code) {
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?error=no_code`)
+      }
+      
+      let stateData = { action: 'login' }
+      try {
+        stateData = JSON.parse(Buffer.from(state || '', 'base64').toString())
+      } catch {}
+      
+      const clientId = await getSetting('m365_client_id')
+      const clientSecret = await getSetting('m365_client_secret')
+      const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/api/auth/m365/callback`
+      
+      try {
+        // Exchange code for tokens
+        const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }),
+        })
+        
+        const tokens = await tokenResponse.json()
+        if (tokens.error) {
+          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?error=token_${tokens.error}`)
+        }
+        
+        // Get user info from Microsoft Graph
+        const graphResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+          headers: { Authorization: `Bearer ${tokens.access_token}` }
+        })
+        const graphUser = await graphResponse.json()
+        
+        const email = graphUser.mail || graphUser.userPrincipalName
+        const firstName = graphUser.givenName || email.split('@')[0]
+        const lastName = graphUser.surname || ''
+        const azureId = graphUser.id
+        const domain = email.split('@')[1]
+        
+        // Check if user exists
+        const { data: existingUser } = await supabaseAdmin
+          .from('users')
+          .select('*')
+          .eq('email', email.toLowerCase())
+          .single()
+        
+        if (existingUser) {
+          // Update azure_id if not set
+          if (!existingUser.azure_id) {
+            await supabaseAdmin
+              .from('users')
+              .update({ azure_id: azureId })
+              .eq('id', existingUser.id)
+          }
+          // Redirect with user session token
+          const sessionToken = Buffer.from(JSON.stringify({
+            user_id: existingUser.id,
+            email: existingUser.email,
+            exp: Date.now() + 24 * 60 * 60 * 1000
+          })).toString('base64')
+          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?auth_token=${sessionToken}`)
+        }
+        
+        // New user - check domain rules for organization assignment
+        const { data: domainRule } = await supabaseAdmin
+          .from('organizations')
+          .select('id, name')
+          .eq('domain', domain)
+          .single()
+        
+        let organizationId = domainRule?.id || null
+        let assignmentStatus = domainRule ? 'assigned' : 'unassigned'
+        
+        // Get customer role
+        const { data: customerRole } = await supabaseAdmin
+          .from('roles')
+          .select('id')
+          .eq('name', 'customer')
+          .single()
+        
+        // Create new user
+        const newUserId = uuidv4()
+        const { data: newUser, error: createError } = await supabaseAdmin
+          .from('users')
+          .insert([{
+            id: newUserId,
+            email: email.toLowerCase(),
+            first_name: firstName,
+            last_name: lastName,
+            name: `${firstName} ${lastName}`.trim(),
+            user_type: 'customer',
+            role_id: customerRole?.id,
+            organization_id: organizationId,
+            azure_id: azureId,
+            is_active: true,
+            oauth_provider: 'm365',
+            assignment_status: assignmentStatus,
+          }])
+          .select()
+          .single()
+        
+        if (createError) {
+          console.error('User creation error:', createError)
+          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?error=create_failed`)
+        }
+        
+        // Also create contact if organization assigned
+        if (organizationId) {
+          await supabaseAdmin.from('contacts').insert([{
+            id: uuidv4(),
+            organization_id: organizationId,
+            first_name: firstName,
+            last_name: lastName,
+            email: email.toLowerCase(),
+            user_id: newUserId,
+            azure_id: azureId,
+          }])
+        }
+        
+        // Log the registration
+        await supabaseAdmin.from('ticket_history').insert([{
+          id: uuidv4(),
+          ticket_id: null,
+          change_type: 'user_oauth_register',
+          new_value: JSON.stringify({ email, provider: 'm365', organization_id: organizationId, assignment_status: assignmentStatus }),
+          changed_by_id: newUserId,
+          created_at: new Date().toISOString(),
+        }])
+        
+        const sessionToken = Buffer.from(JSON.stringify({
+          user_id: newUserId,
+          email: email.toLowerCase(),
+          exp: Date.now() + 24 * 60 * 60 * 1000
+        })).toString('base64')
+        
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?auth_token=${sessionToken}&new_user=true&assignment=${assignmentStatus}`)
+        
+      } catch (err) {
+        console.error('M365 OAuth error:', err)
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}?error=oauth_failed`)
+      }
+    }
+    
+    // --- M365 EMAIL INTEGRATION (Graph API) ---
+    if (route === '/m365/email/connect' && method === 'POST') {
+      // Connect M365 mailbox for email integration
+      const body = await request.json()
+      const { organization_id, mailbox_email, user_id } = body
+      
+      const clientId = await getSetting('m365_client_id')
+      if (!clientId) {
+        return handleCORS(NextResponse.json({ error: 'M365 nicht konfiguriert' }, { status: 400 }))
+      }
+      
+      const state = Buffer.from(JSON.stringify({ 
+        action: 'email_connect', 
+        organization_id, 
+        mailbox_email,
+        user_id,
+        timestamp: Date.now() 
+      })).toString('base64')
+      
+      const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/api/m365/email/callback`
+      const scopes = 'openid profile email Mail.Read Mail.ReadWrite Mail.Send offline_access'
+      
+      const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+        `client_id=${clientId}` +
+        `&response_type=code` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=${encodeURIComponent(scopes)}` +
+        `&state=${state}` +
+        `&prompt=consent`
+      
+      return handleCORS(NextResponse.json({ url: authUrl }))
+    }
+    
+    if (route === '/m365/email/callback' && method === 'GET') {
+      const code = searchParams.code
+      const state = searchParams.state
+      
+      if (!code) {
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/settings?tab=email&error=no_code`)
+      }
+      
+      let stateData = {}
+      try {
+        stateData = JSON.parse(Buffer.from(state || '', 'base64').toString())
+      } catch {}
+      
+      const clientId = await getSetting('m365_client_id')
+      const clientSecret = await getSetting('m365_client_secret')
+      const redirectUri = `${process.env.NEXT_PUBLIC_BASE_URL}/api/m365/email/callback`
+      
+      try {
+        const tokenResponse = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code',
+          }),
+        })
+        
+        const tokens = await tokenResponse.json()
+        if (tokens.error) {
+          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/settings?tab=email&error=token_${tokens.error}`)
+        }
+        
+        // Get mailbox info
+        const graphResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+          headers: { Authorization: `Bearer ${tokens.access_token}` }
+        })
+        const mailboxInfo = await graphResponse.json()
+        
+        // Store email connection - encrypt tokens
+        const encryptedAccess = Buffer.from(tokens.access_token).toString('base64')
+        const encryptedRefresh = Buffer.from(tokens.refresh_token || '').toString('base64')
+        
+        const { data: connection, error } = await supabaseAdmin
+          .from('m365_connections')
+          .insert([{
+            id: uuidv4(),
+            organization_id: stateData.organization_id,
+            tenant_id: mailboxInfo.id,
+            tenant_name: mailboxInfo.mail || mailboxInfo.userPrincipalName,
+            access_token: encryptedAccess,
+            refresh_token: encryptedRefresh,
+            token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+            scopes: ['Mail.Read', 'Mail.ReadWrite', 'Mail.Send'],
+            is_active: true,
+            connected_by_id: stateData.user_id,
+            connection_type: 'email',
+          }])
+          .select()
+          .single()
+        
+        if (error) {
+          return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/settings?tab=email&error=save_failed`)
+        }
+        
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/settings?tab=email&success=connected`)
+        
+      } catch (err) {
+        console.error('M365 email connect error:', err)
+        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/settings?tab=email&error=connect_failed`)
+      }
+    }
+    
+    if (route === '/m365/email/fetch' && method === 'POST') {
+      // Fetch emails from connected M365 mailbox
+      const body = await request.json()
+      const { connection_id, folder, limit } = body
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', connection_id)
+        .eq('connection_type', 'email')
+        .single()
+      
+      if (!connection || !connection.access_token) {
+        return handleCORS(NextResponse.json({ error: 'Keine gültige Verbindung' }, { status: 400 }))
+      }
+      
+      // Check if token needs refresh
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        // Refresh token
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token-Refresh fehlgeschlagen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        const graphUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/${folder || 'inbox'}/messages?$top=${limit || 50}&$orderby=receivedDateTime desc`
+        const response = await fetch(graphUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const emails = await response.json()
+        
+        return handleCORS(NextResponse.json({
+          emails: emails.value || [],
+          nextLink: emails['@odata.nextLink'],
+        }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    if (route === '/m365/email/send' && method === 'POST') {
+      // Send email via M365 Graph API
+      const body = await request.json()
+      const { connection_id, to, subject, body: emailBody, ticket_id } = body
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', connection_id)
+        .eq('connection_type', 'email')
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Keine gültige Verbindung' }, { status: 400 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token-Refresh fehlgeschlagen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: {
+              subject,
+              body: { contentType: 'HTML', content: emailBody },
+              toRecipients: [{ emailAddress: { address: to } }],
+            },
+            saveToSentItems: true,
+          }),
+        })
+        
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error?.message || 'Send failed')
+        }
+        
+        // Log the email
+        await supabaseAdmin.from('comm_log').insert([{
+          id: uuidv4(),
+          recipient_email: to,
+          subject,
+          body: emailBody,
+          ticket_id,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        }])
+        
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    if (route === '/m365/email/process-inbox' && method === 'POST') {
+      // Process emails and create tickets
+      const body = await request.json()
+      const { connection_id } = body
+      
+      // Fetch unread emails
+      const fetchResult = await (await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/m365/email/fetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id, folder: 'inbox', limit: 20 }),
+      })).json()
+      
+      if (fetchResult.error) {
+        return handleCORS(NextResponse.json({ error: fetchResult.error }, { status: 500 }))
+      }
+      
+      const processedEmails = []
+      
+      for (const email of (fetchResult.emails || [])) {
+        if (!email.isRead) {
+          // Check if email is a reply to existing ticket
+          const subjectMatch = email.subject?.match(/#(\d+)/i)
+          let ticketId = null
+          
+          if (subjectMatch) {
+            const { data: existingTicket } = await supabaseAdmin
+              .from('tickets')
+              .select('id')
+              .eq('ticket_number', parseInt(subjectMatch[1]))
+              .single()
+            ticketId = existingTicket?.id
+          }
+          
+          // Find or create contact based on sender
+          const senderEmail = email.from?.emailAddress?.address
+          const senderName = email.from?.emailAddress?.name || senderEmail
+          
+          let contactId = null
+          let organizationId = null
+          
+          if (senderEmail) {
+            const { data: existingContact } = await supabaseAdmin
+              .from('contacts')
+              .select('id, organization_id')
+              .eq('email', senderEmail.toLowerCase())
+              .single()
+            
+            if (existingContact) {
+              contactId = existingContact.id
+              organizationId = existingContact.organization_id
+            } else {
+              // Check domain for organization mapping
+              const domain = senderEmail.split('@')[1]
+              const { data: org } = await supabaseAdmin
+                .from('organizations')
+                .select('id')
+                .eq('domain', domain)
+                .single()
+              organizationId = org?.id
+            }
+          }
+          
+          if (ticketId) {
+            // Add comment to existing ticket
+            await supabaseAdmin.from('ticket_comments').insert([{
+              id: uuidv4(),
+              ticket_id: ticketId,
+              content: email.body?.content || email.bodyPreview,
+              is_internal: false,
+              source: 'email',
+              created_at: new Date(email.receivedDateTime).toISOString(),
+            }])
+            processedEmails.push({ email_id: email.id, action: 'comment_added', ticket_id: ticketId })
+          } else {
+            // Create new ticket
+            const ticketNumber = await getNextTicketNumber()
+            const { data: newTicket } = await supabaseAdmin
+              .from('tickets')
+              .insert([{
+                id: uuidv4(),
+                ticket_number: ticketNumber,
+                subject: email.subject || 'E-Mail Anfrage',
+                description: email.body?.content || email.bodyPreview,
+                status: 'open',
+                priority: 'medium',
+                organization_id: organizationId,
+                contact_id: contactId,
+                source: 'email',
+                created_at: new Date(email.receivedDateTime).toISOString(),
+              }])
+              .select()
+              .single()
+            
+            processedEmails.push({ email_id: email.id, action: 'ticket_created', ticket_id: newTicket?.id })
+          }
+          
+          // Store in conversations
+          await supabaseAdmin.from('conversations').insert([{
+            id: uuidv4(),
+            channel: 'email',
+            channel_id: email.id,
+            from_address: senderEmail,
+            from_name: senderName,
+            subject: email.subject,
+            body: email.body?.content || email.bodyPreview,
+            ticket_id: ticketId || processedEmails[processedEmails.length - 1]?.ticket_id,
+            organization_id: organizationId,
+            contact_id: contactId,
+            status: 'processed',
+            is_inbound: true,
+            created_at: new Date(email.receivedDateTime).toISOString(),
+          }])
+        }
+      }
+      
+      return handleCORS(NextResponse.json({ 
+        processed: processedEmails.length,
+        results: processedEmails,
+      }))
+    }
     
     // --- USERS ---
     if (route === '/users' && method === 'GET') {

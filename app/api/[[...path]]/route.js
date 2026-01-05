@@ -11132,6 +11132,28 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleDeleteLocation(id))
     }
     
+    // --- DEALS / CRM PIPELINE ---
+    if (route === '/deals' && method === 'GET') {
+      return handleCORS(await handleGetDeals(searchParams))
+    }
+    if (route === '/deals' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateDeal(body))
+    }
+    if (route.match(/^\/deals\/[^/]+$/) && method === 'GET') {
+      const id = path[1]
+      return handleCORS(await handleGetDeal(id))
+    }
+    if (route.match(/^\/deals\/[^/]+$/) && method === 'PUT') {
+      const id = path[1]
+      const body = await request.json()
+      return handleCORS(await handleUpdateDeal(id, body))
+    }
+    if (route.match(/^\/deals\/[^/]+$/) && method === 'DELETE') {
+      const id = path[1]
+      return handleCORS(await handleDeleteDeal(id))
+    }
+    
     // --- SLA PROFILES ---
     if (route === '/sla-profiles' && method === 'GET') {
       return handleCORS(await handleGetSLAProfiles())

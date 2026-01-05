@@ -1778,7 +1778,7 @@ async function handleUpdateSetting(body) {
     .from('settings')
     .upsert({
       key,
-      value: typeof value === 'string' ? value : JSON.stringify(value),
+      value: value, // Store as-is, the frontend already sends JSON strings
       category: settingCategory,
       updated_at: new Date().toISOString(),
       updated_by_id: userId || null,
@@ -1786,8 +1786,14 @@ async function handleUpdateSetting(body) {
     .select()
     .single()
   
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+  // Clear settings cache
+  clearSettingsCache()
+  
+  if (error) {
+    console.error('Settings update error:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json(data || {})
 }
 
 async function handleBulkUpdateSettings(body) {

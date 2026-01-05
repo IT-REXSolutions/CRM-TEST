@@ -6304,7 +6304,7 @@ async function handleRoute(request, { params }) {
     
     // --- TEMPLATES ---
     if (route === '/templates' && method === 'GET') {
-      return handleCORS(await handleGetTemplates())
+      return handleCORS(await handleGetTemplates(searchParams))
     }
     if (route === '/templates' && method === 'POST') {
       const body = await request.json()

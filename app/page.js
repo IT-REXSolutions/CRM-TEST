@@ -5147,8 +5147,8 @@ function KnowledgeBasePage({ currentUser }) {
                       Bearbeiten
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => handleDeleteArticle(selectedArticle.id)}>
-                      <Archive className="w-4 h-4 mr-1" />
-                      Archivieren
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      Löschen
                     </Button>
                   </div>
                 )}

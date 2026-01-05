@@ -8010,6 +8010,624 @@ async function handleRoute(request, { params }) {
       }))
     }
     
+    // ============================================================
+    // M365 MAILBOX MANAGEMENT - Extended APIs
+    // ============================================================
+    
+    // Get all connected mailboxes with status
+    if (route === '/m365/mailboxes' && method === 'GET') {
+      const { data: mailboxes, error } = await supabaseAdmin
+        .from('m365_connections')
+        .select(`
+          id, tenant_name, organization_id, is_active, connection_type,
+          token_expires_at, scopes, connected_by_id, created_at,
+          mailbox_type, display_name, unread_count, last_sync_at, 
+          auto_ticket_create, default_queue, default_priority, default_sla_id,
+          organizations (name)
+        `)
+        .eq('connection_type', 'email')
+        .order('created_at', { ascending: false })
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      
+      // Enrich with status info
+      const enrichedMailboxes = mailboxes.map(mb => ({
+        ...mb,
+        email: mb.tenant_name,
+        status: mb.is_active ? (new Date(mb.token_expires_at) > new Date() ? 'connected' : 'token_expired') : 'disconnected',
+        organization_name: mb.organizations?.name,
+      }))
+      
+      return handleCORS(NextResponse.json(enrichedMailboxes))
+    }
+    
+    // Get single mailbox details
+    if (route.match(/^\/m365\/mailboxes\/[^/]+$/) && method === 'GET') {
+      const mailboxId = route.split('/')[3]
+      
+      const { data: mailbox, error } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailboxId)
+        .eq('connection_type', 'email')
+        .single()
+      
+      if (error || !mailbox) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      return handleCORS(NextResponse.json({
+        ...mailbox,
+        status: mailbox.is_active ? (new Date(mailbox.token_expires_at) > new Date() ? 'connected' : 'token_expired') : 'disconnected',
+      }))
+    }
+    
+    // Update mailbox settings (rules, auto-ticket, etc.)
+    if (route.match(/^\/m365\/mailboxes\/[^/]+$/) && method === 'PUT') {
+      const mailboxId = route.split('/')[3]
+      const body = await request.json()
+      
+      const allowedFields = [
+        'display_name', 'mailbox_type', 'auto_ticket_create', 
+        'default_queue', 'default_priority', 'default_sla_id',
+        'is_active', 'organization_id'
+      ]
+      
+      const updateData = {}
+      for (const field of allowedFields) {
+        if (body[field] !== undefined) updateData[field] = body[field]
+      }
+      updateData.updated_at = new Date().toISOString()
+      
+      const { error } = await supabaseAdmin
+        .from('m365_connections')
+        .update(updateData)
+        .eq('id', mailboxId)
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json({ success: true }))
+    }
+    
+    // Disconnect/delete mailbox
+    if (route.match(/^\/m365\/mailboxes\/[^/]+$/) && method === 'DELETE') {
+      const mailboxId = route.split('/')[3]
+      
+      const { error } = await supabaseAdmin
+        .from('m365_connections')
+        .delete()
+        .eq('id', mailboxId)
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json({ success: true }))
+    }
+    
+    // Get mailbox folders
+    if (route.match(/^\/m365\/mailboxes\/[^/]+\/folders$/) && method === 'GET') {
+      const mailboxId = route.split('/')[3]
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailboxId)
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token abgelaufen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        const response = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders?$top=100', {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const folders = await response.json()
+        return handleCORS(NextResponse.json(folders.value || []))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    // Get emails from specific mailbox (Inbox Visualization)
+    if (route.match(/^\/m365\/mailboxes\/[^/]+\/messages$/) && method === 'GET') {
+      const mailboxId = route.split('/')[3]
+      const folder = searchParams.folder || 'inbox'
+      const limit = parseInt(searchParams.limit) || 50
+      const skip = parseInt(searchParams.skip) || 0
+      const filter = searchParams.filter // 'unread', 'flagged', 'hasAttachments'
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailboxId)
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token abgelaufen', needs_reauth: true }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        let filterQuery = ''
+        if (filter === 'unread') filterQuery = '&$filter=isRead eq false'
+        else if (filter === 'flagged') filterQuery = '&$filter=flag/flagStatus eq \'flagged\''
+        else if (filter === 'hasAttachments') filterQuery = '&$filter=hasAttachments eq true'
+        
+        const graphUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/${folder}/messages?$top=${limit}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,from,toRecipients,receivedDateTime,isRead,hasAttachments,flag,importance,conversationId${filterQuery}`
+        
+        const response = await fetch(graphUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const result = await response.json()
+        
+        if (result.error) {
+          throw new Error(result.error.message)
+        }
+        
+        // Update last sync timestamp
+        await supabaseAdmin
+          .from('m365_connections')
+          .update({ last_sync_at: new Date().toISOString() })
+          .eq('id', mailboxId)
+        
+        // Count unread
+        const unreadResponse = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${folder}?$select=unreadItemCount`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const unreadData = await unreadResponse.json()
+        
+        // Update unread count in DB
+        if (unreadData.unreadItemCount !== undefined) {
+          await supabaseAdmin
+            .from('m365_connections')
+            .update({ unread_count: unreadData.unreadItemCount })
+            .eq('id', mailboxId)
+        }
+        
+        return handleCORS(NextResponse.json({
+          messages: result.value || [],
+          nextLink: result['@odata.nextLink'],
+          unreadCount: unreadData.unreadItemCount || 0,
+          totalCount: result['@odata.count'],
+        }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    // Get single email with full body
+    if (route.match(/^\/m365\/mailboxes\/[^/]+\/messages\/[^/]+$/) && method === 'GET') {
+      const mailboxId = route.split('/')[3]
+      const messageId = route.split('/')[5]
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailboxId)
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token abgelaufen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}?$expand=attachments`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const message = await response.json()
+        
+        if (message.error) {
+          throw new Error(message.error.message)
+        }
+        
+        return handleCORS(NextResponse.json(message))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    // Mark email as read/unread
+    if (route.match(/^\/m365\/mailboxes\/[^/]+\/messages\/[^/]+\/read$/) && method === 'POST') {
+      const mailboxId = route.split('/')[3]
+      const messageId = route.split('/')[5]
+      const body = await request.json()
+      const isRead = body.isRead !== false
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailboxId)
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token abgelaufen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}`, {
+          method: 'PATCH',
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ isRead })
+        })
+        
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error?.message || 'Update fehlgeschlagen')
+        }
+        
+        return handleCORS(NextResponse.json({ success: true }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    // Convert email to ticket
+    if (route.match(/^\/m365\/mailboxes\/[^/]+\/messages\/[^/]+\/to-ticket$/) && method === 'POST') {
+      const mailboxId = route.split('/')[3]
+      const messageId = route.split('/')[5]
+      const body = await request.json()
+      const { priority, queue, sla_id, created_by_id } = body
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailboxId)
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token abgelaufen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      try {
+        // Get full email
+        const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const email = await response.json()
+        
+        if (email.error) {
+          throw new Error(email.error.message)
+        }
+        
+        const senderEmail = email.from?.emailAddress?.address
+        const senderName = email.from?.emailAddress?.name || senderEmail
+        
+        // Find contact/org
+        let contactId = null
+        let organizationId = connection.organization_id
+        
+        if (senderEmail) {
+          const { data: existingContact } = await supabaseAdmin
+            .from('contacts')
+            .select('id, organization_id')
+            .eq('email', senderEmail.toLowerCase())
+            .single()
+          
+          if (existingContact) {
+            contactId = existingContact.id
+            organizationId = existingContact.organization_id || organizationId
+          } else {
+            // Check domain
+            const domain = senderEmail.split('@')[1]
+            const { data: org } = await supabaseAdmin
+              .from('organizations')
+              .select('id')
+              .eq('domain', domain)
+              .single()
+            if (org) organizationId = org.id
+          }
+        }
+        
+        // Create ticket
+        const ticketNumber = await getNextTicketNumber()
+        const { data: newTicket, error } = await supabaseAdmin
+          .from('tickets')
+          .insert([{
+            id: uuidv4(),
+            ticket_number: ticketNumber,
+            subject: email.subject || 'E-Mail Anfrage',
+            description: email.body?.content || email.bodyPreview,
+            status: 'open',
+            priority: priority || connection.default_priority || 'medium',
+            organization_id: organizationId,
+            contact_id: contactId,
+            source: 'email',
+            sla_profile_id: sla_id || connection.default_sla_id,
+            assigned_queue: queue || connection.default_queue,
+            created_by_id,
+            created_at: new Date(email.receivedDateTime).toISOString(),
+          }])
+          .select()
+          .single()
+        
+        if (error) throw new Error(error.message)
+        
+        // Store conversation link
+        await supabaseAdmin.from('conversations').insert([{
+          id: uuidv4(),
+          channel: 'email',
+          channel_id: messageId,
+          from_address: senderEmail,
+          from_name: senderName,
+          subject: email.subject,
+          body: email.body?.content || email.bodyPreview,
+          ticket_id: newTicket.id,
+          organization_id: organizationId,
+          contact_id: contactId,
+          mailbox_id: mailboxId,
+          status: 'processed',
+          is_inbound: true,
+          created_at: new Date(email.receivedDateTime).toISOString(),
+        }])
+        
+        // Mark email as read
+        await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}`, {
+          method: 'PATCH',
+          headers: { 
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ isRead: true })
+        })
+        
+        return handleCORS(NextResponse.json({ 
+          success: true, 
+          ticket: newTicket,
+          ticket_number: ticketNumber
+        }))
+      } catch (err) {
+        return handleCORS(NextResponse.json({ error: err.message }, { status: 500 }))
+      }
+    }
+    
+    // Email Migration - Start migration job
+    if (route === '/m365/mailboxes/migrate' && method === 'POST') {
+      const body = await request.json()
+      const { mailbox_id, folder, date_from, date_to, limit } = body
+      
+      const { data: connection } = await supabaseAdmin
+        .from('m365_connections')
+        .select('*')
+        .eq('id', mailbox_id)
+        .single()
+      
+      if (!connection) {
+        return handleCORS(NextResponse.json({ error: 'Mailbox nicht gefunden' }, { status: 404 }))
+      }
+      
+      let accessToken = Buffer.from(connection.access_token, 'base64').toString()
+      if (new Date(connection.token_expires_at) < new Date()) {
+        const refreshResult = await refreshM365Token(connection.id)
+        if (!refreshResult.success) {
+          return handleCORS(NextResponse.json({ error: 'Token abgelaufen' }, { status: 401 }))
+        }
+        accessToken = refreshResult.access_token
+      }
+      
+      // Create migration job
+      const jobId = uuidv4()
+      await supabaseAdmin.from('migration_jobs').insert([{
+        id: jobId,
+        mailbox_id,
+        status: 'running',
+        total_emails: 0,
+        processed_emails: 0,
+        created_tickets: 0,
+        errors: [],
+        started_at: new Date().toISOString(),
+      }])
+      
+      // Start migration (in a simplified sync way - in production this should be a background job)
+      try {
+        let filterQuery = ''
+        if (date_from) filterQuery += `receivedDateTime ge ${date_from}T00:00:00Z`
+        if (date_to) filterQuery += `${filterQuery ? ' and ' : ''}receivedDateTime le ${date_to}T23:59:59Z`
+        
+        const graphUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/${folder || 'inbox'}/messages?$top=${limit || 100}&$orderby=receivedDateTime desc${filterQuery ? '&$filter=' + encodeURIComponent(filterQuery) : ''}`
+        
+        const response = await fetch(graphUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        const result = await response.json()
+        
+        const emails = result.value || []
+        let processed = 0
+        let created = 0
+        const errors = []
+        
+        await supabaseAdmin.from('migration_jobs').update({ total_emails: emails.length }).eq('id', jobId)
+        
+        for (const email of emails) {
+          try {
+            // Check if already migrated
+            const { data: existing } = await supabaseAdmin
+              .from('conversations')
+              .select('id')
+              .eq('channel_id', email.id)
+              .single()
+            
+            if (!existing) {
+              const senderEmail = email.from?.emailAddress?.address
+              
+              // Find org by domain
+              let organizationId = connection.organization_id
+              if (senderEmail) {
+                const domain = senderEmail.split('@')[1]
+                const { data: org } = await supabaseAdmin
+                  .from('organizations')
+                  .select('id')
+                  .eq('domain', domain)
+                  .single()
+                if (org) organizationId = org.id
+              }
+              
+              // Create ticket
+              const ticketNumber = await getNextTicketNumber()
+              const { data: newTicket } = await supabaseAdmin
+                .from('tickets')
+                .insert([{
+                  id: uuidv4(),
+                  ticket_number: ticketNumber,
+                  subject: email.subject || 'Migrierte E-Mail',
+                  description: email.bodyPreview || '',
+                  status: 'closed',
+                  priority: 'medium',
+                  organization_id: organizationId,
+                  source: 'email_migration',
+                  created_at: new Date(email.receivedDateTime).toISOString(),
+                  closed_at: new Date().toISOString(),
+                }])
+                .select()
+                .single()
+              
+              // Store conversation
+              await supabaseAdmin.from('conversations').insert([{
+                id: uuidv4(),
+                channel: 'email',
+                channel_id: email.id,
+                from_address: senderEmail,
+                from_name: email.from?.emailAddress?.name,
+                subject: email.subject,
+                body: email.bodyPreview,
+                ticket_id: newTicket?.id,
+                organization_id: organizationId,
+                mailbox_id: mailbox_id,
+                status: 'migrated',
+                is_inbound: true,
+                created_at: new Date(email.receivedDateTime).toISOString(),
+              }])
+              
+              created++
+            }
+            processed++
+            
+            // Update progress
+            if (processed % 10 === 0) {
+              await supabaseAdmin.from('migration_jobs').update({ 
+                processed_emails: processed,
+                created_tickets: created 
+              }).eq('id', jobId)
+            }
+          } catch (err) {
+            errors.push({ email_id: email.id, error: err.message })
+          }
+        }
+        
+        // Complete job
+        await supabaseAdmin.from('migration_jobs').update({
+          status: 'completed',
+          processed_emails: processed,
+          created_tickets: created,
+          errors,
+          completed_at: new Date().toISOString(),
+        }).eq('id', jobId)
+        
+        return handleCORS(NextResponse.json({
+          job_id: jobId,
+          status: 'completed',
+          total: emails.length,
+          processed,
+          created_tickets: created,
+          errors: errors.length,
+        }))
+      } catch (err) {
+        await supabaseAdmin.from('migration_jobs').update({
+          status: 'failed',
+          errors: [{ error: err.message }],
+        }).eq('id', jobId)
+        
+        return handleCORS(NextResponse.json({ error: err.message, job_id: jobId }, { status: 500 }))
+      }
+    }
+    
+    // Get migration job status
+    if (route.match(/^\/m365\/mailboxes\/migrate\/[^/]+$/) && method === 'GET') {
+      const jobId = route.split('/')[4]
+      
+      const { data: job, error } = await supabaseAdmin
+        .from('migration_jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single()
+      
+      if (error || !job) {
+        return handleCORS(NextResponse.json({ error: 'Job nicht gefunden' }, { status: 404 }))
+      }
+      
+      return handleCORS(NextResponse.json(job))
+    }
+    
+    // Get mailbox dashboard stats
+    if (route === '/m365/dashboard' && method === 'GET') {
+      const { data: mailboxes } = await supabaseAdmin
+        .from('m365_connections')
+        .select('id, tenant_name, display_name, is_active, token_expires_at, unread_count, last_sync_at, mailbox_type')
+        .eq('connection_type', 'email')
+      
+      const stats = {
+        total_mailboxes: mailboxes?.length || 0,
+        active_mailboxes: mailboxes?.filter(m => m.is_active && new Date(m.token_expires_at) > new Date()).length || 0,
+        expired_tokens: mailboxes?.filter(m => new Date(m.token_expires_at) <= new Date()).length || 0,
+        total_unread: mailboxes?.reduce((sum, m) => sum + (m.unread_count || 0), 0) || 0,
+        mailboxes: mailboxes?.map(m => ({
+          id: m.id,
+          email: m.tenant_name,
+          display_name: m.display_name || m.tenant_name,
+          type: m.mailbox_type || 'user',
+          status: m.is_active ? (new Date(m.token_expires_at) > new Date() ? 'connected' : 'token_expired') : 'disconnected',
+          unread_count: m.unread_count || 0,
+          last_sync: m.last_sync_at,
+        })) || [],
+      }
+      
+      return handleCORS(NextResponse.json(stats))
+    }
+    
     // --- USERS ---
     if (route === '/users' && method === 'GET') {
       return handleCORS(await handleGetUsers(searchParams))

@@ -1804,8 +1804,8 @@ async function handleUpdateSetting(body) {
   clearSettingsCache()
   
   if (error) {
-    console.error('Settings update error:', error.message, error.details)
-    return NextResponse.json({ error: error.message, details: error.details }, { status: 500 })
+    console.error('Settings update error:', JSON.stringify(error))
+    return NextResponse.json({ error: error.message || 'Unknown error', details: error }, { status: 500 })
   }
   
   return NextResponse.json(data?.[0] || { success: true })

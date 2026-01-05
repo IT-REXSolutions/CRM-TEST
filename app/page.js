@@ -3528,116 +3528,202 @@ function InboxPage({ currentUser }) {
               </div>
               
               {/* Conversation Detail */}
-        <div className="lg:col-span-2">
-          {selectedConversation ? (
-            <Card>
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle>{selectedConversation.subject || '(Kein Betreff)'}</CardTitle>
-                    <CardDescription>
-                      Von: {selectedConversation.from_name || selectedConversation.from_address} • 
-                      {new Date(selectedConversation.created_at).toLocaleString('de-DE')}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    {!selectedConversation.ticket_id && (
-                      <>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => handleClassify(selectedConversation)}
-                          disabled={classifying}
-                        >
-                          {classifying ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Brain className="w-4 h-4 mr-2" />}
-                          KI-Klassifizierung
-                        </Button>
-                        <Button 
-                          size="sm"
-                          onClick={() => handleCreateTicket(selectedConversation)}
-                        >
-                          <Plus className="w-4 h-4 mr-2" />
-                          Ticket erstellen
-                        </Button>
-                      </>
-                    )}
-                    {selectedConversation.ticket_id && (
-                      <Badge className="bg-green-100 text-green-700">
-                        <CheckCircle2 className="w-3 h-3 mr-1" />
-                        Ticket verknüpft
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {selectedConversation.ai_classification && Object.keys(selectedConversation.ai_classification).length > 0 && (
-                  <div className="mb-4 p-4 bg-purple-50 rounded-lg">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Sparkles className="w-4 h-4 text-purple-600" />
-                      <span className="font-medium text-purple-700">KI-Analyse</span>
+              <div className="lg:col-span-2">
+                {selectedConversation ? (
+                  <Card>
+                    <CardHeader>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <CardTitle>{selectedConversation.subject || '(Kein Betreff)'}</CardTitle>
+                          <CardDescription>
+                            Von: {selectedConversation.from_name || selectedConversation.from_address} • 
+                            {new Date(selectedConversation.created_at).toLocaleString('de-DE')}
+                          </CardDescription>
+                        </div>
+                        <div className="flex gap-2">
+                          {!selectedConversation.ticket_id && (
+                            <>
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => handleClassify(selectedConversation)}
+                                disabled={classifying}
+                              >
+                                {classifying ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Brain className="w-4 h-4 mr-2" />}
+                                KI-Klassifizierung
+                              </Button>
+                              <Button 
+                                size="sm"
+                                onClick={() => handleCreateTicket(selectedConversation)}
+                              >
+                                <Plus className="w-4 h-4 mr-2" />
+                                Ticket erstellen
+                              </Button>
+                            </>
+                          )}
+                          {selectedConversation.ticket_id && (
+                            <Badge className="bg-green-100 text-green-700">
+                              <CheckCircle2 className="w-3 h-3 mr-1" />
+                              Ticket verknüpft
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {selectedConversation.ai_classification && Object.keys(selectedConversation.ai_classification).length > 0 && (
+                        <div className="mb-4 p-4 bg-purple-50 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Sparkles className="w-4 h-4 text-purple-600" />
+                            <span className="font-medium text-purple-700">KI-Analyse</span>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">Typ:</span>
+                              <Badge className={`ml-2 ${getTypeColor(selectedConversation.ai_classification.type)}`}>
+                                {selectedConversation.ai_classification.type}
+                              </Badge>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Priorität:</span>
+                              <Badge className={`ml-2 ${PRIORITY_COLORS[selectedConversation.ai_classification.priority] || ''}`}>
+                                {PRIORITY_LABELS[selectedConversation.ai_classification.priority] || selectedConversation.ai_classification.priority}
+                              </Badge>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Konfidenz:</span>
+                              <span className="ml-2 font-medium">{Math.round((selectedConversation.ai_classification.confidence || 0) * 100)}%</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Queue:</span>
+                              <span className="ml-2">{selectedConversation.ai_classification.suggested_queue || '-'}</span>
+                            </div>
+                          </div>
+                          {selectedConversation.ai_classification.suggested_response && (
+                            <div className="mt-3 pt-3 border-t border-purple-200">
+                              <span className="text-muted-foreground text-sm">Vorgeschlagene Antwort:</span>
+                              <p className="mt-1 text-sm">{selectedConversation.ai_classification.suggested_response}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      <div className="prose prose-sm max-w-none">
+                        <div className="whitespace-pre-wrap bg-white border rounded-lg p-4">
+                          {selectedConversation.body}
+                        </div>
+                      </div>
+                      
+                      {selectedConversation.attachments?.length > 0 && (
+                        <div className="mt-4">
+                          <h4 className="font-medium mb-2">Anhänge</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {selectedConversation.attachments.map((att, idx) => (
+                              <Badge key={idx} variant="outline" className="cursor-pointer">
+                                <FileText className="w-3 h-3 mr-1" />
+                                {att.name || `Anhang ${idx + 1}`}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card className="h-[calc(100vh-320px)] flex items-center justify-center">
+                    <div className="text-center text-muted-foreground">
+                      <Mail className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                      <p>Wählen Sie eine Nachricht aus der Liste</p>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Typ:</span>
-                        <Badge className={`ml-2 ${getTypeColor(selectedConversation.ai_classification.type)}`}>
-                          {selectedConversation.ai_classification.type}
-                        </Badge>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Priorität:</span>
-                        <Badge className={`ml-2 ${PRIORITY_COLORS[selectedConversation.ai_classification.priority] || ''}`}>
-                          {PRIORITY_LABELS[selectedConversation.ai_classification.priority] || selectedConversation.ai_classification.priority}
-                        </Badge>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Konfidenz:</span>
-                        <span className="ml-2 font-medium">{Math.round((selectedConversation.ai_classification.confidence || 0) * 100)}%</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Queue:</span>
-                        <span className="ml-2">{selectedConversation.ai_classification.suggested_queue || '-'}</span>
-                      </div>
-                    </div>
-                    {selectedConversation.ai_classification.suggested_response && (
-                      <div className="mt-3 pt-3 border-t border-purple-200">
-                        <span className="text-muted-foreground text-sm">Vorgeschlagene Antwort:</span>
-                        <p className="mt-1 text-sm">{selectedConversation.ai_classification.suggested_response}</p>
-                      </div>
-                    )}
-                  </div>
+                  </Card>
                 )}
-                
-                <div className="prose prose-sm max-w-none">
-                  <div className="whitespace-pre-wrap bg-white border rounded-lg p-4">
-                    {selectedConversation.body}
-                  </div>
-                </div>
-                
-                {selectedConversation.attachments?.length > 0 && (
-                  <div className="mt-4">
-                    <h4 className="font-medium mb-2">Anhänge</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedConversation.attachments.map((att, idx) => (
-                        <Badge key={idx} variant="outline" className="cursor-pointer">
-                          <FileText className="w-3 h-3 mr-1" />
-                          {att.name || `Anhang ${idx + 1}`}
-                        </Badge>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* M365 Mailbox View */
+          <div className="p-6 flex-1 overflow-auto">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h1 className="text-2xl font-bold">{selectedMailbox?.display_name || selectedMailbox?.email}</h1>
+                <p className="text-muted-foreground">{selectedMailbox?.email}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => loadMailboxEmails(selectedMailbox?.id)}>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Aktualisieren
+                </Button>
+              </div>
+            </div>
+            
+            <Card>
+              <CardContent className="p-0">
+                <ScrollArea className="h-[calc(100vh-240px)]">
+                  {loadingEmails ? (
+                    <div className="p-8 text-center">
+                      <Loader2 className="w-8 h-8 animate-spin mx-auto" />
+                      <p className="mt-2 text-muted-foreground">E-Mails werden geladen...</p>
+                    </div>
+                  ) : mailboxEmails.length === 0 ? (
+                    <div className="p-8 text-center text-muted-foreground">
+                      <Inbox className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>Keine E-Mails vorhanden</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {mailboxEmails.map((email) => (
+                        <div
+                          key={email.id}
+                          className={`p-4 hover:bg-slate-50 cursor-pointer ${!email.isRead ? 'bg-blue-50' : ''}`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className={`mt-1 ${!email.isRead ? 'text-blue-600' : 'text-slate-400'}`}>
+                              <Mail className="w-5 h-5" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className={`font-medium truncate ${!email.isRead ? 'font-semibold' : ''}`}>
+                                  {email.from?.emailAddress?.name || email.from?.emailAddress?.address || 'Unbekannt'}
+                                </span>
+                                {!email.isRead && <Badge className="bg-blue-500 text-white text-xs">Neu</Badge>}
+                                {email.hasAttachments && <Paperclip className="w-4 h-4 text-slate-400" />}
+                                {email.importance === 'high' && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                              </div>
+                              <p className={`text-sm truncate ${!email.isRead ? 'font-medium' : ''}`}>{email.subject || '(Kein Betreff)'}</p>
+                              <p className="text-xs text-muted-foreground truncate mt-1">{email.bodyPreview?.substring(0, 120)}...</p>
+                              <div className="flex items-center gap-2 mt-2">
+                                <span className="text-xs text-muted-foreground">
+                                  {new Date(email.receivedDateTime).toLocaleString('de-DE')}
+                                </span>
+                                <div className="flex gap-1 ml-auto">
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={(e) => { e.stopPropagation(); handleMarkAsRead(email, !email.isRead); }}
+                                  >
+                                    {email.isRead ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={(e) => { e.stopPropagation(); handleEmailToTicket(email); }}
+                                  >
+                                    <Plus className="w-4 h-4" />
+                                    Ticket
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </ScrollArea>
               </CardContent>
             </Card>
-          ) : (
-            <Card className="h-[calc(100vh-200px)] flex items-center justify-center">
-              <div className="text-center text-muted-foreground">
-                <Mail className="w-16 h-16 mx-auto mb-4 opacity-30" />
-                <p>Wählen Sie eine Nachricht aus der Liste</p>
-              </div>
-            </Card>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -749,6 +749,31 @@ function LoginPage({ onLogin }) {
           
           <Separator className="my-4" />
           
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500 text-center mb-2">Oder anmelden mit:</p>
+            <Button 
+              variant="outline" 
+              className="w-full"
+              onClick={async () => {
+                try {
+                  const { url } = await api.fetch('/auth/m365/login')
+                  if (url) window.location.href = url
+                  else toast.error('M365 OAuth nicht konfiguriert')
+                } catch { toast.error('M365 OAuth nicht verfügbar') }
+              }}
+            >
+              <svg className="w-5 h-5 mr-2" viewBox="0 0 21 21" fill="none">
+                <path d="M10 0H0v10h10V0z" fill="#f25022"/>
+                <path d="M21 0H11v10h10V0z" fill="#7fba00"/>
+                <path d="M10 11H0v10h10V11z" fill="#00a4ef"/>
+                <path d="M21 11H11v10h10V11z" fill="#ffb900"/>
+              </svg>
+              Mit Microsoft 365 anmelden
+            </Button>
+          </div>
+          
+          <Separator className="my-4" />
+          
           <div className="text-sm text-slate-500 text-center">
             <p className="mb-2">Demo-Accounts:</p>
             <Button variant="outline" size="sm" className="mr-2" onClick={() => setEmail('admin@servicedesk.de')}>

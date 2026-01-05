@@ -9651,6 +9651,176 @@ async function handleRoute(request, { params }) {
       return handleCORS(NextResponse.json(stats))
     }
     
+    // ============================================================
+    // WIKI / KNOWLEDGE BASE ROUTES
+    // ============================================================
+    
+    // Wiki Spaces
+    if (route === '/wiki/spaces' && method === 'GET') {
+      // Extract user from auth header if present
+      const user = await getUserFromRequest(request)
+      const orgId = searchParams.organization_id
+      return handleCORS(await handleGetWikiSpaces(user, orgId))
+    }
+    
+    if (route === '/wiki/spaces' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateWikiSpace(body))
+    }
+    
+    if (route.match(/^\/wiki\/spaces\/[^/]+$/) && method === 'GET') {
+      const spaceId = path[2]
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleGetWikiSpace(spaceId, user))
+    }
+    
+    // Wiki Categories
+    if (route.match(/^\/wiki\/spaces\/[^/]+\/categories$/) && method === 'GET') {
+      const spaceId = path[2]
+      return handleCORS(await handleGetWikiCategories(spaceId))
+    }
+    
+    if (route === '/wiki/categories' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateWikiCategory(body))
+    }
+    
+    // Wiki Pages
+    if (route.match(/^\/wiki\/spaces\/[^/]+\/pages$/) && method === 'GET') {
+      const spaceId = path[2]
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleGetWikiPages(spaceId, Object.fromEntries(url.searchParams), user))
+    }
+    
+    if (route === '/wiki/pages' && method === 'POST') {
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleCreateWikiPage(body, user))
+    }
+    
+    if (route.match(/^\/wiki\/pages\/[^/]+$/) && method === 'GET') {
+      const pageIdOrSlug = path[2]
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleGetWikiPage(pageIdOrSlug, user))
+    }
+    
+    if (route.match(/^\/wiki\/pages\/[^/]+$/) && method === 'PUT') {
+      const pageId = path[2]
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleUpdateWikiPage(pageId, body, user))
+    }
+    
+    if (route.match(/^\/wiki\/pages\/[^/]+$/) && method === 'DELETE') {
+      const pageId = path[2]
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleDeleteWikiPage(pageId, user))
+    }
+    
+    // Wiki Page Versions
+    if (route.match(/^\/wiki\/pages\/[^/]+\/versions$/) && method === 'GET') {
+      const pageId = path[2]
+      return handleCORS(await handleGetWikiPageVersions(pageId))
+    }
+    
+    if (route.match(/^\/wiki\/pages\/[^/]+\/versions\/[^/]+\/restore$/) && method === 'POST') {
+      const pageId = path[2]
+      const versionId = path[4]
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleRestoreWikiPageVersion(pageId, versionId, user))
+    }
+    
+    // Wiki Search
+    if (route === '/wiki/search' && method === 'GET') {
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleSearchWiki(Object.fromEntries(url.searchParams), user))
+    }
+    
+    // ============================================================
+    // CUSTOM FIELDS ROUTES
+    // ============================================================
+    
+    // Custom Field Definitions
+    if (route === '/custom-fields' && method === 'GET') {
+      return handleCORS(await handleGetCustomFields(Object.fromEntries(url.searchParams)))
+    }
+    
+    if (route === '/custom-fields' && method === 'POST') {
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleCreateCustomField(body, user))
+    }
+    
+    if (route.match(/^\/custom-fields\/[^/]+$/) && method === 'PUT') {
+      const fieldId = path[1]
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleUpdateCustomField(fieldId, body, user))
+    }
+    
+    if (route.match(/^\/custom-fields\/[^/]+$/) && method === 'DELETE') {
+      const fieldId = path[1]
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleDeleteCustomField(fieldId, user))
+    }
+    
+    // Custom Field Values
+    if (route.match(/^\/custom-field-values\/[^/]+\/[^/]+$/) && method === 'GET') {
+      const entityType = path[1]
+      const entityId = path[2]
+      return handleCORS(await handleGetCustomFieldValues(entityType, entityId))
+    }
+    
+    if (route === '/custom-field-values' && method === 'POST') {
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleSetCustomFieldValue(body, user))
+    }
+    
+    // ============================================================
+    // FORM BUILDER ROUTES
+    // ============================================================
+    
+    if (route === '/forms' && method === 'GET') {
+      return handleCORS(await handleGetForms(Object.fromEntries(url.searchParams)))
+    }
+    
+    if (route === '/forms' && method === 'POST') {
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleCreateForm(body, user))
+    }
+    
+    if (route.match(/^\/forms\/[^/]+$/) && method === 'GET') {
+      const formId = path[1]
+      return handleCORS(await handleGetForm(formId))
+    }
+    
+    if (route.match(/^\/forms\/[^/]+$/) && method === 'PUT') {
+      const formId = path[1]
+      const body = await request.json()
+      const user = await getUserFromRequest(request)
+      return handleCORS(await handleUpdateForm(formId, body, user))
+    }
+    
+    if (route.match(/^\/forms\/[^/]+$/) && method === 'DELETE') {
+      const formId = path[1]
+      return handleCORS(await handleDeleteForm(formId))
+    }
+    
+    // Form Fields
+    if (route === '/form-fields' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleAddFormField(body))
+    }
+    
+    // Effective Form (for rendering)
+    if (route.match(/^\/forms\/effective\/[^/]+\/[^/]+$/) && method === 'GET') {
+      const formType = path[2]
+      const entityType = path[3]
+      return handleCORS(await handleGetEffectiveForm(formType, entityType, Object.fromEntries(url.searchParams)))
+    }
+    
     // --- USERS ---
     if (route === '/users' && method === 'GET') {
       return handleCORS(await handleGetUsers(searchParams))

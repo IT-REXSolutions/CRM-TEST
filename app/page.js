@@ -2793,6 +2793,7 @@ function ReportsPage() {
         <TabsList>
           <TabsTrigger value="tickets"><Ticket className="h-4 w-4 mr-2" />Tickets</TabsTrigger>
           <TabsTrigger value="time"><Clock className="h-4 w-4 mr-2" />Zeiterfassung</TabsTrigger>
+          <TabsTrigger value="onboarding"><UserPlus className="h-4 w-4 mr-2" />On-/Offboarding</TabsTrigger>
           <TabsTrigger value="sla"><TrendingUp className="h-4 w-4 mr-2" />SLA</TabsTrigger>
           <TabsTrigger value="assets"><Package className="h-4 w-4 mr-2" />Assets</TabsTrigger>
         </TabsList>

@@ -4424,13 +4424,13 @@ function keywordClassification(text) {
   const lowerText = text.toLowerCase()
   
   const typeKeywords = {
-    onboarding: ['neuer mitarbeiter', 'new starter', 'einstellung', 'onboarding', 'neuer kollege', 'anfangen', 'eintritt'],
-    offboarding: ['kündigung', 'ausscheiden', 'letzter tag', 'offboarding', 'verlässt', 'austritt', 'ausscheidet'],
-    support: ['hilfe', 'problem', 'fehler', 'funktioniert nicht', 'geht nicht', 'support', 'defekt', 'kaputt'],
-    order: ['bestellen', 'bestellung', 'kaufen', 'anschaffen', 'beschaffen', 'hardware', 'lizenz', 'laptop', 'pc'],
-    lead: ['anfrage', 'interesse', 'angebot', 'preise', 'kosten', 'beratung'],
-    project: ['projekt', 'migration', 'umstellung', 'rollout', 'implementierung'],
-    invoice: ['rechnung', 'invoice', 'zahlung', 'kosten', 'abrechnung'],
+    onboarding: ['neuer mitarbeiter', 'neue mitarbeiterin', 'new starter', 'einstellung', 'onboarding', 'neuer kollege', 'neue kollegin', 'anfängt', 'anfangen', 'eintritt', 'einstellen', 'eingestellt'],
+    offboarding: ['kündigung', 'ausscheiden', 'letzter tag', 'offboarding', 'verlässt', 'austritt', 'ausscheidet', 'gekündigt', 'entlassen'],
+    support: ['hilfe', 'problem', 'fehler', 'funktioniert nicht', 'geht nicht', 'support', 'defekt', 'kaputt', 'hängt', 'abstürzt', 'langsam', 'virus', 'passwort vergessen'],
+    order: ['bestellen', 'bestellung', 'kaufen', 'anschaffen', 'beschaffen', 'neuen laptop', 'neuer pc', 'neue lizenz', 'upgrade'],
+    lead: ['anfrage', 'interesse', 'angebot', 'preise', 'kosten', 'beratung', 'informationen'],
+    project: ['projekt', 'migration', 'umstellung', 'rollout', 'implementierung', 'einführung'],
+    invoice: ['rechnung', 'invoice', 'zahlung', 'kosten', 'abrechnung', 'gutschrift'],
   }
   
   const priorityKeywords = {

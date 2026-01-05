@@ -10851,10 +10851,17 @@ async function handleRoute(request, { params }) {
       const id = path[1]
       const userId = searchParams.user_id
       
-      // Soft delete - set is_archived flag
+      // Get article info for audit log
+      const { data: article } = await supabaseAdmin
+        .from('kb_articles')
+        .select('title')
+        .eq('id', id)
+        .single()
+      
+      // Hard delete
       const { error } = await supabaseAdmin
         .from('kb_articles')
-        .update({ is_archived: true, updated_at: new Date().toISOString() })
+        .delete()
         .eq('id', id)
       
       if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
@@ -10863,8 +10870,8 @@ async function handleRoute(request, { params }) {
       await supabaseAdmin.from('ticket_history').insert([{
         id: uuidv4(),
         ticket_id: null,
-        change_type: 'kb_article_archived',
-        new_value: JSON.stringify({ article_id: id }),
+        change_type: 'kb_article_deleted',
+        old_value: JSON.stringify({ article_id: id, title: article?.title }),
         changed_by_id: userId,
         created_at: new Date().toISOString(),
       }])

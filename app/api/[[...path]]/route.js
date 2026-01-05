@@ -6781,6 +6781,130 @@ async function handleRoute(request, { params }) {
       }))
     }
     
+    // =============================================
+    // H) BACKUP & AUDIT ROUTES
+    // =============================================
+    
+    if (route === '/backup' && method === 'GET') {
+      // Export all data for backup
+      const [
+        tickets, organizations, contacts, users, assets,
+        timeEntries, settings, automations, templates,
+        kbArticles, onboardingRequests
+      ] = await Promise.all([
+        supabaseAdmin.from('tickets').select('*'),
+        supabaseAdmin.from('organizations').select('*'),
+        supabaseAdmin.from('contacts').select('*'),
+        supabaseAdmin.from('users').select('id, email, first_name, last_name, user_type, role_id'),
+        supabaseAdmin.from('assets').select('*'),
+        supabaseAdmin.from('time_entries').select('*'),
+        supabaseAdmin.from('settings').select('*'),
+        supabaseAdmin.from('automations').select('*'),
+        supabaseAdmin.from('templates').select('*'),
+        supabaseAdmin.from('kb_articles').select('*'),
+        supabaseAdmin.from('onboarding_requests').select('*'),
+      ])
+      
+      const backup = {
+        version: '2.0.0',
+        created_at: new Date().toISOString(),
+        data: {
+          tickets: tickets.data || [],
+          organizations: organizations.data || [],
+          contacts: contacts.data || [],
+          users: users.data || [],
+          assets: assets.data || [],
+          time_entries: timeEntries.data || [],
+          settings: settings.data || [],
+          automations: automations.data || [],
+          templates: templates.data || [],
+          kb_articles: kbArticles.data || [],
+          onboarding_requests: onboardingRequests.data || [],
+        },
+        counts: {
+          tickets: tickets.data?.length || 0,
+          organizations: organizations.data?.length || 0,
+          contacts: contacts.data?.length || 0,
+          users: users.data?.length || 0,
+          assets: assets.data?.length || 0,
+          time_entries: timeEntries.data?.length || 0,
+          settings: settings.data?.length || 0,
+          automations: automations.data?.length || 0,
+          templates: templates.data?.length || 0,
+          kb_articles: kbArticles.data?.length || 0,
+          onboarding_requests: onboardingRequests.data?.length || 0,
+        }
+      }
+      
+      return handleCORS(NextResponse.json(backup))
+    }
+    
+    if (route === '/backup' && method === 'POST') {
+      // Create scheduled backup entry
+      const body = await request.json()
+      const { name, schedule } = body
+      
+      const { data, error } = await supabaseAdmin
+        .from('settings')
+        .upsert([{
+          key: 'last_backup',
+          value: JSON.stringify({
+            name: name || `Backup ${new Date().toISOString()}`,
+            created_at: new Date().toISOString(),
+            schedule: schedule || 'manual',
+          }),
+          category: 'backup',
+        }], { onConflict: 'key' })
+        .select()
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json({ success: true, message: 'Backup erfolgreich erstellt' }))
+    }
+    
+    if (route === '/audit-log' && method === 'GET') {
+      const { entity_type, entity_id, user_id, limit } = searchParams
+      
+      let query = supabaseAdmin
+        .from('ticket_history')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(parseInt(limit) || 100)
+      
+      if (entity_id) query = query.eq('ticket_id', entity_id)
+      if (user_id) query = query.eq('changed_by_id', user_id)
+      
+      const { data, error } = await query
+      
+      if (error) {
+        if (error.code === '42P01') return handleCORS(NextResponse.json([]))
+        return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      }
+      return handleCORS(NextResponse.json(data || []))
+    }
+    
+    if (route === '/audit-log' && method === 'POST') {
+      const body = await request.json()
+      const { entity_type, entity_id, action, old_value, new_value, user_id, ip_address } = body
+      
+      const { data, error } = await supabaseAdmin
+        .from('ticket_history')
+        .insert([{
+          id: uuidv4(),
+          ticket_id: entity_id,
+          change_type: action,
+          old_value: JSON.stringify(old_value),
+          new_value: JSON.stringify(new_value),
+          changed_by_id: user_id,
+          ip_address,
+          created_at: new Date().toISOString(),
+        }])
+        .select()
+        .single()
+      
+      if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
+      return handleCORS(NextResponse.json(data))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

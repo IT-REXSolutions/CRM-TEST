@@ -3520,6 +3520,687 @@ function CreateTimeEntryForm({ tickets, organizations, onSubmit, onCancel }) {
 }
 
 // ============================================
+// CHATWOOT PAGE (Embedded Omnichannel)
+// ============================================
+
+function ChatwootPage({ currentUser }) {
+  const [chatwootUrl, setChatwootUrl] = useState('')
+  const [ssoUrl, setSsoUrl] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [configured, setConfigured] = useState(false)
+  
+  useEffect(() => {
+    loadChatwootSettings()
+  }, [currentUser])
+  
+  const loadChatwootSettings = async () => {
+    setLoading(true)
+    try {
+      // Get Chatwoot settings
+      const settings = await api.getSettings()
+      const url = settings.find(s => s.key === 'chatwoot_api_url')?.value
+      const enabled = settings.find(s => s.key === 'chatwoot_enabled')?.value
+      
+      if (url && enabled === 'true') {
+        setChatwootUrl(url)
+        setConfigured(true)
+        
+        // Get SSO URL if user is logged in
+        if (currentUser?.id) {
+          try {
+            const ssoResult = await api.fetch(`/chatwoot/sso?user_id=${currentUser.id}`)
+            if (ssoResult.embed_url) {
+              setSsoUrl(ssoResult.embed_url)
+            }
+          } catch (e) {
+            // SSO not configured, use direct URL
+            setSsoUrl(`${url}/app/accounts/1/dashboard`)
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Chatwoot settings error:', error)
+    }
+    setLoading(false)
+  }
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+      </div>
+    )
+  }
+  
+  if (!configured) {
+    return (
+      <div className="p-6">
+        <Card className="max-w-2xl mx-auto">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-orange-100 rounded-lg">
+                <MessageSquare className="h-8 w-8 text-orange-600" />
+              </div>
+              <div>
+                <CardTitle>Chatwoot Integration</CardTitle>
+                <CardDescription>Omnichannel-Kommunikation (WhatsApp, Chat, E-Mail)</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                <div>
+                  <h4 className="font-medium text-amber-800">Nicht konfiguriert</h4>
+                  <p className="text-sm text-amber-700 mt-1">
+                    Chatwoot ist noch nicht eingerichtet. Bitte konfigurieren Sie die Verbindung in den Einstellungen.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h4 className="font-medium">So richten Sie Chatwoot ein:</h4>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-slate-600">
+                <li>Gehen Sie zu <strong>Einstellungen → Integrationen</strong></li>
+                <li>Aktivieren Sie <strong>Chatwoot</strong></li>
+                <li>Tragen Sie Ihre Chatwoot-URL, Account-ID und API-Token ein</li>
+                <li>Speichern Sie die Einstellungen</li>
+              </ol>
+            </div>
+            <Button onClick={() => window.location.hash = '#settings'} className="w-full">
+              <Settings className="h-4 w-4 mr-2" />
+              Zu den Einstellungen
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+  
+  return (
+    <div className="h-full flex flex-col">
+      <div className="bg-orange-500 text-white px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-5 w-5" />
+          <span className="font-medium">Chatwoot - Omnichannel Inbox</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" className="text-white hover:bg-orange-600" onClick={() => window.open(chatwootUrl, '_blank')}>
+            <ExternalLink className="h-4 w-4 mr-1" />
+            In neuem Tab öffnen
+          </Button>
+          <Button variant="ghost" size="sm" className="text-white hover:bg-orange-600" onClick={loadChatwootSettings}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1">
+        <iframe
+          src={ssoUrl || `${chatwootUrl}/app/accounts/1/dashboard`}
+          className="w-full h-full border-0"
+          title="Chatwoot"
+          allow="microphone; camera; clipboard-write"
+        />
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// CRM - CONTACTS PAGE
+// ============================================
+
+function ContactsPage({ currentUser }) {
+  const [contacts, setContacts] = useState([])
+  const [organizations, setOrganizations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingContact, setEditingContact] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedContact, setSelectedContact] = useState(null)
+  
+  useEffect(() => {
+    loadData()
+  }, [])
+  
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [contactsData, orgsData] = await Promise.all([
+        api.getContacts(),
+        api.getOrganizations()
+      ])
+      setContacts(contactsData || [])
+      setOrganizations(orgsData || [])
+    } catch (error) {
+      toast.error('Fehler beim Laden')
+    }
+    setLoading(false)
+  }
+  
+  const handleCreate = async (data) => {
+    try {
+      await api.createContact(data)
+      toast.success('Kontakt erstellt')
+      setShowCreateDialog(false)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen')
+    }
+  }
+  
+  const handleUpdate = async (data) => {
+    try {
+      await api.updateContact(editingContact.id, data)
+      toast.success('Kontakt aktualisiert')
+      setEditingContact(null)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren')
+    }
+  }
+  
+  const handleDelete = async (id) => {
+    if (!confirm('Kontakt wirklich löschen?')) return
+    try {
+      await api.deleteContact(id)
+      toast.success('Kontakt gelöscht')
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const filteredContacts = contacts.filter(c => 
+    `${c.first_name} ${c.last_name} ${c.email} ${c.phone}`.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+  
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">Kontakte</h1>
+          <p className="text-muted-foreground">CRM-Kontaktverwaltung</p>
+        </div>
+        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+          <DialogTrigger asChild>
+            <Button><Plus className="h-4 w-4 mr-2" />Neuer Kontakt</Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-lg">
+            <DialogHeader><DialogTitle>Neuer Kontakt</DialogTitle></DialogHeader>
+            <CRMContactForm organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+          </DialogContent>
+        </Dialog>
+      </div>
+      
+      <div className="flex gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="Suchen..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </div>
+      
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>E-Mail</TableHead>
+                <TableHead>Telefon</TableHead>
+                <TableHead>Unternehmen</TableHead>
+                <TableHead>Position</TableHead>
+                <TableHead>Lead-Status</TableHead>
+                <TableHead className="w-24">Aktionen</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredContacts.map((contact) => (
+                <TableRow key={contact.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedContact(contact)}>
+                  <TableCell className="font-medium">{contact.first_name} {contact.last_name}</TableCell>
+                  <TableCell>{contact.email || '-'}</TableCell>
+                  <TableCell>{contact.phone || '-'}</TableCell>
+                  <TableCell>{organizations.find(o => o.id === contact.organization_id)?.name || '-'}</TableCell>
+                  <TableCell>{contact.position || '-'}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={
+                      contact.lead_status === 'qualified' ? 'bg-green-100 text-green-700' :
+                      contact.lead_status === 'prospect' ? 'bg-blue-100 text-blue-700' :
+                      contact.lead_status === 'customer' ? 'bg-purple-100 text-purple-700' :
+                      'bg-slate-100'
+                    }>
+                      {contact.lead_status || 'Neu'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => setEditingContact(contact)}>
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(contact.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+      
+      {/* Edit Contact Dialog */}
+      <Dialog open={!!editingContact} onOpenChange={(open) => !open && setEditingContact(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Kontakt bearbeiten</DialogTitle></DialogHeader>
+          {editingContact && (
+            <CRMContactForm 
+              contact={editingContact}
+              organizations={organizations} 
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingContact(null)}
+              isEdit
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* Contact Detail Sidebar */}
+      {selectedContact && (
+        <ContactDetailPanel 
+          contact={selectedContact}
+          organizations={organizations}
+          onClose={() => setSelectedContact(null)}
+          onUpdate={loadData}
+        />
+      )}
+    </div>
+  )
+}
+
+function CRMContactForm({ contact, organizations = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    first_name: contact?.first_name || '',
+    last_name: contact?.last_name || '',
+    email: contact?.email || '',
+    phone: contact?.phone || '',
+    mobile: contact?.mobile || '',
+    organization_id: contact?.organization_id || '',
+    position: contact?.position || '',
+    department: contact?.department || '',
+    lead_status: contact?.lead_status || 'new',
+    source: contact?.source || '',
+    notes: contact?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.first_name || !formData.last_name) {
+      toast.error('Vor- und Nachname sind erforderlich')
+      return
+    }
+    onSubmit({ ...formData, organization_id: formData.organization_id || null })
+  }
+  
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Vorname *</Label><Input value={formData.first_name} onChange={(e) => setFormData(f => ({ ...f, first_name: e.target.value }))} /></div>
+        <div><Label>Nachname *</Label><Input value={formData.last_name} onChange={(e) => setFormData(f => ({ ...f, last_name: e.target.value }))} /></div>
+      </div>
+      <div><Label>E-Mail</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
+        <div><Label>Mobil</Label><Input value={formData.mobile} onChange={(e) => setFormData(f => ({ ...f, mobile: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Unternehmen</Label>
+          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Unternehmen</SelectItem>
+              {organizations.map(org => <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div><Label>Position</Label><Input value={formData.position} onChange={(e) => setFormData(f => ({ ...f, position: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Lead-Status</Label>
+          <Select value={formData.lead_status} onValueChange={(v) => setFormData(f => ({ ...f, lead_status: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="new">Neu</SelectItem>
+              <SelectItem value="prospect">Interessent</SelectItem>
+              <SelectItem value="qualified">Qualifiziert</SelectItem>
+              <SelectItem value="customer">Kunde</SelectItem>
+              <SelectItem value="inactive">Inaktiv</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Quelle</Label>
+          <Select value={formData.source || 'other'} onValueChange={(v) => setFormData(f => ({ ...f, source: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="website">Website</SelectItem>
+              <SelectItem value="referral">Empfehlung</SelectItem>
+              <SelectItem value="event">Veranstaltung</SelectItem>
+              <SelectItem value="cold_call">Kaltakquise</SelectItem>
+              <SelectItem value="social">Social Media</SelectItem>
+              <SelectItem value="other">Sonstige</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div><Label>Notizen</Label><Textarea value={formData.notes} onChange={(e) => setFormData(f => ({ ...f, notes: e.target.value }))} rows={2} /></div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function ContactDetailPanel({ contact, organizations, onClose, onUpdate }) {
+  return (
+    <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-xl border-l z-50 flex flex-col">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="font-semibold">{contact.first_name} {contact.last_name}</h3>
+        <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
+      </div>
+      <div className="flex-1 overflow-auto p-4 space-y-4">
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><Label className="text-slate-500">E-Mail</Label><p>{contact.email || '-'}</p></div>
+          <div><Label className="text-slate-500">Telefon</Label><p>{contact.phone || '-'}</p></div>
+          <div><Label className="text-slate-500">Mobil</Label><p>{contact.mobile || '-'}</p></div>
+          <div><Label className="text-slate-500">Position</Label><p>{contact.position || '-'}</p></div>
+        </div>
+        <div>
+          <Label className="text-slate-500">Unternehmen</Label>
+          <p>{organizations.find(o => o.id === contact.organization_id)?.name || '-'}</p>
+        </div>
+        {contact.notes && (
+          <div>
+            <Label className="text-slate-500">Notizen</Label>
+            <p className="whitespace-pre-wrap text-sm">{contact.notes}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// CRM - COMPANIES PAGE (Uses Organizations)
+// ============================================
+
+function CompaniesPage({ currentUser }) {
+  // Reuse OrganizationsPage but with CRM-focused UI
+  return <OrganizationsPage />
+}
+
+// ============================================
+// CRM - DEALS/PIPELINE PAGE
+// ============================================
+
+function DealsPage({ currentUser }) {
+  const [deals, setDeals] = useState([])
+  const [pipelines, setPipelines] = useState([
+    { id: 'default', name: 'Vertrieb', stages: [
+      { id: 'lead', name: 'Lead', color: 'bg-slate-100' },
+      { id: 'qualified', name: 'Qualifiziert', color: 'bg-blue-100' },
+      { id: 'proposal', name: 'Angebot', color: 'bg-yellow-100' },
+      { id: 'negotiation', name: 'Verhandlung', color: 'bg-orange-100' },
+      { id: 'won', name: 'Gewonnen', color: 'bg-green-100' },
+      { id: 'lost', name: 'Verloren', color: 'bg-red-100' },
+    ]}
+  ])
+  const [loading, setLoading] = useState(true)
+  const [contacts, setContacts] = useState([])
+  const [organizations, setOrganizations] = useState([])
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [selectedPipeline, setSelectedPipeline] = useState('default')
+  
+  useEffect(() => {
+    loadData()
+  }, [])
+  
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [dealsData, contactsData, orgsData] = await Promise.all([
+        api.fetch('/deals').catch(() => []),
+        api.getContacts(),
+        api.getOrganizations()
+      ])
+      setDeals(Array.isArray(dealsData) ? dealsData : [])
+      setContacts(contactsData || [])
+      setOrganizations(orgsData || [])
+    } catch (error) {
+      console.error('Load error:', error)
+    }
+    setLoading(false)
+  }
+  
+  const handleCreateDeal = async (data) => {
+    try {
+      await api.fetch('/deals', { method: 'POST', body: JSON.stringify(data) })
+      toast.success('Deal erstellt')
+      setShowCreateDialog(false)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen')
+    }
+  }
+  
+  const handleMoveDeal = async (dealId, newStage) => {
+    try {
+      await api.fetch(`/deals/${dealId}`, { 
+        method: 'PUT', 
+        body: JSON.stringify({ stage: newStage }) 
+      })
+      setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: newStage } : d))
+      toast.success('Deal verschoben')
+    } catch (error) {
+      toast.error('Fehler beim Verschieben')
+    }
+  }
+  
+  const currentPipeline = pipelines.find(p => p.id === selectedPipeline)
+  
+  // Calculate totals per stage
+  const stageTotals = currentPipeline?.stages.reduce((acc, stage) => {
+    const stageDeals = deals.filter(d => d.stage === stage.id)
+    acc[stage.id] = {
+      count: stageDeals.length,
+      value: stageDeals.reduce((sum, d) => sum + (d.value || 0), 0)
+    }
+    return acc
+  }, {}) || {}
+  
+  if (loading) {
+    return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin" /></div>
+  }
+  
+  return (
+    <div className="h-full flex flex-col p-6">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Deals & Pipeline</h1>
+          <p className="text-muted-foreground">Vertriebspipeline im Kanban-Stil</p>
+        </div>
+        <div className="flex gap-2">
+          <Select value={selectedPipeline} onValueChange={setSelectedPipeline}>
+            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {pipelines.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button><Plus className="h-4 w-4 mr-2" />Neuer Deal</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Neuer Deal</DialogTitle></DialogHeader>
+              <DealForm 
+                contacts={contacts}
+                organizations={organizations}
+                stages={currentPipeline?.stages || []}
+                onSubmit={handleCreateDeal}
+                onCancel={() => setShowCreateDialog(false)}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+      
+      {/* Pipeline Kanban */}
+      <div className="flex-1 overflow-x-auto">
+        <div className="flex gap-4 h-full min-w-max">
+          {currentPipeline?.stages.map((stage) => (
+            <div 
+              key={stage.id}
+              className={`w-72 flex flex-col rounded-lg ${stage.color}`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                const dealId = e.dataTransfer.getData('dealId')
+                if (dealId) handleMoveDeal(dealId, stage.id)
+              }}
+            >
+              <div className="p-3 border-b">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-medium">{stage.name}</h3>
+                  <Badge variant="outline">{stageTotals[stage.id]?.count || 0}</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(stageTotals[stage.id]?.value || 0)}
+                </p>
+              </div>
+              <div className="flex-1 p-2 space-y-2 overflow-y-auto">
+                {deals.filter(d => d.stage === stage.id).map((deal) => (
+                  <Card 
+                    key={deal.id}
+                    className="cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow"
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData('dealId', deal.id)}
+                  >
+                    <CardContent className="p-3">
+                      <h4 className="font-medium">{deal.name}</h4>
+                      <p className="text-sm text-muted-foreground">{contacts.find(c => c.id === deal.contact_id)?.first_name || 'Kein Kontakt'}</p>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-sm font-semibold text-green-600">
+                          {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(deal.value || 0)}
+                        </span>
+                        {deal.expected_close_date && (
+                          <span className="text-xs text-slate-500">
+                            {new Date(deal.expected_close_date).toLocaleDateString('de-DE')}
+                          </span>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DealForm({ contacts, organizations, stages, deal, onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    name: deal?.name || '',
+    value: deal?.value || '',
+    stage: deal?.stage || stages[0]?.id || 'lead',
+    contact_id: deal?.contact_id || '',
+    organization_id: deal?.organization_id || '',
+    expected_close_date: deal?.expected_close_date?.split('T')[0] || '',
+    probability: deal?.probability || 50,
+    source: deal?.source || '',
+    notes: deal?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.name) {
+      toast.error('Name ist erforderlich')
+      return
+    }
+    onSubmit({
+      ...formData,
+      value: parseFloat(formData.value) || 0,
+      probability: parseInt(formData.probability) || 50,
+      contact_id: formData.contact_id || null,
+      organization_id: formData.organization_id || null,
+    })
+  }
+  
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div><Label>Deal-Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} placeholder="z.B. IT-Infrastruktur Musterfirma" /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Wert (€)</Label><Input type="number" value={formData.value} onChange={(e) => setFormData(f => ({ ...f, value: e.target.value }))} /></div>
+        <div>
+          <Label>Phase</Label>
+          <Select value={formData.stage} onValueChange={(v) => setFormData(f => ({ ...f, stage: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Kontakt</Label>
+          <Select value={formData.contact_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, contact_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Kontakt</SelectItem>
+              {contacts.map(c => <SelectItem key={c.id} value={c.id}>{c.first_name} {c.last_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Unternehmen</Label>
+          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Unternehmen</SelectItem>
+              {organizations.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Erwarteter Abschluss</Label><Input type="date" value={formData.expected_close_date} onChange={(e) => setFormData(f => ({ ...f, expected_close_date: e.target.value }))} /></div>
+        <div>
+          <Label>Wahrscheinlichkeit ({formData.probability}%)</Label>
+          <Input type="range" min="0" max="100" value={formData.probability} onChange={(e) => setFormData(f => ({ ...f, probability: e.target.value }))} />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+// ============================================
 // REPORTS PAGE
 // ============================================
 

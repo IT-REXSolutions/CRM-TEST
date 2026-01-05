@@ -2768,8 +2768,10 @@ function AssetsPage() {
   const [assets, setAssets] = useState([])
   const [assetTypes, setAssetTypes] = useState([])
   const [organizations, setOrganizations] = useState([])
+  const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingAsset, setEditingAsset] = useState(null)
   const [filter, setFilter] = useState({ type_id: 'all', status: 'all' })
   
   const loadAssets = useCallback(async () => {
@@ -2778,25 +2780,35 @@ function AssetsPage() {
       if (filter.type_id && filter.type_id !== 'all') params.type_id = filter.type_id
       if (filter.status && filter.status !== 'all') params.status = filter.status
       setAssets(await api.getAssets(params))
-    } catch { toast.error('Fehler') }
+    } catch { toast.error('Fehler beim Laden') }
     finally { setLoading(false) }
   }, [filter])
   
   useEffect(() => {
-    Promise.all([api.getAssetTypes(), api.getOrganizations()])
-      .then(([types, orgs]) => { setAssetTypes(types); setOrganizations(orgs); })
+    Promise.all([api.getAssetTypes(), api.getOrganizations(), api.getUsers()])
+      .then(([types, orgs, usersData]) => { setAssetTypes(types); setOrganizations(orgs); setUsers(usersData); })
     loadAssets()
   }, [loadAssets])
   
   const handleCreate = async (data) => {
     try { await api.createAsset(data); toast.success('Asset erstellt'); setShowCreateDialog(false); loadAssets(); }
-    catch { toast.error('Fehler') }
+    catch { toast.error('Fehler beim Erstellen') }
+  }
+  
+  const handleUpdate = async (data) => {
+    try { 
+      await api.updateAsset(editingAsset.id, data); 
+      toast.success('Asset aktualisiert'); 
+      setEditingAsset(null); 
+      loadAssets(); 
+    }
+    catch { toast.error('Fehler beim Aktualisieren') }
   }
   
   const handleDelete = async (id) => {
-    if (!confirm('Wirklich löschen?')) return
-    try { await api.deleteAsset(id); toast.success('Gelöscht'); loadAssets(); }
-    catch { toast.error('Fehler') }
+    if (!confirm('Asset wirklich löschen?')) return
+    try { await api.deleteAsset(id); toast.success('Asset gelöscht'); loadAssets(); }
+    catch { toast.error('Fehler beim Löschen') }
   }
   
   return (
@@ -2817,12 +2829,13 @@ function AssetsPage() {
               {Object.entries(ASSET_STATUS_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Button variant="outline" onClick={loadAssets}><RefreshCw className="h-4 w-4 mr-2" />Aktualisieren</Button>
         </div>
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Neues Asset</Button></DialogTrigger>
           <DialogContent className="max-w-2xl">
             <DialogHeader><DialogTitle>Neues Asset</DialogTitle></DialogHeader>
-            <CreateAssetForm assetTypes={assetTypes} organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            <AssetForm assetTypes={assetTypes} organizations={organizations} users={users} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -2835,14 +2848,16 @@ function AssetsPage() {
                 <TableHead>Asset</TableHead>
                 <TableHead>Typ</TableHead>
                 <TableHead>Organisation</TableHead>
+                <TableHead>Zugewiesen an</TableHead>
                 <TableHead>Seriennummer</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead></TableHead>
+                <TableHead className="w-24">Aktionen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {assets.map((asset) => {
                 const IconComponent = ASSET_ICONS[asset.asset_types?.name] || Box
+                const assignedUser = users.find(u => u.id === asset.assigned_user_id)
                 return (
                   <TableRow key={asset.id}>
                     <TableCell>
@@ -2856,9 +2871,19 @@ function AssetsPage() {
                     </TableCell>
                     <TableCell>{asset.asset_types?.name}</TableCell>
                     <TableCell>{asset.organizations?.name || '-'}</TableCell>
+                    <TableCell>{assignedUser ? `${assignedUser.first_name} ${assignedUser.last_name}` : '-'}</TableCell>
                     <TableCell className="font-mono text-sm">{asset.serial_number || '-'}</TableCell>
                     <TableCell><Badge className={ASSET_STATUS_COLORS[asset.status]}>{ASSET_STATUS_LABELS[asset.status]}</Badge></TableCell>
-                    <TableCell><Button variant="ghost" size="icon" onClick={() => handleDelete(asset.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setEditingAsset(asset)} title="Bearbeiten">
+                          <Settings className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(asset.id)} title="Löschen">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -2866,14 +2891,69 @@ function AssetsPage() {
           </Table>
         </Card>
       )}
+      
+      {/* Edit Asset Dialog */}
+      <Dialog open={!!editingAsset} onOpenChange={(open) => !open && setEditingAsset(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Asset bearbeiten</DialogTitle></DialogHeader>
+          {editingAsset && (
+            <AssetForm 
+              asset={editingAsset}
+              assetTypes={assetTypes} 
+              organizations={organizations} 
+              users={users}
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingAsset(null)} 
+              isEdit 
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function CreateAssetForm({ assetTypes, organizations, onSubmit, onCancel }) {
-  const [formData, setFormData] = useState({ asset_type_id: '', name: '', asset_tag: '', serial_number: '', manufacturer: '', model: '', organization_id: '', status: 'active' })
+function AssetForm({ asset, assetTypes, organizations, users = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    asset_type_id: asset?.asset_type_id || '',
+    name: asset?.name || '',
+    asset_tag: asset?.asset_tag || '',
+    serial_number: asset?.serial_number || '',
+    manufacturer: asset?.manufacturer || '',
+    model: asset?.model || '',
+    organization_id: asset?.organization_id || '',
+    assigned_user_id: asset?.assigned_user_id || '',
+    location_id: asset?.location_id || '',
+    status: asset?.status || 'active',
+    purchase_date: asset?.purchase_date?.split('T')[0] || '',
+    purchase_price: asset?.purchase_price || '',
+    warranty_end: asset?.warranty_end?.split('T')[0] || '',
+    notes: asset?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.asset_type_id || !formData.name) {
+      toast.error('Typ und Name sind erforderlich')
+      return
+    }
+    onSubmit({
+      ...formData,
+      organization_id: formData.organization_id || null,
+      assigned_user_id: formData.assigned_user_id || null,
+      location_id: formData.location_id || null,
+      purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
+      purchase_date: formData.purchase_date || null,
+      warranty_end: formData.warranty_end || null,
+    })
+  }
+  
+  // Get locations for selected organization
+  const selectedOrg = organizations.find(o => o.id === formData.organization_id)
+  const locations = selectedOrg?.locations || []
+  
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (formData.asset_type_id && formData.name) onSubmit(formData); }} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>Typ *</Label>
@@ -2898,11 +2978,33 @@ function CreateAssetForm({ assetTypes, organizations, onSubmit, onCancel }) {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>Organisation</Label>
-          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v, location_id: '' }))}>
             <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="none">Keine</SelectItem>
               {organizations.map((o) => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Standort</Label>
+          <Select value={formData.location_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, location_id: v === 'none' ? '' : v }))} disabled={!formData.organization_id}>
+            <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Standort</SelectItem>
+              {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Zugewiesen an</Label>
+          <Select value={formData.assigned_user_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, assigned_user_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Nicht zugewiesen</SelectItem>
+              {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.first_name} {u.last_name}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -2916,9 +3018,18 @@ function CreateAssetForm({ assetTypes, organizations, onSubmit, onCancel }) {
           </Select>
         </div>
       </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div><Label>Kaufdatum</Label><Input type="date" value={formData.purchase_date} onChange={(e) => setFormData(f => ({ ...f, purchase_date: e.target.value }))} /></div>
+        <div><Label>Kaufpreis (€)</Label><Input type="number" step="0.01" value={formData.purchase_price} onChange={(e) => setFormData(f => ({ ...f, purchase_price: e.target.value }))} /></div>
+        <div><Label>Garantie bis</Label><Input type="date" value={formData.warranty_end} onChange={(e) => setFormData(f => ({ ...f, warranty_end: e.target.value }))} /></div>
+      </div>
+      <div>
+        <Label>Notizen</Label>
+        <Textarea value={formData.notes} onChange={(e) => setFormData(f => ({ ...f, notes: e.target.value }))} rows={2} />
+      </div>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
-        <Button type="submit">Erstellen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
       </DialogFooter>
     </form>
   )

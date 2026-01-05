@@ -6388,7 +6388,1005 @@ async function triggerWebhooks(eventType, payload) {
   }
 }
 
-async function handleGetApiAuditLogs(params) {
+// ============================================
+// CHATWOOT INTEGRATION HANDLERS
+// ============================================
+
+async function handleChatwootWebhook(body) {
+  const { event, message_type, conversation, sender, content, account } = body
+  
+  try {
+    // Log the webhook
+    console.log('Chatwoot webhook received:', event)
+    
+    if (event === 'message_created' || event === 'message_updated') {
+      // Find or create contact in CRM
+      const senderEmail = sender?.email || sender?.identifier
+      const senderPhone = sender?.phone_number
+      
+      let contact = null
+      if (senderEmail) {
+        const { data: existingContact } = await supabaseAdmin
+          .from('contacts')
+          .select('*, organizations(*)')
+          .eq('email', senderEmail)
+          .single()
+        contact = existingContact
+      }
+      
+      if (!contact && senderPhone) {
+        const { data: existingContact } = await supabaseAdmin
+          .from('contacts')
+          .select('*, organizations(*)')
+          .eq('phone', senderPhone)
+          .single()
+        contact = existingContact
+      }
+      
+      // Create contact if not found
+      if (!contact && (senderEmail || senderPhone)) {
+        const { data: newContact } = await supabaseAdmin
+          .from('contacts')
+          .insert([{
+            id: uuidv4(),
+            first_name: sender?.name?.split(' ')[0] || 'Unbekannt',
+            last_name: sender?.name?.split(' ').slice(1).join(' ') || '',
+            email: senderEmail,
+            phone: senderPhone,
+            notes: `Automatisch erstellt via Chatwoot (${event})`,
+          }])
+          .select()
+          .single()
+        contact = newContact
+      }
+      
+      // Store conversation reference
+      if (conversation?.id) {
+        await supabaseAdmin.from('conversations').upsert([{
+          id: uuidv4(),
+          chatwoot_conversation_id: String(conversation.id),
+          contact_id: contact?.id,
+          organization_id: contact?.organization_id,
+          channel: conversation?.channel || 'web',
+          status: conversation?.status || 'open',
+          last_message_at: new Date().toISOString(),
+          metadata: { account_id: account?.id, sender },
+        }], { onConflict: 'chatwoot_conversation_id' })
+      }
+      
+      // Trigger n8n webhook for further processing
+      await triggerWebhooks('chatwoot.message_created', {
+        event,
+        conversation,
+        sender,
+        content,
+        contact,
+        account,
+      })
+    }
+    
+    if (event === 'conversation_created') {
+      // Auto-create ticket if configured
+      const { data: settings } = await supabaseAdmin
+        .from('settings')
+        .select('value')
+        .eq('key', 'chatwoot_auto_create_ticket')
+        .single()
+      
+      if (settings?.value === 'true') {
+        await supabaseAdmin.from('tickets').insert([{
+          id: uuidv4(),
+          ticket_number: `CW-${Date.now()}`,
+          subject: `Chat von ${sender?.name || 'Unbekannt'}`,
+          description: content || 'Neue Chatwoot-Konversation',
+          status: 'new',
+          priority: 'medium',
+          channel: 'chat',
+          source: 'chatwoot',
+          external_id: String(conversation?.id),
+        }])
+      }
+      
+      await triggerWebhooks('chatwoot.conversation_created', body)
+    }
+    
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Chatwoot webhook error:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleChatwootContactSync(body) {
+  const { contact_id, direction } = body
+  
+  try {
+    if (direction === 'to_chatwoot') {
+      // Get contact from CRM
+      const { data: contact } = await supabaseAdmin
+        .from('contacts')
+        .select('*, organizations(name)')
+        .eq('id', contact_id)
+        .single()
+      
+      if (!contact) {
+        return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
+      }
+      
+      // Get Chatwoot settings
+      const { data: settings } = await supabaseAdmin
+        .from('settings')
+        .select('key, value')
+        .in('key', ['chatwoot_api_url', 'chatwoot_api_token', 'chatwoot_account_id'])
+      
+      const settingsMap = Object.fromEntries((settings || []).map(s => [s.key, s.value]))
+      
+      if (!settingsMap.chatwoot_api_url || !settingsMap.chatwoot_api_token) {
+        return NextResponse.json({ error: 'Chatwoot not configured' }, { status: 400 })
+      }
+      
+      // Create/update contact in Chatwoot
+      const response = await fetch(`${settingsMap.chatwoot_api_url}/api/v1/accounts/${settingsMap.chatwoot_account_id}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api_access_token': settingsMap.chatwoot_api_token,
+        },
+        body: JSON.stringify({
+          name: `${contact.first_name} ${contact.last_name}`.trim(),
+          email: contact.email,
+          phone_number: contact.phone,
+          custom_attributes: {
+            crm_id: contact.id,
+            organization: contact.organizations?.name,
+          },
+        }),
+      })
+      
+      const chatwootContact = await response.json()
+      
+      // Store Chatwoot ID
+      await supabaseAdmin
+        .from('contacts')
+        .update({ chatwoot_contact_id: String(chatwootContact.id) })
+        .eq('id', contact_id)
+      
+      return NextResponse.json({ success: true, chatwoot_contact: chatwootContact })
+    }
+    
+    return NextResponse.json({ error: 'Invalid direction' }, { status: 400 })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleChatwootSSO(params) {
+  const { user_id } = params
+  
+  try {
+    // Get user
+    const { data: user } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('id', user_id)
+      .single()
+    
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+    
+    // Get Chatwoot settings
+    const { data: settings } = await supabaseAdmin
+      .from('settings')
+      .select('key, value')
+      .in('key', ['chatwoot_api_url', 'chatwoot_sso_secret'])
+    
+    const settingsMap = Object.fromEntries((settings || []).map(s => [s.key, s.value]))
+    
+    if (!settingsMap.chatwoot_api_url || !settingsMap.chatwoot_sso_secret) {
+      return NextResponse.json({ error: 'Chatwoot SSO not configured' }, { status: 400 })
+    }
+    
+    // Generate JWT token for SSO
+    const jwt = require('jsonwebtoken')
+    const ssoToken = jwt.sign({
+      email: user.email,
+      name: `${user.first_name} ${user.last_name}`,
+      uid: user.id,
+    }, settingsMap.chatwoot_sso_secret, { expiresIn: '1h' })
+    
+    return NextResponse.json({
+      success: true,
+      sso_url: `${settingsMap.chatwoot_api_url}/auth/sso?token=${ssoToken}`,
+      embed_url: `${settingsMap.chatwoot_api_url}/app/accounts/1/dashboard?sso=${ssoToken}`,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetChatwootConversations(params) {
+  const { contact_id, organization_id, status } = params
+  
+  let query = supabaseAdmin
+    .from('conversations')
+    .select('*, contacts(first_name, last_name, email), organizations(name)')
+    .order('last_message_at', { ascending: false })
+  
+  if (contact_id) query = query.eq('contact_id', contact_id)
+  if (organization_id) query = query.eq('organization_id', organization_id)
+  if (status) query = query.eq('status', status)
+  
+  const { data, error } = await query.limit(50)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  
+  return NextResponse.json(data || [])
+}
+
+// ============================================
+// N8N WEBHOOK HANDLERS
+// ============================================
+
+async function handleN8nTicketCreated(body) {
+  // This endpoint receives data from n8n when a ticket should be created
+  const { subject, description, priority, organization_id, contact_id, channel, source, custom_fields } = body
+  
+  try {
+    const ticketNumber = `N8N-${Date.now()}`
+    
+    const { data: ticket, error } = await supabaseAdmin
+      .from('tickets')
+      .insert([{
+        id: uuidv4(),
+        ticket_number: ticketNumber,
+        subject,
+        description,
+        priority: priority || 'medium',
+        status: 'new',
+        organization_id,
+        contact_id,
+        channel: channel || 'automation',
+        source: source || 'n8n',
+      }])
+      .select()
+      .single()
+    
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    
+    // Trigger internal webhooks
+    await triggerWebhooks('ticket.created', { ticket })
+    
+    return NextResponse.json({ success: true, ticket })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleN8nTicketUpdated(body) {
+  const { ticket_id, updates, user_id } = body
+  
+  try {
+    const { data: ticket, error } = await supabaseAdmin
+      .from('tickets')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', ticket_id)
+      .select()
+      .single()
+    
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    
+    // Create audit log
+    await supabaseAdmin.from('ticket_history').insert([{
+      id: uuidv4(),
+      ticket_id,
+      user_id,
+      action: 'updated_via_n8n',
+      new_value: JSON.stringify(updates),
+    }])
+    
+    await triggerWebhooks('ticket.updated', { ticket, updates })
+    
+    return NextResponse.json({ success: true, ticket })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleN8nMessageReceived(body) {
+  // Process incoming message from n8n (e.g., from email, chat, etc.)
+  const { message, sender_email, sender_phone, channel, intent, ai_classification } = body
+  
+  try {
+    // Find contact by email or phone
+    let contact = null
+    if (sender_email) {
+      const { data } = await supabaseAdmin
+        .from('contacts')
+        .select('*, organizations(*)')
+        .eq('email', sender_email)
+        .single()
+      contact = data
+    }
+    if (!contact && sender_phone) {
+      const { data } = await supabaseAdmin
+        .from('contacts')
+        .select('*, organizations(*)')
+        .eq('phone', sender_phone)
+        .single()
+      contact = data
+    }
+    
+    // Auto-create ticket based on intent
+    const ticketIntents = ['support', 'complaint', 'bug', 'incident', 'request']
+    const shouldCreateTicket = ticketIntents.includes(intent?.toLowerCase())
+    
+    let ticket = null
+    if (shouldCreateTicket) {
+      const { data: newTicket } = await supabaseAdmin
+        .from('tickets')
+        .insert([{
+          id: uuidv4(),
+          ticket_number: `MSG-${Date.now()}`,
+          subject: message?.subject || `Nachricht von ${sender_email || sender_phone}`,
+          description: message?.body || message?.content || '',
+          status: 'new',
+          priority: ai_classification?.priority || 'medium',
+          channel: channel || 'email',
+          source: 'n8n_automation',
+          organization_id: contact?.organization_id,
+          contact_id: contact?.id,
+          ai_category: ai_classification?.category,
+        }])
+        .select()
+        .single()
+      ticket = newTicket
+    }
+    
+    await triggerWebhooks('message.received', { message, contact, ticket, intent })
+    
+    return NextResponse.json({ 
+      success: true, 
+      contact, 
+      ticket,
+      action: shouldCreateTicket ? 'ticket_created' : 'logged',
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleN8nContactUpdated(body) {
+  const { contact_id, updates, source } = body
+  
+  try {
+    const { data: contact, error } = await supabaseAdmin
+      .from('contacts')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', contact_id)
+      .select()
+      .single()
+    
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    
+    await triggerWebhooks('contact.updated', { contact, updates, source })
+    
+    return NextResponse.json({ success: true, contact })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// SLA NOTIFICATIONS HANDLERS
+// ============================================
+
+async function handleCheckSLABreaches() {
+  try {
+    const now = new Date()
+    
+    // Find tickets with SLA that are about to breach or breached
+    const { data: tickets, error } = await supabaseAdmin
+      .from('tickets')
+      .select('*, sla_profiles(*), organizations(name), assignee:users!assignee_id(first_name, last_name, email)')
+      .in('status', ['new', 'open', 'pending', 'in_progress'])
+      .not('sla_profile_id', 'is', null)
+    
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    
+    const breaches = []
+    const warnings = []
+    
+    for (const ticket of tickets || []) {
+      // Check response SLA
+      if (ticket.sla_response_due && !ticket.first_response_at) {
+        const responseDue = new Date(ticket.sla_response_due)
+        const minutesUntilBreach = (responseDue - now) / (1000 * 60)
+        
+        if (minutesUntilBreach < 0) {
+          breaches.push({
+            type: 'response_breached',
+            ticket,
+            breached_by_minutes: Math.abs(minutesUntilBreach),
+          })
+        } else if (minutesUntilBreach < 30) {
+          warnings.push({
+            type: 'response_warning',
+            ticket,
+            minutes_remaining: minutesUntilBreach,
+          })
+        }
+      }
+      
+      // Check resolution SLA
+      if (ticket.sla_resolution_due) {
+        const resolutionDue = new Date(ticket.sla_resolution_due)
+        const minutesUntilBreach = (resolutionDue - now) / (1000 * 60)
+        
+        if (minutesUntilBreach < 0) {
+          breaches.push({
+            type: 'resolution_breached',
+            ticket,
+            breached_by_minutes: Math.abs(minutesUntilBreach),
+          })
+        } else if (minutesUntilBreach < 60) {
+          warnings.push({
+            type: 'resolution_warning',
+            ticket,
+            minutes_remaining: minutesUntilBreach,
+          })
+        }
+      }
+    }
+    
+    // Update breach flags
+    for (const breach of breaches) {
+      await supabaseAdmin
+        .from('tickets')
+        .update({ 
+          sla_breached: true,
+          sla_breach_type: breach.type,
+          sla_breached_at: now.toISOString(),
+        })
+        .eq('id', breach.ticket.id)
+    }
+    
+    // Trigger webhooks for notifications
+    if (breaches.length > 0) {
+      await triggerWebhooks('sla.breached', { breaches })
+    }
+    if (warnings.length > 0) {
+      await triggerWebhooks('sla.warning', { warnings })
+    }
+    
+    return NextResponse.json({ 
+      success: true, 
+      breaches: breaches.length, 
+      warnings: warnings.length,
+      details: { breaches, warnings }
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleSendSLANotifications() {
+  try {
+    // Get breached tickets that haven't been notified
+    const { data: tickets } = await supabaseAdmin
+      .from('tickets')
+      .select('*, assignee:users!assignee_id(first_name, last_name, email), organizations(name)')
+      .eq('sla_breached', true)
+      .is('sla_notification_sent', null)
+    
+    const notifications = []
+    
+    for (const ticket of tickets || []) {
+      if (ticket.assignee?.email) {
+        // Send email notification
+        await sendEmailNotification({
+          to: ticket.assignee.email,
+          subject: `⚠️ SLA-Verletzung: Ticket #${ticket.ticket_number}`,
+          body: `
+            Das Ticket "${ticket.subject}" hat das SLA verletzt.
+            
+            Ticket-Nr: ${ticket.ticket_number}
+            Organisation: ${ticket.organizations?.name || 'N/A'}
+            Status: ${ticket.status}
+            Priorität: ${ticket.priority}
+            
+            Bitte sofort bearbeiten!
+          `,
+        })
+        
+        notifications.push({ ticket_id: ticket.id, email: ticket.assignee.email })
+        
+        // Mark as notified
+        await supabaseAdmin
+          .from('tickets')
+          .update({ sla_notification_sent: new Date().toISOString() })
+          .eq('id', ticket.id)
+      }
+    }
+    
+    return NextResponse.json({ success: true, notifications_sent: notifications.length })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// LICENSE/ASSET REMINDER HANDLERS
+// ============================================
+
+async function handleCheckExpiringAssets(params) {
+  const daysAhead = parseInt(params.days) || 30
+  
+  try {
+    const futureDate = new Date()
+    futureDate.setDate(futureDate.getDate() + daysAhead)
+    
+    const { data: assets, error } = await supabaseAdmin
+      .from('assets')
+      .select('*, asset_types(name), organizations(name)')
+      .lte('warranty_end', futureDate.toISOString())
+      .gte('warranty_end', new Date().toISOString())
+      .order('warranty_end', { ascending: true })
+    
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    
+    // Group by days remaining
+    const grouped = {
+      critical: [], // < 7 days
+      warning: [],  // 7-14 days
+      upcoming: [], // 14-30 days
+    }
+    
+    for (const asset of assets || []) {
+      const daysRemaining = Math.ceil((new Date(asset.warranty_end) - new Date()) / (1000 * 60 * 60 * 24))
+      asset.days_remaining = daysRemaining
+      
+      if (daysRemaining < 7) grouped.critical.push(asset)
+      else if (daysRemaining < 14) grouped.warning.push(asset)
+      else grouped.upcoming.push(asset)
+    }
+    
+    return NextResponse.json({
+      total: assets?.length || 0,
+      ...grouped,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleSendAssetReminders() {
+  try {
+    // Get assets expiring in next 14 days that haven't been notified recently
+    const futureDate = new Date()
+    futureDate.setDate(futureDate.getDate() + 14)
+    
+    const { data: assets } = await supabaseAdmin
+      .from('assets')
+      .select('*, organizations(name, email)')
+      .lte('warranty_end', futureDate.toISOString())
+      .gte('warranty_end', new Date().toISOString())
+    
+    const reminders = []
+    
+    for (const asset of assets || []) {
+      const daysRemaining = Math.ceil((new Date(asset.warranty_end) - new Date()) / (1000 * 60 * 60 * 24))
+      
+      // Create reminder ticket
+      const { data: ticket } = await supabaseAdmin
+        .from('tickets')
+        .insert([{
+          id: uuidv4(),
+          ticket_number: `LIC-${Date.now()}`,
+          subject: `Garantie/Lizenz läuft ab: ${asset.name}`,
+          description: `Das Asset "${asset.name}" (${asset.asset_tag || 'Kein Tag'}) läuft in ${daysRemaining} Tagen ab.\n\nGarantie bis: ${new Date(asset.warranty_end).toLocaleDateString('de-DE')}\nOrganisation: ${asset.organizations?.name || 'N/A'}`,
+          status: 'new',
+          priority: daysRemaining < 7 ? 'urgent' : 'high',
+          ticket_type_code: 'reminder',
+          organization_id: asset.organization_id,
+        }])
+        .select()
+        .single()
+      
+      reminders.push({ asset_id: asset.id, ticket_id: ticket?.id, days_remaining: daysRemaining })
+      
+      // Trigger webhook
+      await triggerWebhooks('asset.expiring', { asset, days_remaining: daysRemaining, ticket })
+    }
+    
+    return NextResponse.json({ success: true, reminders_created: reminders.length, reminders })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// AI DAILY ASSISTANT HANDLERS
+// ============================================
+
+async function handleGetDailySummary(params) {
+  const { user_id } = params
+  
+  try {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    // Get user's tickets
+    const { data: myTickets } = await supabaseAdmin
+      .from('tickets')
+      .select('*, organizations(name)')
+      .eq('assignee_id', user_id)
+      .in('status', ['new', 'open', 'pending', 'in_progress'])
+      .order('priority', { ascending: false })
+    
+    // Get SLA breaches
+    const { data: slaBreaches } = await supabaseAdmin
+      .from('tickets')
+      .select('*')
+      .eq('assignee_id', user_id)
+      .eq('sla_breached', true)
+      .in('status', ['new', 'open', 'pending', 'in_progress'])
+    
+    // Get today's new tickets
+    const { data: newToday } = await supabaseAdmin
+      .from('tickets')
+      .select('*')
+      .eq('assignee_id', user_id)
+      .gte('created_at', today.toISOString())
+    
+    // Get time entries for today
+    const { data: timeEntries } = await supabaseAdmin
+      .from('time_entries')
+      .select('*')
+      .eq('user_id', user_id)
+      .gte('created_at', today.toISOString())
+    
+    const totalMinutesToday = (timeEntries || []).reduce((sum, t) => sum + (t.duration_minutes || 0), 0)
+    
+    // Prioritize tasks
+    const prioritizedTasks = []
+    
+    // 1. SLA breaches first
+    for (const ticket of slaBreaches || []) {
+      prioritizedTasks.push({
+        type: 'sla_breach',
+        priority: 'critical',
+        ticket,
+        action: 'Sofort bearbeiten - SLA verletzt!',
+      })
+    }
+    
+    // 2. High/urgent tickets
+    for (const ticket of myTickets?.filter(t => ['urgent', 'high'].includes(t.priority)) || []) {
+      if (!slaBreaches?.find(b => b.id === ticket.id)) {
+        prioritizedTasks.push({
+          type: 'high_priority',
+          priority: ticket.priority,
+          ticket,
+          action: 'Heute bearbeiten',
+        })
+      }
+    }
+    
+    // Generate AI summary using OpenAI
+    let aiSummary = null
+    try {
+      const summaryPrompt = `
+        Erstelle eine kurze Tageszusammenfassung für einen IT-Support-Mitarbeiter:
+        - Offene Tickets: ${myTickets?.length || 0}
+        - SLA-Verletzungen: ${slaBreaches?.length || 0}
+        - Neue Tickets heute: ${newToday?.length || 0}
+        - Arbeitszeit heute: ${Math.round(totalMinutesToday / 60 * 10) / 10} Stunden
+        
+        Gib 2-3 kurze, actionable Empfehlungen.
+      `
+      
+      const aiResult = await callOpenAI(summaryPrompt, 'summary')
+      aiSummary = aiResult.content
+    } catch (e) {
+      aiSummary = null
+    }
+    
+    return NextResponse.json({
+      summary: {
+        total_open: myTickets?.length || 0,
+        sla_breaches: slaBreaches?.length || 0,
+        new_today: newToday?.length || 0,
+        time_logged_minutes: totalMinutesToday,
+      },
+      prioritized_tasks: prioritizedTasks.slice(0, 10),
+      ai_summary: aiSummary,
+      tickets: myTickets,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleSuggestActions(body) {
+  const { ticket_id, context } = body
+  
+  try {
+    // Get ticket details
+    const { data: ticket } = await supabaseAdmin
+      .from('tickets')
+      .select('*, organizations(name), ticket_comments(*), kb_articles:kb_articles(id, title)')
+      .eq('id', ticket_id)
+      .single()
+    
+    if (!ticket) {
+      return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+    }
+    
+    // Search KB for relevant articles
+    const { data: kbArticles } = await supabaseAdmin
+      .from('kb_articles')
+      .select('id, title, category')
+      .textSearch('title', ticket.subject.split(' ').join(' | '))
+      .limit(5)
+    
+    // Generate AI suggestions
+    const prompt = `
+      Basierend auf diesem Ticket, schlage 3 konkrete nächste Schritte vor:
+      
+      Betreff: ${ticket.subject}
+      Beschreibung: ${ticket.description || 'N/A'}
+      Status: ${ticket.status}
+      Priorität: ${ticket.priority}
+      Kommentare: ${ticket.ticket_comments?.length || 0}
+      
+      Antworte in JSON-Format: [{"action": "...", "reason": "..."}]
+    `
+    
+    let suggestions = []
+    try {
+      const aiResult = await callOpenAI(prompt, 'suggestions')
+      suggestions = JSON.parse(aiResult.content)
+    } catch (e) {
+      suggestions = [
+        { action: 'Status aktualisieren', reason: 'Ticket dokumentieren' },
+        { action: 'Kunden kontaktieren', reason: 'Weitere Details erfragen' },
+        { action: 'In Wissensdatenbank suchen', reason: 'Ähnliche Lösungen finden' },
+      ]
+    }
+    
+    return NextResponse.json({
+      suggestions,
+      related_kb_articles: kbArticles || [],
+      ticket_summary: {
+        id: ticket.id,
+        subject: ticket.subject,
+        status: ticket.status,
+        comments_count: ticket.ticket_comments?.length || 0,
+      },
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleDraftReply(body) {
+  const { ticket_id, tone, language } = body
+  
+  try {
+    const { data: ticket } = await supabaseAdmin
+      .from('tickets')
+      .select('*, organizations(name), ticket_comments(content, is_internal, created_at)')
+      .eq('id', ticket_id)
+      .single()
+    
+    if (!ticket) {
+      return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+    }
+    
+    const prompt = `
+      Erstelle eine professionelle Antwort für dieses Support-Ticket:
+      
+      Betreff: ${ticket.subject}
+      Beschreibung: ${ticket.description || 'N/A'}
+      Bisherige Kommunikation: ${ticket.ticket_comments?.filter(c => !c.is_internal).map(c => c.content).join('\n---\n') || 'Keine'}
+      
+      Ton: ${tone || 'professionell und freundlich'}
+      Sprache: ${language || 'Deutsch'}
+      
+      Die Antwort soll:
+      - Das Problem anerkennen
+      - Eine Lösung oder nächste Schritte anbieten
+      - Professionell abschließen
+    `
+    
+    let draft = ''
+    try {
+      const aiResult = await callOpenAI(prompt, 'reply')
+      draft = aiResult.content
+    } catch (e) {
+      draft = `Sehr geehrte/r Kunde/in,\n\nvielen Dank für Ihre Anfrage bezüglich "${ticket.subject}".\n\nWir werden uns umgehend darum kümmern.\n\nMit freundlichen Grüßen,\nIhr Support-Team`
+    }
+    
+    return NextResponse.json({
+      draft,
+      ticket_id,
+      generated_at: new Date().toISOString(),
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// REPORT EXPORT HANDLERS
+// ============================================
+
+async function handleExportPDF(body) {
+  const { report_type, filters, date_range } = body
+  
+  try {
+    // Get report data based on type
+    let reportData = {}
+    
+    if (report_type === 'tickets') {
+      const { data: tickets } = await supabaseAdmin
+        .from('tickets')
+        .select('*, organizations(name), assignee:users!assignee_id(first_name, last_name)')
+        .gte('created_at', date_range?.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        .lte('created_at', date_range?.to || new Date().toISOString())
+      
+      reportData = {
+        title: 'Ticket-Bericht',
+        total: tickets?.length || 0,
+        by_status: groupBy(tickets, 'status'),
+        by_priority: groupBy(tickets, 'priority'),
+        items: tickets,
+      }
+    } else if (report_type === 'time') {
+      const { data: entries } = await supabaseAdmin
+        .from('time_entries')
+        .select('*, users(first_name, last_name), tickets(ticket_number, subject), organizations(name)')
+        .gte('created_at', date_range?.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        .lte('created_at', date_range?.to || new Date().toISOString())
+      
+      const totalMinutes = (entries || []).reduce((sum, e) => sum + (e.duration_minutes || 0), 0)
+      
+      reportData = {
+        title: 'Zeiterfassungs-Bericht',
+        total_entries: entries?.length || 0,
+        total_hours: Math.round(totalMinutes / 60 * 100) / 100,
+        by_user: groupBy(entries, e => `${e.users?.first_name} ${e.users?.last_name}`),
+        items: entries,
+      }
+    } else if (report_type === 'assets') {
+      const { data: assets } = await supabaseAdmin
+        .from('assets')
+        .select('*, asset_types(name), organizations(name)')
+      
+      reportData = {
+        title: 'Asset-Bericht',
+        total: assets?.length || 0,
+        by_type: groupBy(assets, a => a.asset_types?.name),
+        by_status: groupBy(assets, 'status'),
+        items: assets,
+      }
+    }
+    
+    // Generate simple HTML report (in production, use puppeteer for PDF)
+    const htmlReport = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${reportData.title}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          h1 { color: #1e40af; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background: #f3f4f6; }
+          .summary { background: #eff6ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        </style>
+      </head>
+      <body>
+        <h1>${reportData.title}</h1>
+        <p>Erstellt am: ${new Date().toLocaleDateString('de-DE')}</p>
+        <div class="summary">
+          <strong>Zusammenfassung:</strong>
+          <p>Gesamt: ${reportData.total || reportData.total_entries || 0}</p>
+          ${reportData.total_hours ? `<p>Stunden: ${reportData.total_hours}</p>` : ''}
+        </div>
+        <p>Detaillierte Daten als JSON verfügbar.</p>
+      </body>
+      </html>
+    `
+    
+    return NextResponse.json({
+      success: true,
+      report_type,
+      data: reportData,
+      html: htmlReport,
+      generated_at: new Date().toISOString(),
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleExportCSV(body) {
+  const { report_type, filters, date_range } = body
+  
+  try {
+    let data = []
+    let headers = []
+    
+    if (report_type === 'tickets') {
+      const { data: tickets } = await supabaseAdmin
+        .from('tickets')
+        .select('ticket_number, subject, status, priority, created_at, updated_at')
+        .gte('created_at', date_range?.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      
+      headers = ['Ticket-Nr', 'Betreff', 'Status', 'Priorität', 'Erstellt', 'Aktualisiert']
+      data = tickets || []
+    } else if (report_type === 'time') {
+      const { data: entries } = await supabaseAdmin
+        .from('time_entries')
+        .select('description, duration_minutes, is_billable, created_at')
+        .gte('created_at', date_range?.from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      
+      headers = ['Beschreibung', 'Minuten', 'Abrechenbar', 'Datum']
+      data = entries || []
+    }
+    
+    // Generate CSV
+    const csvRows = [headers.join(';')]
+    for (const row of data) {
+      csvRows.push(Object.values(row).map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(';'))
+    }
+    
+    return NextResponse.json({
+      success: true,
+      csv: csvRows.join('\n'),
+      rows: data.length,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// Helper function for grouping
+function groupBy(array, keyOrFn) {
+  return (array || []).reduce((result, item) => {
+    const key = typeof keyOrFn === 'function' ? keyOrFn(item) : item[keyOrFn]
+    if (!result[key]) result[key] = []
+    result[key].push(item)
+    return result
+  }, {})
+}
+
+// Helper for sending email notifications
+async function sendEmailNotification({ to, subject, body }) {
+  try {
+    const { data: settings } = await supabaseAdmin
+      .from('settings')
+      .select('key, value')
+      .in('key', ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'email_sender_name'])
+    
+    const settingsMap = Object.fromEntries((settings || []).map(s => [s.key, s.value]))
+    
+    if (!settingsMap.smtp_host) {
+      console.log('SMTP not configured, skipping email')
+      return false
+    }
+    
+    // In production, use nodemailer here
+    console.log(`Would send email to ${to}: ${subject}`)
+    return true
+  } catch (error) {
+    console.error('Email error:', error)
+    return false
+  }
+}
   const { api_key_id, limit, offset } = params
   
   let query = supabaseAdmin

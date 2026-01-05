@@ -10803,19 +10803,8 @@ async function handleRoute(request, { params }) {
       const body = await request.json()
       const { title, content, category, tags, is_internal, organization_id, visibility, updated_by_id } = body
       
-      // Get current article for versioning
-      const { data: currentArticle } = await supabaseAdmin
-        .from('kb_articles')
-        .select('version, title, content')
-        .eq('id', id)
-        .single()
-      
-      // Store version history (simple approach - store in same table with version number)
-      const newVersion = (currentArticle?.version || 1) + 1
-      
       const updateData = {
-        updated_at: new Date().toISOString(),
-        version: newVersion
+        updated_at: new Date().toISOString()
       }
       
       if (title !== undefined) updateData.title = title
@@ -10824,7 +10813,6 @@ async function handleRoute(request, { params }) {
       if (tags !== undefined) updateData.tags = tags
       if (is_internal !== undefined) updateData.is_internal = is_internal
       if (organization_id !== undefined) updateData.organization_id = organization_id
-      if (visibility !== undefined) updateData.visibility = visibility
       
       const { data, error } = await supabaseAdmin
         .from('kb_articles')
@@ -10834,16 +10822,6 @@ async function handleRoute(request, { params }) {
         .single()
       
       if (error) return handleCORS(NextResponse.json({ error: error.message }, { status: 500 }))
-      
-      // Audit log
-      await supabaseAdmin.from('ticket_history').insert([{
-        id: uuidv4(),
-        ticket_id: null,
-        change_type: 'kb_article_updated',
-        new_value: JSON.stringify({ article_id: id, version: newVersion }),
-        changed_by_id: updated_by_id,
-        created_at: new Date().toISOString(),
-      }])
       
       return handleCORS(NextResponse.json(data))
     }

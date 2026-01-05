@@ -4519,12 +4519,7 @@ async function handleGetConversations(params) {
   
   let query = supabaseAdmin
     .from('conversations')
-    .select(`
-      *,
-      contacts (id, first_name, last_name, email),
-      organizations (id, name),
-      tickets (id, ticket_number, subject, status)
-    `)
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(parseInt(limit) || 50)
   

@@ -5618,6 +5618,45 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true)
   
   useEffect(() => {
+    // Check for OAuth callback token
+    const urlParams = new URLSearchParams(window.location.search)
+    const authToken = urlParams.get('auth_token')
+    const newUser = urlParams.get('new_user')
+    const assignment = urlParams.get('assignment')
+    const error = urlParams.get('error')
+    
+    if (error) {
+      toast.error(`Login-Fehler: ${error}`)
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    
+    if (authToken) {
+      try {
+        const tokenData = JSON.parse(atob(authToken))
+        if (tokenData.exp > Date.now()) {
+          // Fetch full user data
+          api.fetch(`/users?id=${tokenData.user_id}`).then(users => {
+            if (users && users[0]) {
+              setCurrentUser(users[0])
+              localStorage.setItem('servicedesk_user', JSON.stringify(users[0]))
+              if (newUser === 'true') {
+                if (assignment === 'unassigned') {
+                  toast.info('Willkommen! Ihr Konto wartet auf Zuweisung durch einen Administrator.')
+                } else {
+                  toast.success('Willkommen! Ihr Konto wurde erfolgreich erstellt.')
+                }
+              } else {
+                toast.success('Erfolgreich angemeldet!')
+              }
+            }
+          })
+        }
+      } catch (e) {
+        console.error('OAuth token error:', e)
+      }
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    
     // Check for saved user in localStorage
     const savedUser = localStorage.getItem('servicedesk_user')
     if (savedUser) {

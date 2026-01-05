@@ -5156,8 +5156,8 @@ function SettingsPage() {
                         method: 'POST',
                         body: JSON.stringify({
                           to: email,
-                          subject: 'ServiceDesk Pro - Test-E-Mail',
-                          body: 'Diese E-Mail bestätigt, dass Ihre SMTP-Einstellungen korrekt konfiguriert sind.\n\nMit freundlichen Grüßen,\nServiceDesk Pro'
+                          subject: 'IT REX ServiceDesk - Test-E-Mail',
+                          body: 'Diese E-Mail bestätigt, dass Ihre SMTP-Einstellungen korrekt konfiguriert sind.\n\nMit freundlichen Grüßen,\nIT REX Solutions'
                         })
                       })
                       toast.success('Test-E-Mail wurde gesendet!')

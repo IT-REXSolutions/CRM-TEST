@@ -4953,14 +4953,14 @@ function KnowledgeBasePage({ currentUser }) {
   }
   
   const handleDeleteArticle = async (id) => {
-    if (!confirm('Artikel wirklich archivieren?')) return
+    if (!confirm('Artikel wirklich löschen?')) return
     try {
       await api.fetch(`/kb-articles/${id}?user_id=${currentUser?.id}`, { method: 'DELETE' })
-      toast.success('Artikel archiviert')
+      toast.success('Artikel gelöscht')
       setSelectedArticle(null)
       loadArticles()
     } catch (error) {
-      toast.error('Fehler beim Archivieren')
+      toast.error('Fehler beim Löschen')
     }
   }
   

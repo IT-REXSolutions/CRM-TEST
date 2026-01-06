@@ -6255,6 +6255,12 @@ function DocumentationPage({ currentUser, subPage }) {
                               {risk.has_domain_users_access && <Badge variant="outline" className="mr-1">Domain Users</Badge>}
                               {risk.has_full_control_risk && <Badge variant="outline">Full Control</Badge>}
                             </TableCell>
+                            <TableCell>
+                              <Button size="sm" variant="outline" onClick={() => createTicketFromRisk(risk)}>
+                                <Ticket className="w-3 h-3 mr-1" />
+                                Ticket
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>

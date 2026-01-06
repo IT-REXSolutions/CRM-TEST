@@ -13602,12 +13602,117 @@ async function handleGetTicketEmails(ticketId) {
 // DOCUMENTATION MODULE HANDLERS
 // ============================================
 
+// Helper to safely query doc tables that may not exist yet
+async function safeDocQuery(tableName, queryFn) {
+  try {
+    const result = await queryFn()
+    if (result.error?.code === '42P01' || result.error?.message?.includes('does not exist') || result.error?.message?.includes('relation')) {
+      return { data: null, error: null }
+    }
+    return result
+  } catch (error) {
+    if (error.message?.includes('does not exist') || error.message?.includes('relation')) {
+      return { data: null, error: null }
+    }
+    throw error
+  }
+}
+
 async function handleGetDocumentationOverview(orgId) {
   try {
     // Get latest snapshot
-    const { data: latestSnapshot } = await supabaseAdmin
-      .from('doc_inventory_snapshots')
-      .select('*')
+    const { data: latestSnapshot } = await safeDocQuery('doc_inventory_snapshots', () => 
+      supabaseAdmin
+        .from('doc_inventory_snapshots')
+        .select('*')
+        .eq('organization_id', orgId)
+        .order('snapshot_date', { ascending: false })
+        .limit(1)
+        .single()
+    )
+    
+    // Get latest scan
+    const { data: latestScan } = await safeDocQuery('doc_discovery_scans', () =>
+      supabaseAdmin
+        .from('doc_discovery_scans')
+        .select('*')
+        .eq('organization_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+    )
+    
+    // Get inventory counts
+    const { data: inventory } = await safeDocQuery('doc_inventory_items', () =>
+      supabaseAdmin
+        .from('doc_inventory_items')
+        .select('item_type')
+        .eq('organization_id', orgId)
+    )
+    
+    // Get permission risks
+    const { data: risks } = await safeDocQuery('doc_ntfs_permissions', () =>
+      supabaseAdmin
+        .from('doc_ntfs_permissions')
+        .select('risk_level')
+        .in('risk_level', ['medium', 'high', 'critical'])
+    )
+    
+    // Get documents count
+    const { data: documents } = await safeDocQuery('doc_documents', () =>
+      supabaseAdmin
+        .from('doc_documents')
+        .select('id, status')
+        .eq('organization_id', orgId)
+    )
+    
+    const itemCounts = inventory?.reduce((acc, item) => {
+      acc[item.item_type] = (acc[item.item_type] || 0) + 1
+      return acc
+    }, {}) || {}
+    
+    const riskCounts = risks?.reduce((acc, r) => {
+      acc[r.risk_level] = (acc[r.risk_level] || 0) + 1
+      return acc
+    }, {}) || {}
+    
+    return NextResponse.json({
+      organization_id: orgId,
+      last_scan: latestScan,
+      latest_snapshot: latestSnapshot,
+      inventory_summary: {
+        total: inventory?.length || 0,
+        servers: itemCounts.server || 0,
+        domain_controllers: itemCounts.domain_controller || 0,
+        workstations: itemCounts.workstation || 0,
+        network_devices: (itemCounts.switch || 0) + (itemCounts.router || 0) + (itemCounts.firewall || 0)
+      },
+      risk_summary: {
+        total: risks?.length || 0,
+        critical: riskCounts.critical || 0,
+        high: riskCounts.high || 0,
+        medium: riskCounts.medium || 0
+      },
+      documents_count: documents?.length || 0,
+      health_status: latestSnapshot?.summary?.health_status || 'no_data',
+      tables_ready: !!inventory // Indicates if schema is set up
+    })
+  } catch (error) {
+    console.error('Error getting documentation overview:', error)
+    // Return empty data structure if tables don't exist
+    return NextResponse.json({
+      organization_id: orgId,
+      last_scan: null,
+      latest_snapshot: null,
+      inventory_summary: { total: 0, servers: 0, domain_controllers: 0, workstations: 0, network_devices: 0 },
+      risk_summary: { total: 0, critical: 0, high: 0, medium: 0 },
+      documents_count: 0,
+      health_status: 'schema_missing',
+      tables_ready: false,
+      message: 'Bitte führen Sie die SQL-Skripte aus: /app/public/schema-documentation.sql'
+    })
+  }
+}
       .eq('organization_id', orgId)
       .order('snapshot_date', { ascending: false })
       .limit(1)

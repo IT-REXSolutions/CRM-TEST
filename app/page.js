@@ -9352,7 +9352,7 @@ function SettingsPage() {
         integrations: ['openai_api_key', 'openai_model', 'openai_enabled', 'placetel_api_key', 'placetel_enabled', 'lexoffice_api_key', 'lexoffice_enabled'],
         email: ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from_address', 'imap_host', 'imap_port', 'imap_user', 'imap_password', 'email_to_ticket_enabled'],
         audit: ['log_retention_days', 'backup_enabled', 'backup_schedule'],
-        rmm: ['rmm_enabled', 'rustdesk_server', 'rustdesk_key', 'rmm_heartbeat_interval', 'rmm_offline_threshold', 'rmm_auto_ticket_on_critical']
+        rmm: ['rmm_enabled', 'rmm_heartbeat_interval', 'rmm_offline_threshold', 'rmm_auto_ticket_on_critical', 'tacticalrmm_enabled', 'tacticalrmm_api_url', 'tacticalrmm_api_key', 'tacticalrmm_sync_agents', 'tacticalrmm_sync_alerts', 'tacticalrmm_auto_ticket', 'rustdesk_enabled', 'rustdesk_id_server', 'rustdesk_relay_server', 'rustdesk_public_key', 'rustdesk_is_pro', 'rustdesk_api_server', 'rustdesk_api_key']
       }
       
       const keysToSave = categoryKeys[category] || []

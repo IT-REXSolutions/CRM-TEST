@@ -9490,6 +9490,139 @@ async function handleSendAssetReminders() {
 }
 
 // ============================================
+// NOTIFICATIONS HANDLER
+// ============================================
+
+async function handleGetNotifications(params) {
+  try {
+    const user_id = params?.get?.('user_id') || params?.user_id
+    const limit = parseInt(params?.get?.('limit') || params?.limit || '50')
+    
+    // Get recent activities as notifications
+    const { data: tickets, error: ticketsError } = await supabaseAdmin
+      .from('tickets')
+      .select('id, subject, status, priority, created_at, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(20)
+    
+    const { data: recentDeals, error: dealsError } = await supabaseAdmin
+      .from('deals')
+      .select('id, name, stage, value, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(10)
+    
+    // Transform to notification format
+    const notifications = []
+    
+    if (tickets) {
+      tickets.forEach(t => {
+        notifications.push({
+          id: `ticket-${t.id}`,
+          type: 'ticket',
+          title: `Ticket: ${t.subject}`,
+          message: `Status: ${t.status}, Priorität: ${t.priority}`,
+          created_at: t.updated_at,
+          read: false,
+          link: `/tickets/${t.id}`
+        })
+      })
+    }
+    
+    if (recentDeals) {
+      recentDeals.forEach(d => {
+        notifications.push({
+          id: `deal-${d.id}`,
+          type: 'deal',
+          title: `Deal: ${d.name}`,
+          message: `Stage: ${d.stage}, Wert: €${d.value}`,
+          created_at: d.updated_at,
+          read: false,
+          link: `/deals/${d.id}`
+        })
+      })
+    }
+    
+    // Sort by date
+    notifications.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    
+    return NextResponse.json(notifications.slice(0, limit))
+  } catch (error) {
+    console.error('Error fetching notifications:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// REPORTS SUMMARY HANDLER
+// ============================================
+
+async function handleGetReportsSummary(params) {
+  try {
+    // Get ticket statistics
+    const { data: tickets, error: ticketsError } = await supabaseAdmin
+      .from('tickets')
+      .select('status, priority, created_at')
+    
+    const { data: deals, error: dealsError } = await supabaseAdmin
+      .from('deals')
+      .select('stage, value, created_at')
+    
+    const { data: organizations } = await supabaseAdmin
+      .from('organizations')
+      .select('id')
+    
+    const { data: contacts } = await supabaseAdmin
+      .from('contacts')
+      .select('id')
+    
+    const { data: assets } = await supabaseAdmin
+      .from('assets')
+      .select('id')
+    
+    // Calculate ticket stats
+    const ticketStats = {
+      total: tickets?.length || 0,
+      open: tickets?.filter(t => ['new', 'open', 'in_progress'].includes(t.status)).length || 0,
+      closed: tickets?.filter(t => t.status === 'closed').length || 0,
+      byPriority: {
+        critical: tickets?.filter(t => t.priority === 'critical').length || 0,
+        high: tickets?.filter(t => t.priority === 'high').length || 0,
+        medium: tickets?.filter(t => t.priority === 'medium').length || 0,
+        low: tickets?.filter(t => t.priority === 'low').length || 0
+      }
+    }
+    
+    // Calculate deal stats
+    const dealStats = {
+      total: deals?.length || 0,
+      totalValue: deals?.reduce((sum, d) => sum + (parseFloat(d.value) || 0), 0) || 0,
+      byStage: {
+        lead: deals?.filter(d => d.stage === 'lead').length || 0,
+        qualified: deals?.filter(d => d.stage === 'qualified').length || 0,
+        proposal: deals?.filter(d => d.stage === 'proposal').length || 0,
+        negotiation: deals?.filter(d => d.stage === 'negotiation').length || 0,
+        won: deals?.filter(d => d.stage === 'won').length || 0,
+        lost: deals?.filter(d => d.stage === 'lost').length || 0
+      }
+    }
+    
+    return NextResponse.json({
+      tickets: ticketStats,
+      deals: dealStats,
+      counts: {
+        organizations: organizations?.length || 0,
+        contacts: contacts?.length || 0,
+        assets: assets?.length || 0
+      },
+      generated_at: new Date().toISOString()
+    })
+  } catch (error) {
+    console.error('Error generating reports summary:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
 // AI DAILY ASSISTANT HANDLERS
 // ============================================
 

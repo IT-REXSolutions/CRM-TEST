@@ -14762,8 +14762,521 @@ async function handleGetDocServices(params) {
     if (itemId) query = query.eq('inventory_item_id', itemId)
     
     const { data, error } = await query.order('display_name')
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     if (error) throw error
     return NextResponse.json(data || [])
+  } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// DOCUMENTATION SETUP - AUTO CREATE SCHEMA
+// ============================================
+
+async function handleDocumentationSetup() {
+  try {
+    // SQL to create all documentation tables
+    const setupSQL = `
+      -- Discovery Scans
+      CREATE TABLE IF NOT EXISTS doc_discovery_scans (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        scan_type VARCHAR(50) NOT NULL DEFAULT 'full',
+        status VARCHAR(50) DEFAULT 'pending',
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        error_message TEXT,
+        statistics JSONB DEFAULT '{}',
+        created_by_id UUID REFERENCES users(id),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Inventory Snapshots
+      CREATE TABLE IF NOT EXISTS doc_inventory_snapshots (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        scan_id UUID,
+        snapshot_date TIMESTAMPTZ DEFAULT NOW(),
+        summary JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Inventory Items
+      CREATE TABLE IF NOT EXISTS doc_inventory_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        snapshot_id UUID,
+        asset_id UUID,
+        item_type VARCHAR(50) NOT NULL,
+        hostname VARCHAR(255),
+        fqdn VARCHAR(500),
+        ip_addresses JSONB DEFAULT '[]',
+        mac_addresses JSONB DEFAULT '[]',
+        os_name VARCHAR(255),
+        os_version VARCHAR(100),
+        os_architecture VARCHAR(20),
+        manufacturer VARCHAR(255),
+        model VARCHAR(255),
+        serial_number VARCHAR(100),
+        cpu_info JSONB DEFAULT '{}',
+        ram_gb DECIMAL(10,2),
+        disk_info JSONB DEFAULT '[]',
+        network_interfaces JSONB DEFAULT '[]',
+        default_gateway VARCHAR(50),
+        dns_servers JSONB DEFAULT '[]',
+        is_online BOOLEAN DEFAULT true,
+        last_seen_at TIMESTAMPTZ,
+        raw_data JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Server Roles
+      CREATE TABLE IF NOT EXISTS doc_server_roles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        inventory_item_id UUID,
+        role_name VARCHAR(255) NOT NULL,
+        role_type VARCHAR(50),
+        is_installed BOOLEAN DEFAULT true,
+        status VARCHAR(50),
+        dependencies JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- AD Domains
+      CREATE TABLE IF NOT EXISTS doc_ad_domains (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        snapshot_id UUID,
+        domain_name VARCHAR(255) NOT NULL,
+        netbios_name VARCHAR(50),
+        forest_name VARCHAR(255),
+        domain_functional_level VARCHAR(50),
+        forest_functional_level VARCHAR(50),
+        domain_controllers JSONB DEFAULT '[]',
+        sites JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- AD Users
+      CREATE TABLE IF NOT EXISTS doc_ad_users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        domain_id UUID,
+        sam_account_name VARCHAR(255) NOT NULL,
+        user_principal_name VARCHAR(500),
+        display_name VARCHAR(255),
+        email VARCHAR(255),
+        distinguished_name TEXT,
+        ou_path TEXT,
+        is_enabled BOOLEAN DEFAULT true,
+        is_locked BOOLEAN DEFAULT false,
+        password_never_expires BOOLEAN DEFAULT false,
+        password_last_set TIMESTAMPTZ,
+        last_logon TIMESTAMPTZ,
+        created_date TIMESTAMPTZ,
+        member_of JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- AD Groups
+      CREATE TABLE IF NOT EXISTS doc_ad_groups (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        domain_id UUID,
+        sam_account_name VARCHAR(255) NOT NULL,
+        display_name VARCHAR(255),
+        distinguished_name TEXT,
+        ou_path TEXT,
+        group_scope VARCHAR(50),
+        group_type VARCHAR(50),
+        description TEXT,
+        members JSONB DEFAULT '[]',
+        member_of JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- AD Computers
+      CREATE TABLE IF NOT EXISTS doc_ad_computers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        domain_id UUID,
+        inventory_item_id UUID,
+        sam_account_name VARCHAR(255) NOT NULL,
+        dns_hostname VARCHAR(500),
+        distinguished_name TEXT,
+        ou_path TEXT,
+        os_name VARCHAR(255),
+        os_version VARCHAR(100),
+        is_enabled BOOLEAN DEFAULT true,
+        last_logon TIMESTAMPTZ,
+        created_date TIMESTAMPTZ,
+        member_of JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- AD GPOs
+      CREATE TABLE IF NOT EXISTS doc_ad_gpos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        domain_id UUID,
+        gpo_id VARCHAR(100),
+        display_name VARCHAR(255) NOT NULL,
+        description TEXT,
+        gpo_status VARCHAR(50),
+        created_date TIMESTAMPTZ,
+        modified_date TIMESTAMPTZ,
+        linked_ous JSONB DEFAULT '[]',
+        settings_summary JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Network Devices
+      CREATE TABLE IF NOT EXISTS doc_network_devices (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        snapshot_id UUID,
+        inventory_item_id UUID,
+        device_type VARCHAR(50) NOT NULL,
+        hostname VARCHAR(255),
+        ip_address VARCHAR(50),
+        mac_address VARCHAR(50),
+        manufacturer VARCHAR(255),
+        model VARCHAR(255),
+        firmware_version VARCHAR(100),
+        snmp_version VARCHAR(10),
+        sys_name VARCHAR(255),
+        sys_description TEXT,
+        sys_location VARCHAR(255),
+        sys_contact VARCHAR(255),
+        uptime_seconds BIGINT,
+        management_ip VARCHAR(50),
+        management_vlan INTEGER,
+        location_info JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- VLANs
+      CREATE TABLE IF NOT EXISTS doc_vlans (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        snapshot_id UUID,
+        vlan_id INTEGER NOT NULL,
+        vlan_name VARCHAR(255),
+        description TEXT,
+        subnet VARCHAR(50),
+        gateway VARCHAR(50),
+        dhcp_enabled BOOLEAN DEFAULT false,
+        dhcp_server VARCHAR(50),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Topology Links
+      CREATE TABLE IF NOT EXISTS doc_topology_links (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        snapshot_id UUID,
+        source_device_id UUID,
+        source_interface_id UUID,
+        source_type VARCHAR(50),
+        target_device_id UUID,
+        target_interface_id UUID,
+        target_type VARCHAR(50),
+        link_type VARCHAR(50),
+        link_speed_mbps BIGINT,
+        discovered_via VARCHAR(50),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- File Shares
+      CREATE TABLE IF NOT EXISTS doc_file_shares (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        inventory_item_id UUID,
+        share_name VARCHAR(255) NOT NULL,
+        share_path VARCHAR(1000),
+        local_path VARCHAR(1000),
+        description TEXT,
+        share_type VARCHAR(50),
+        max_users INTEGER,
+        current_users INTEGER,
+        share_permissions JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- NTFS Permissions
+      CREATE TABLE IF NOT EXISTS doc_ntfs_permissions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        file_share_id UUID,
+        path VARCHAR(2000) NOT NULL,
+        is_folder BOOLEAN DEFAULT true,
+        owner VARCHAR(255),
+        permissions JSONB DEFAULT '[]',
+        is_inherited BOOLEAN DEFAULT true,
+        inheritance_disabled BOOLEAN DEFAULT false,
+        has_everyone_access BOOLEAN DEFAULT false,
+        has_domain_users_access BOOLEAN DEFAULT false,
+        has_full_control_risk BOOLEAN DEFAULT false,
+        risk_level VARCHAR(20) DEFAULT 'low',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Permission Findings
+      CREATE TABLE IF NOT EXISTS doc_permission_findings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        severity VARCHAR(20) NOT NULL,
+        finding_type VARCHAR(100),
+        object_path TEXT,
+        description TEXT,
+        recommendation TEXT,
+        evidence JSONB DEFAULT '{}',
+        ticket_id UUID,
+        resolved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Document Templates
+      CREATE TABLE IF NOT EXISTS doc_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        template_type VARCHAR(50) NOT NULL,
+        description TEXT,
+        structure JSONB NOT NULL,
+        default_content JSONB DEFAULT '{}',
+        auto_fill_mappings JSONB DEFAULT '{}',
+        is_system BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Generated Documents
+      CREATE TABLE IF NOT EXISTS doc_documents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        template_id UUID,
+        title VARCHAR(500) NOT NULL,
+        document_type VARCHAR(50) NOT NULL,
+        status VARCHAR(50) DEFAULT 'draft',
+        version INTEGER DEFAULT 1,
+        content JSONB NOT NULL,
+        auto_filled_at TIMESTAMPTZ,
+        created_by_id UUID,
+        approved_by_id UUID,
+        approved_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Reports
+      CREATE TABLE IF NOT EXISTS doc_reports (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+        snapshot_id UUID,
+        report_type VARCHAR(50) NOT NULL,
+        title VARCHAR(500),
+        parameters JSONB DEFAULT '{}',
+        data JSONB DEFAULT '{}',
+        file_path VARCHAR(1000),
+        file_checksum VARCHAR(100),
+        generated_by_id UUID,
+        generated_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Audit Log
+      CREATE TABLE IF NOT EXISTS doc_audit_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id UUID,
+        action VARCHAR(100) NOT NULL,
+        entity_type VARCHAR(100),
+        entity_id UUID,
+        old_values JSONB,
+        new_values JSONB,
+        user_id UUID,
+        ip_address VARCHAR(50),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Default Templates
+      INSERT INTO doc_templates (id, name, template_type, description, structure, auto_fill_mappings) VALUES
+      ('00000000-0000-0000-0000-000000000001', 'IT-Betriebshandbuch', 'operations_handbook', 'Standard IT-Betriebshandbuch', '{"sections": [{"key": "overview", "title": "Übersicht"}, {"key": "infrastructure", "title": "Infrastruktur"}, {"key": "services", "title": "Dienste"}, {"key": "security", "title": "Sicherheit"}, {"key": "contacts", "title": "Kontakte"}]}', '{}'),
+      ('00000000-0000-0000-0000-000000000002', 'IT-Notfallhandbuch', 'emergency_handbook', 'Disaster Recovery Handbuch', '{"sections": [{"key": "contacts", "title": "Notfallkontakte"}, {"key": "systems", "title": "Kritische Systeme"}, {"key": "recovery", "title": "Wiederherstellung"}, {"key": "backup", "title": "Backup-Info"}]}', '{}'),
+      ('00000000-0000-0000-0000-000000000003', 'Netzwerkkonzept', 'network_concept', 'Netzwerk-Dokumentation', '{"sections": [{"key": "topology", "title": "Topologie"}, {"key": "vlans", "title": "VLANs"}, {"key": "routing", "title": "Routing"}, {"key": "switches", "title": "Switches"}]}', '{}'),
+      ('00000000-0000-0000-0000-000000000004', 'Berechtigungskonzept', 'security_concept', 'Berechtigungsstruktur', '{"sections": [{"key": "ad", "title": "Active Directory"}, {"key": "shares", "title": "Freigaben"}, {"key": "permissions", "title": "Berechtigungen"}, {"key": "risks", "title": "Risiken"}]}', '{}')
+      ON CONFLICT (id) DO NOTHING;
+    `
+
+    // Execute SQL via Supabase RPC or direct query
+    const { error } = await supabaseAdmin.rpc('exec_sql', { sql_query: setupSQL }).catch(async () => {
+      // If RPC doesn't exist, we'll return instructions
+      return { error: { message: 'RPC not available' } }
+    })
+
+    if (error) {
+      // Return manual instructions
+      return NextResponse.json({
+        success: false,
+        message: 'Bitte führen Sie das Schema manuell in Supabase aus',
+        instructions: [
+          '1. Öffnen Sie Ihr Supabase Dashboard',
+          '2. Gehen Sie zu SQL Editor',
+          '3. Führen Sie /app/public/schema-documentation.sql aus',
+          '4. Führen Sie /app/public/schema-documentation-data.sql aus'
+        ],
+        sql_file: '/app/public/schema-documentation.sql'
+      })
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Documentation Schema erfolgreich erstellt'
+    })
+  } catch (error) {
+    return NextResponse.json({ 
+      success: false, 
+      error: error.message,
+      message: 'Bitte führen Sie die SQL-Skripte manuell aus'
+    }, { status: 200 })
+  }
+}
+
+// ============================================
+// CREATE TICKET FROM FINDING
+// ============================================
+
+async function handleCreateFindingTicket(body) {
+  try {
+    const { finding_id, organization_id, severity, finding_type, object_path, description, created_by_id } = body
+    
+    // Create a ticket from the finding
+    const ticketData = {
+      subject: `[${severity?.toUpperCase()}] Berechtigungsrisiko: ${finding_type}`,
+      description: `
+**Automatisch erstelltes Ticket aus Dokumentations-Finding**
+
+**Risikostufe:** ${severity}
+**Typ:** ${finding_type}
+**Pfad:** ${object_path}
+
+**Beschreibung:**
+${description || 'Berechtigungsrisiko erkannt'}
+
+---
+*Dieses Ticket wurde automatisch aus der IT-Dokumentation erstellt.*
+      `.trim(),
+      priority: severity === 'critical' ? 'critical' : severity === 'high' ? 'high' : 'medium',
+      status: 'open',
+      category: 'security',
+      organization_id,
+      created_by_id
+    }
+    
+    const { data: ticket, error: ticketError } = await supabaseAdmin
+      .from('tickets')
+      .insert(ticketData)
+      .select()
+      .single()
+    
+    if (ticketError) throw ticketError
+    
+    // Update finding with ticket reference if table exists
+    if (finding_id) {
+      await supabaseAdmin
+        .from('doc_permission_findings')
+        .update({ ticket_id: ticket.id })
+        .eq('id', finding_id)
+        .catch(() => {}) // Ignore if table doesn't exist
+    }
+    
+    return NextResponse.json({
+      success: true,
+      ticket_id: ticket.id,
+      ticket_number: ticket.ticket_number,
+      message: 'Ticket erfolgreich erstellt'
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// EXPORT DOCUMENTATION AS PDF
+// ============================================
+
+async function handleExportDocumentationPDF(body) {
+  try {
+    const { organization_id, export_type, title } = body
+    
+    // Gather data based on export type
+    let exportData = {
+      title: title || 'IT-Dokumentation Export',
+      generated_at: new Date().toISOString(),
+      organization_id,
+      type: export_type
+    }
+    
+    if (export_type === 'inventory' || export_type === 'full') {
+      const { data: inventory } = await safeDocQuery('doc_inventory_items', () =>
+        supabaseAdmin.from('doc_inventory_items').select('*').eq('organization_id', organization_id)
+      )
+      exportData.inventory = inventory || []
+    }
+    
+    if (export_type === 'network' || export_type === 'full') {
+      const { data: devices } = await safeDocQuery('doc_network_devices', () =>
+        supabaseAdmin.from('doc_network_devices').select('*').eq('organization_id', organization_id)
+      )
+      const { data: vlans } = await safeDocQuery('doc_vlans', () =>
+        supabaseAdmin.from('doc_vlans').select('*').eq('organization_id', organization_id)
+      )
+      exportData.network_devices = devices || []
+      exportData.vlans = vlans || []
+    }
+    
+    if (export_type === 'permissions' || export_type === 'full') {
+      const { data: risks } = await safeDocQuery('doc_ntfs_permissions', () =>
+        supabaseAdmin.from('doc_ntfs_permissions').select('*').in('risk_level', ['medium', 'high', 'critical'])
+      )
+      exportData.permission_risks = risks || []
+    }
+    
+    if (export_type === 'ad' || export_type === 'full') {
+      const { data: domains } = await safeDocQuery('doc_ad_domains', () =>
+        supabaseAdmin.from('doc_ad_domains').select('*').eq('organization_id', organization_id)
+      )
+      const { data: users } = await safeDocQuery('doc_ad_users', () =>
+        supabaseAdmin.from('doc_ad_users').select('*')
+      )
+      const { data: groups } = await safeDocQuery('doc_ad_groups', () =>
+        supabaseAdmin.from('doc_ad_groups').select('*')
+      )
+      exportData.ad_domains = domains || []
+      exportData.ad_users = users || []
+      exportData.ad_groups = groups || []
+    }
+    
+    // Generate checksum
+    const crypto = require('crypto')
+    const checksum = crypto.createHash('md5').update(JSON.stringify(exportData)).digest('hex')
+    
+    // Store report record if table exists
+    await supabaseAdmin
+      .from('doc_reports')
+      .insert({
+        organization_id,
+        report_type: export_type,
+        title: exportData.title,
+        data: exportData,
+        file_checksum: checksum
+      })
+      .catch(() => {}) // Ignore if table doesn't exist
+    
+    return NextResponse.json({
+      success: true,
+      export_data: exportData,
+      checksum,
+      message: 'Export erfolgreich generiert'
+    })
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

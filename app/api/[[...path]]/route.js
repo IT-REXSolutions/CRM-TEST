@@ -13897,17 +13897,16 @@ async function handleGetDocSnapshots(params) {
   try {
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    let query = supabaseAdmin
-      .from('doc_inventory_snapshots')
-      .select('*')
-      .order('snapshot_date', { ascending: false })
+    const { data, error } = await safeDocQuery('doc_inventory_snapshots', () => {
+      let query = supabaseAdmin.from('doc_inventory_snapshots').select('*').order('snapshot_date', { ascending: false })
+      if (orgId) query = query.eq('organization_id', orgId)
+      return query
+    })
     
-    if (orgId) query = query.eq('organization_id', orgId)
-    
-    const { data, error } = await query
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

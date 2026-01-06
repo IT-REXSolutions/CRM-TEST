@@ -5728,6 +5728,65 @@ function DocumentationPage({ currentUser, subPage }) {
     }
   }
   
+  const exportPDF = async (exportType) => {
+    try {
+      const result = await api.fetch('/documentation/export-pdf', {
+        method: 'POST',
+        body: JSON.stringify({
+          organization_id: selectedOrg,
+          export_type: exportType,
+          title: `${exportType.charAt(0).toUpperCase() + exportType.slice(1)} Export - ${selectedOrgData?.name || 'Organisation'}`
+        })
+      })
+      
+      // Create downloadable JSON (PDF generation in frontend)
+      const blob = new Blob([JSON.stringify(result.export_data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `documentation_${exportType}_${new Date().toISOString().split('T')[0]}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      
+      toast.success(`Export erstellt (Checksum: ${result.checksum?.substring(0, 8)}...)`)
+    } catch (error) {
+      toast.error('Export fehlgeschlagen: ' + error.message)
+    }
+  }
+  
+  const createTicketFromRisk = async (risk) => {
+    try {
+      const result = await api.fetch('/documentation/findings/create-ticket', {
+        method: 'POST',
+        body: JSON.stringify({
+          organization_id: selectedOrg,
+          severity: risk.risk_level,
+          finding_type: risk.has_everyone_access ? 'Everyone-Zugriff' : risk.has_full_control_risk ? 'Full Control Risiko' : 'Berechtigungsrisiko',
+          object_path: risk.path,
+          description: `Berechtigungsrisiko auf ${risk.path}`,
+          created_by_id: currentUser?.id
+        })
+      })
+      toast.success(`Ticket #${result.ticket_number || result.ticket_id?.substring(0, 8)} erstellt`)
+    } catch (error) {
+      toast.error('Fehler: ' + error.message)
+    }
+  }
+  
+  const setupSchema = async () => {
+    try {
+      const result = await api.fetch('/documentation/setup', { method: 'POST' })
+      if (result.success) {
+        toast.success('Schema erstellt!')
+        loadDataForOrg(selectedOrg)
+      } else {
+        toast.info(result.message)
+      }
+    } catch (error) {
+      toast.error('Setup fehlgeschlagen')
+    }
+  }
+  
   const DOC_TABS = [
     { id: 'doc-overview', label: 'Übersicht', icon: LayoutDashboard },
     { id: 'doc-inventory', label: 'Inventar', icon: Server },

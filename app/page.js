@@ -108,6 +108,16 @@ const NAV_ITEMS = [
     { id: 'rmm-remote', label: 'Remote' },
     { id: 'rmm-deployment', label: 'Software' },
   ]},
+  { id: 'documentation', label: 'Dokumentation', icon: FileText, submenu: [
+    { id: 'doc-overview', label: 'Übersicht' },
+    { id: 'doc-inventory', label: 'Inventar' },
+    { id: 'doc-topology', label: 'Netzwerk-Topologie' },
+    { id: 'doc-ad', label: 'Active Directory' },
+    { id: 'doc-permissions', label: 'Berechtigungen' },
+    { id: 'doc-concepts', label: 'Konzepte & Handbücher' },
+    { id: 'doc-reports', label: 'Reports' },
+    { id: 'doc-audit', label: 'Audit' },
+  ]},
   { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
   { id: 'crm', label: 'CRM', icon: Users, submenu: [
     { id: 'contacts', label: 'Kontakte' },

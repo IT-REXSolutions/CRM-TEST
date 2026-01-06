@@ -14310,14 +14310,27 @@ async function handleGetDocUserAccess(params) {
 
 async function handleGetDocTemplates() {
   try {
-    const { data, error } = await supabaseAdmin
-      .from('doc_templates')
-      .select('*')
-      .order('name')
+    const { data, error } = await safeDocQuery('doc_templates', () =>
+      supabaseAdmin
+        .from('doc_templates')
+        .select('*')
+        .order('name')
+    )
     
-    if (error) throw error
+    // Return default templates if table doesn't exist
+    if (!data || error?.message?.includes('does not exist')) {
+      return NextResponse.json([
+        { id: 'tpl-1', name: 'IT-Betriebshandbuch', template_type: 'operations_handbook', description: 'Standard IT-Betriebshandbuch' },
+        { id: 'tpl-2', name: 'IT-Notfallhandbuch', template_type: 'emergency_handbook', description: 'Disaster Recovery Handbuch' },
+        { id: 'tpl-3', name: 'Netzwerkkonzept', template_type: 'network_concept', description: 'Netzwerk-Dokumentation' },
+        { id: 'tpl-4', name: 'Berechtigungskonzept', template_type: 'security_concept', description: 'Berechtigungsstruktur' },
+      ])
+    }
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) {
+      return NextResponse.json([])
+    }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -14327,21 +14340,21 @@ async function handleGetDocDocuments(params) {
     const orgId = params.organization_id || params?.get?.('organization_id')
     const docType = params.document_type || params?.get?.('document_type')
     
-    let query = supabaseAdmin
-      .from('doc_documents')
-      .select(`
-        *,
-        doc_templates(name, template_type)
-      `)
-      .order('updated_at', { ascending: false })
+    const { data, error } = await safeDocQuery('doc_documents', () => {
+      let query = supabaseAdmin
+        .from('doc_documents')
+        .select('*')
+        .order('updated_at', { ascending: false })
+      
+      if (orgId) query = query.eq('organization_id', orgId)
+      if (docType) query = query.eq('document_type', docType)
+      return query
+    })
     
-    if (orgId) query = query.eq('organization_id', orgId)
-    if (docType) query = query.eq('document_type', docType)
-    
-    const { data, error } = await query
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

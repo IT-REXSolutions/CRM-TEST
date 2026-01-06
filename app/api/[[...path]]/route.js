@@ -13965,16 +13965,16 @@ async function handleGetDocADDomains(params) {
   try {
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    let query = supabaseAdmin
-      .from('doc_ad_domains')
-      .select('*')
+    const { data, error } = await safeDocQuery('doc_ad_domains', () => {
+      let query = supabaseAdmin.from('doc_ad_domains').select('*')
+      if (orgId) query = query.eq('organization_id', orgId)
+      return query
+    })
     
-    if (orgId) query = query.eq('organization_id', orgId)
-    
-    const { data, error } = await query
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

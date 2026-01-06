@@ -15167,8 +15167,12 @@ ${description || 'Berechtigungsrisiko erkannt'}
       priority: severity === 'critical' ? 'critical' : severity === 'high' ? 'high' : 'medium',
       status: 'open',
       category: 'security',
-      organization_id,
-      created_by_id
+      organization_id
+    }
+    
+    // Only add created_by_id if provided
+    if (created_by_id) {
+      ticketData.created_by_id = created_by_id
     }
     
     const { data: ticket, error: ticketError } = await supabaseAdmin
@@ -15181,11 +15185,14 @@ ${description || 'Berechtigungsrisiko erkannt'}
     
     // Update finding with ticket reference if table exists
     if (finding_id) {
-      await supabaseAdmin
-        .from('doc_permission_findings')
-        .update({ ticket_id: ticket.id })
-        .eq('id', finding_id)
-        .catch(() => {}) // Ignore if table doesn't exist
+      try {
+        await supabaseAdmin
+          .from('doc_permission_findings')
+          .update({ ticket_id: ticket.id })
+          .eq('id', finding_id)
+      } catch (e) {
+        // Ignore if table doesn't exist
+      }
     }
     
     return NextResponse.json({

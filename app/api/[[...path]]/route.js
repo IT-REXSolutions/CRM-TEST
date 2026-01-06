@@ -15174,12 +15174,8 @@ ${description || 'Berechtigungsrisiko erkannt'}
       priority: severity === 'critical' ? 'critical' : severity === 'high' ? 'high' : 'medium',
       status: 'open',
       category: 'security',
-      organization_id
-    }
-    
-    // Only add created_by_id if provided
-    if (created_by_id) {
-      ticketData.created_by_id = created_by_id
+      organization_id,
+      created_by_id: userId
     }
     
     const { data: ticket, error: ticketError } = await supabaseAdmin

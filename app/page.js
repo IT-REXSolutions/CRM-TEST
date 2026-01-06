@@ -10503,6 +10503,258 @@ function SettingsPage() {
             </div>
           )}
           
+          {/* RMM & Remote Settings */}
+          {activeTab === 'rmm' && (
+            <div className="space-y-6">
+              {/* RMM Settings */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Monitor className="h-5 w-5" />
+                        RMM-Einstellungen
+                      </CardTitle>
+                      <CardDescription>Remote Monitoring & Management Konfiguration</CardDescription>
+                    </div>
+                    <Switch
+                      checked={settings.rmm_enabled === true || settings.rmm_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('rmm_enabled', v)
+                        saveSetting('rmm_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Heartbeat-Intervall (Sekunden)</Label>
+                      <Input
+                        type="number"
+                        value={settings.rmm_heartbeat_interval || 60}
+                        onChange={(e) => updateSetting('rmm_heartbeat_interval', parseInt(e.target.value))}
+                        onBlur={() => saveSetting('rmm_heartbeat_interval', settings.rmm_heartbeat_interval)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Offline-Schwellwert (Sekunden)</Label>
+                      <Input
+                        type="number"
+                        value={settings.rmm_offline_threshold || 300}
+                        onChange={(e) => updateSetting('rmm_offline_threshold', parseInt(e.target.value))}
+                        onBlur={() => saveSetting('rmm_offline_threshold', settings.rmm_offline_threshold)}
+                      />
+                      <p className="text-xs text-muted-foreground">Zeit bis Gerät als offline gilt</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={settings.rmm_auto_ticket_on_critical === true || settings.rmm_auto_ticket_on_critical === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('rmm_auto_ticket_on_critical', v)
+                        saveSetting('rmm_auto_ticket_on_critical', v)
+                      }}
+                    />
+                    <Label>Automatisch Ticket bei kritischen Alerts erstellen</Label>
+                  </div>
+                  
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="font-medium text-blue-800 mb-2">Agent-Installation</h4>
+                    <p className="text-sm text-blue-700 mb-3">
+                      Um Geräte zu überwachen, installieren Sie den IT REX RMM Agent auf den Kundengeräten.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => window.open('/agent/itrex-rmm-agent.ps1', '_blank')}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Windows Agent
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => window.open('/agent/itrex-rmm-agent.sh', '_blank')}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Linux Agent
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* TacticalRMM Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Server className="h-5 w-5 text-green-600" />
+                        TacticalRMM Integration
+                      </CardTitle>
+                      <CardDescription>
+                        Verbindung zu Ihrer selbst-gehosteten TacticalRMM-Instanz
+                      </CardDescription>
+                    </div>
+                    <Switch
+                      checked={settings.tacticalrmm_enabled === true || settings.tacticalrmm_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('tacticalrmm_enabled', v)
+                        saveSetting('tacticalrmm_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
+                      <Label>TacticalRMM API URL</Label>
+                      <Input
+                        value={settings.tacticalrmm_api_url || ''}
+                        onChange={(e) => updateSetting('tacticalrmm_api_url', e.target.value)}
+                        onBlur={() => saveSetting('tacticalrmm_api_url', settings.tacticalrmm_api_url)}
+                        placeholder="https://api.tacticalrmm.ihredomain.de"
+                      />
+                      <p className="text-xs text-muted-foreground">Die API-URL Ihrer TacticalRMM-Installation</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>TacticalRMM API Key</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          type="password"
+                          value={settings.tacticalrmm_api_key || ''}
+                          onChange={(e) => updateSetting('tacticalrmm_api_key', e.target.value)}
+                          onBlur={() => saveSetting('tacticalrmm_api_key', settings.tacticalrmm_api_key)}
+                          placeholder="Ihr TacticalRMM API Key"
+                        />
+                        <Button variant="outline" onClick={async () => {
+                          if (!settings.tacticalrmm_api_url || !settings.tacticalrmm_api_key) {
+                            toast.error('Bitte API URL und Key eingeben')
+                            return
+                          }
+                          try {
+                            const result = await api.fetch('/tacticalrmm/sync', {
+                              method: 'POST',
+                              body: JSON.stringify({ sync_type: 'clients' })
+                            })
+                            if (result.success) {
+                              toast.success(`Verbindung OK! ${result.stats?.processed || 0} Clients gefunden`)
+                            }
+                          } catch (e) {
+                            toast.error('Verbindung fehlgeschlagen')
+                          }
+                        }}>
+                          Testen
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={settings.tacticalrmm_sync_agents === true || settings.tacticalrmm_sync_agents === 'true'}
+                        onCheckedChange={(v) => {
+                          updateSetting('tacticalrmm_sync_agents', v)
+                          saveSetting('tacticalrmm_sync_agents', v)
+                        }}
+                      />
+                      <Label className="text-sm">Agents sync</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={settings.tacticalrmm_sync_alerts === true || settings.tacticalrmm_sync_alerts === 'true'}
+                        onCheckedChange={(v) => {
+                          updateSetting('tacticalrmm_sync_alerts', v)
+                          saveSetting('tacticalrmm_sync_alerts', v)
+                        }}
+                      />
+                      <Label className="text-sm">Alerts sync</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={settings.tacticalrmm_auto_ticket === true || settings.tacticalrmm_auto_ticket === 'true'}
+                        onCheckedChange={(v) => {
+                          updateSetting('tacticalrmm_auto_ticket', v)
+                          saveSetting('tacticalrmm_auto_ticket', v)
+                        }}
+                      />
+                      <Label className="text-sm">Auto-Ticket</Label>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* RustDesk Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Monitor className="h-5 w-5 text-orange-600" />
+                        RustDesk Integration
+                      </CardTitle>
+                      <CardDescription>Selbst-gehosteter Remote-Desktop</CardDescription>
+                    </div>
+                    <Switch
+                      checked={settings.rustdesk_enabled === true || settings.rustdesk_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('rustdesk_enabled', v)
+                        saveSetting('rustdesk_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>RustDesk ID Server</Label>
+                      <Input
+                        value={settings.rustdesk_id_server || ''}
+                        onChange={(e) => updateSetting('rustdesk_id_server', e.target.value)}
+                        onBlur={() => saveSetting('rustdesk_id_server', settings.rustdesk_id_server)}
+                        placeholder="rustdesk.ihredomain.de"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>RustDesk Relay Server</Label>
+                      <Input
+                        value={settings.rustdesk_relay_server || ''}
+                        onChange={(e) => updateSetting('rustdesk_relay_server', e.target.value)}
+                        onBlur={() => saveSetting('rustdesk_relay_server', settings.rustdesk_relay_server)}
+                        placeholder="(gleich wie ID Server)"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label>RustDesk Public Key</Label>
+                    <Textarea
+                      value={settings.rustdesk_public_key || ''}
+                      onChange={(e) => updateSetting('rustdesk_public_key', e.target.value)}
+                      onBlur={() => saveSetting('rustdesk_public_key', settings.rustdesk_public_key)}
+                      placeholder="Public Key aus id_ed25519.pub"
+                      rows={2}
+                    />
+                  </div>
+                  
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                    <h4 className="font-medium text-orange-800 mb-2">RustDesk Downloads</h4>
+                    <Button variant="outline" size="sm" onClick={() => window.open('https://github.com/rustdesk/rustdesk/releases', '_blank')}>
+                      <ExternalLink className="h-4 w-4 mr-2" />
+                      RustDesk Client herunterladen
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <div className="flex justify-end">
+                <Button onClick={() => saveSettingsCategory('rmm')}>
+                  <Save className="h-4 w-4 mr-2" />
+                  Alle RMM-Einstellungen speichern
+                </Button>
+              </div>
+            </div>
+          )}
+          
           {/* Automations */}
           {activeTab === 'automations' && (
             <Card>

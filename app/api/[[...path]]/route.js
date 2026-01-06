@@ -14545,18 +14545,17 @@ async function handleGetDocReports(params) {
     const orgId = params.organization_id || params?.get?.('organization_id')
     const reportType = params.report_type || params?.get?.('report_type')
     
-    let query = supabaseAdmin
-      .from('doc_reports')
-      .select('*')
-      .order('generated_at', { ascending: false })
+    const { data, error } = await safeDocQuery('doc_reports', () => {
+      let query = supabaseAdmin.from('doc_reports').select('*').order('generated_at', { ascending: false })
+      if (orgId) query = query.eq('organization_id', orgId)
+      if (reportType) query = query.eq('report_type', reportType)
+      return query
+    })
     
-    if (orgId) query = query.eq('organization_id', orgId)
-    if (reportType) query = query.eq('report_type', reportType)
-    
-    const { data, error } = await query
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

@@ -17207,6 +17207,16 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleSendSLANotifications())
     }
     
+    // --- NOTIFICATIONS ---
+    if (route === '/notifications' && method === 'GET') {
+      return handleCORS(await handleGetNotifications(searchParams))
+    }
+    
+    // --- REPORTS SUMMARY ---
+    if (route === '/reports/summary' && method === 'GET') {
+      return handleCORS(await handleGetReportsSummary(searchParams))
+    }
+    
     // --- AI DAILY ASSISTANT ---
     if (route === '/ai/daily-summary' && method === 'GET') {
       return handleCORS(await handleGetDailySummary(searchParams))

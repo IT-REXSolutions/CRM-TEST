@@ -19777,6 +19777,23 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleGetDocServices(searchParams))
     }
     
+    // Documentation Setup - Create Schema
+    if (route === '/documentation/setup' && method === 'POST') {
+      return handleCORS(await handleDocumentationSetup())
+    }
+    
+    // Documentation - Create Finding Ticket
+    if (route === '/documentation/findings/create-ticket' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateFindingTicket(body))
+    }
+    
+    // Documentation - Export PDF
+    if (route === '/documentation/export-pdf' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleExportDocumentationPDF(body))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

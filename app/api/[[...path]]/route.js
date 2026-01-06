@@ -18461,6 +18461,151 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleRestoreFullBackup(backupId, body))
     }
     
+    // ============================================
+    // DOCUMENTATION MODULE ROUTES
+    // ============================================
+    
+    // Documentation Hub - Get overview for an organization
+    if (route.match(/^\/documentation\/organizations\/[^/]+\/overview$/) && method === 'GET') {
+      const orgId = route.split('/')[3]
+      return handleCORS(await handleGetDocumentationOverview(orgId))
+    }
+    
+    // Discovery Scans
+    if (route === '/documentation/scans' && method === 'GET') {
+      return handleCORS(await handleGetDocScans(searchParams))
+    }
+    if (route === '/documentation/scans' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateDocScan(body))
+    }
+    if (route.match(/^\/documentation\/scans\/[^/]+$/) && method === 'GET') {
+      const scanId = route.split('/')[3]
+      return handleCORS(await handleGetDocScan(scanId))
+    }
+    if (route.match(/^\/documentation\/scans\/[^/]+\/run$/) && method === 'POST') {
+      const scanId = route.split('/')[3]
+      return handleCORS(await handleRunDocScan(scanId))
+    }
+    
+    // Inventory
+    if (route === '/documentation/inventory' && method === 'GET') {
+      return handleCORS(await handleGetDocInventory(searchParams))
+    }
+    if (route.match(/^\/documentation\/inventory\/[^/]+$/) && method === 'GET') {
+      const itemId = route.split('/')[3]
+      return handleCORS(await handleGetDocInventoryItem(itemId))
+    }
+    
+    // Snapshots
+    if (route === '/documentation/snapshots' && method === 'GET') {
+      return handleCORS(await handleGetDocSnapshots(searchParams))
+    }
+    if (route.match(/^\/documentation\/snapshots\/[^/]+\/compare$/) && method === 'GET') {
+      const snapshotId = route.split('/')[3]
+      return handleCORS(await handleCompareSnapshots(snapshotId, searchParams))
+    }
+    
+    // Active Directory
+    if (route === '/documentation/ad/domains' && method === 'GET') {
+      return handleCORS(await handleGetDocADDomains(searchParams))
+    }
+    if (route === '/documentation/ad/users' && method === 'GET') {
+      return handleCORS(await handleGetDocADUsers(searchParams))
+    }
+    if (route === '/documentation/ad/groups' && method === 'GET') {
+      return handleCORS(await handleGetDocADGroups(searchParams))
+    }
+    if (route === '/documentation/ad/computers' && method === 'GET') {
+      return handleCORS(await handleGetDocADComputers(searchParams))
+    }
+    if (route === '/documentation/ad/gpos' && method === 'GET') {
+      return handleCORS(await handleGetDocADGPOs(searchParams))
+    }
+    
+    // Network Topology
+    if (route === '/documentation/network/devices' && method === 'GET') {
+      return handleCORS(await handleGetDocNetworkDevices(searchParams))
+    }
+    if (route === '/documentation/network/vlans' && method === 'GET') {
+      return handleCORS(await handleGetDocVLANs(searchParams))
+    }
+    if (route === '/documentation/network/topology' && method === 'GET') {
+      return handleCORS(await handleGetDocTopology(searchParams))
+    }
+    
+    // Permissions
+    if (route === '/documentation/permissions/shares' && method === 'GET') {
+      return handleCORS(await handleGetDocShares(searchParams))
+    }
+    if (route === '/documentation/permissions/ntfs' && method === 'GET') {
+      return handleCORS(await handleGetDocNTFSPermissions(searchParams))
+    }
+    if (route === '/documentation/permissions/risks' && method === 'GET') {
+      return handleCORS(await handleGetDocPermissionRisks(searchParams))
+    }
+    if (route === '/documentation/permissions/user-access' && method === 'GET') {
+      return handleCORS(await handleGetDocUserAccess(searchParams))
+    }
+    
+    // Concepts & Documents
+    if (route === '/documentation/templates' && method === 'GET') {
+      return handleCORS(await handleGetDocTemplates())
+    }
+    if (route === '/documentation/documents' && method === 'GET') {
+      return handleCORS(await handleGetDocDocuments(searchParams))
+    }
+    if (route === '/documentation/documents' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateDocDocument(body))
+    }
+    if (route.match(/^\/documentation\/documents\/[^/]+$/) && method === 'GET') {
+      const docId = route.split('/')[3]
+      return handleCORS(await handleGetDocDocument(docId))
+    }
+    if (route.match(/^\/documentation\/documents\/[^/]+$/) && method === 'PUT') {
+      const docId = route.split('/')[3]
+      const body = await request.json()
+      return handleCORS(await handleUpdateDocDocument(docId, body))
+    }
+    if (route.match(/^\/documentation\/documents\/[^/]+\/auto-fill$/) && method === 'POST') {
+      const docId = route.split('/')[3]
+      return handleCORS(await handleAutoFillDocument(docId))
+    }
+    if (route.match(/^\/documentation\/documents\/[^/]+\/export-pdf$/) && method === 'POST') {
+      const docId = route.split('/')[3]
+      return handleCORS(await handleExportDocumentPDF(docId))
+    }
+    
+    // Reports
+    if (route === '/documentation/reports' && method === 'GET') {
+      return handleCORS(await handleGetDocReports(searchParams))
+    }
+    if (route === '/documentation/reports' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleGenerateDocReport(body))
+    }
+    if (route.match(/^\/documentation\/reports\/[^/]+$/) && method === 'GET') {
+      const reportId = route.split('/')[3]
+      return handleCORS(await handleGetDocReport(reportId))
+    }
+    
+    // Audit View
+    if (route === '/documentation/audit' && method === 'GET') {
+      return handleCORS(await handleGetDocAuditView(searchParams))
+    }
+    if (route === '/documentation/audit/log' && method === 'GET') {
+      return handleCORS(await handleGetDocAuditLog(searchParams))
+    }
+    
+    // Server Roles & Services
+    if (route === '/documentation/server-roles' && method === 'GET') {
+      return handleCORS(await handleGetDocServerRoles(searchParams))
+    }
+    if (route === '/documentation/services' && method === 'GET') {
+      return handleCORS(await handleGetDocServices(searchParams))
+    }
+    
     // Route not found
     return handleCORS(NextResponse.json(
       { error: `Route ${route} nicht gefunden` }, 

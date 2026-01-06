@@ -14064,13 +14064,15 @@ async function handleGetDocADGPOs(params) {
     const domainId = params.domain_id || params?.get?.('domain_id')
     
     const { data, error } = await safeDocQuery('doc_ad_gpos', () => {
-    let query = supabaseAdmin.from('doc_ad_gpos').select('*')
-    if (domainId) query = query.eq('domain_id', domainId)
+      let query = supabaseAdmin.from('doc_ad_gpos').select('*')
+      if (domainId) query = query.eq('domain_id', domainId)
+      return query.order('display_name')
+    })
     
-    const { data, error } = await query.order('display_name')
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

@@ -15148,6 +15148,13 @@ async function handleCreateFindingTicket(body) {
   try {
     const { finding_id, organization_id, severity, finding_type, object_path, description, created_by_id } = body
     
+    // Get a default user if not provided
+    let userId = created_by_id
+    if (!userId) {
+      const { data: users } = await supabaseAdmin.from('users').select('id').limit(1)
+      userId = users?.[0]?.id
+    }
+    
     // Create a ticket from the finding
     const ticketData = {
       subject: `[${severity?.toUpperCase()}] Berechtigungsrisiko: ${finding_type}`,

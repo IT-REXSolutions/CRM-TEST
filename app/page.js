@@ -6351,7 +6351,7 @@ function DocumentationPage({ currentUser, subPage }) {
                               )}
                             </TableCell>
                             <TableCell>
-                              <Button size="sm" variant="outline">
+                              <Button size="sm" variant="outline" onClick={() => exportPDF('full')}>
                                 <Download className="w-4 h-4 mr-1" /> PDF
                               </Button>
                             </TableCell>

@@ -13984,26 +13984,28 @@ async function handleGetDocADUsers(params) {
     const domainId = params.domain_id || params?.get?.('domain_id')
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    let query = supabaseAdmin.from('doc_ad_users').select('*')
-    
-    if (domainId) {
-      query = query.eq('domain_id', domainId)
-    } else if (orgId) {
-      // Get domain IDs for this org first
-      const { data: domains } = await supabaseAdmin
-        .from('doc_ad_domains')
-        .select('id')
-        .eq('organization_id', orgId)
+    const { data, error } = await safeDocQuery('doc_ad_users', async () => {
+      let query = supabaseAdmin.from('doc_ad_users').select('*')
       
-      if (domains?.length) {
-        query = query.in('domain_id', domains.map(d => d.id))
+      if (domainId) {
+        query = query.eq('domain_id', domainId)
+      } else if (orgId) {
+        const { data: domains } = await supabaseAdmin
+          .from('doc_ad_domains')
+          .select('id')
+          .eq('organization_id', orgId)
+        
+        if (domains?.length) {
+          query = query.in('domain_id', domains.map(d => d.id))
+        }
       }
-    }
+      return query.order('display_name')
+    })
     
-    const { data, error } = await query.order('display_name')
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -14013,11 +14015,12 @@ async function handleGetDocADGroups(params) {
     const domainId = params.domain_id || params?.get?.('domain_id')
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    let query = supabaseAdmin.from('doc_ad_groups').select('*')
-    
-    if (domainId) {
-      query = query.eq('domain_id', domainId)
-    } else if (orgId) {
+    const { data, error } = await safeDocQuery('doc_ad_groups', async () => {
+      let query = supabaseAdmin.from('doc_ad_groups').select('*')
+      
+      if (domainId) {
+        query = query.eq('domain_id', domainId)
+      } else if (orgId) {
       const { data: domains } = await supabaseAdmin
         .from('doc_ad_domains')
         .select('id')

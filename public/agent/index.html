@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IT REX RMM Agent - Installation</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; line-height: 1.6; }
+        .container { max-width: 900px; margin: 0 auto; padding: 2rem; }
+        .header { background: linear-gradient(135deg, #3b82f6, #1e40af); color: white; padding: 2rem; border-radius: 12px; margin-bottom: 2rem; }
+        .header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+        .header p { opacity: 0.9; }
+        .card { background: white; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card h2 { color: #3b82f6; font-size: 1.25rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+        .card h2::before { content: ''; width: 4px; height: 24px; background: #3b82f6; border-radius: 2px; }
+        pre { background: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.875rem; }
+        code { background: #e2e8f0; padding: 0.125rem 0.375rem; border-radius: 4px; font-size: 0.875rem; }
+        .step { display: flex; gap: 1rem; margin-bottom: 1rem; }
+        .step-number { background: #3b82f6; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+        .step-content { flex: 1; }
+        .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .tab { padding: 0.5rem 1rem; border: none; background: #e2e8f0; border-radius: 6px; cursor: pointer; font-weight: 500; }
+        .tab.active { background: #3b82f6; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 0 8px 8px 0; margin: 1rem 0; }
+        .info { background: #dbeafe; border-left: 4px solid #3b82f6; padding: 1rem; border-radius: 0 8px 8px 0; margin: 1rem 0; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background: #f8fafc; font-weight: 600; }
+        .btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: 500; cursor: pointer; text-decoration: none; }
+        .btn:hover { background: #2563eb; }
+        .btn-outline { background: white; color: #3b82f6; border: 2px solid #3b82f6; }
+        .btn-outline:hover { background: #eff6ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🖥️ IT REX RMM Agent</h1>
+            <p>Remote Monitoring & Management Agent - Installationsanleitung</p>
+        </div>
+
+        <div class="card">
+            <h2>Voraussetzungen</h2>
+            <table>
+                <tr>
+                    <th>Betriebssystem</th>
+                    <th>Mindestanforderungen</th>
+                </tr>
+                <tr>
+                    <td>Windows</td>
+                    <td>Windows 10/11, Windows Server 2016+, PowerShell 5.1+</td>
+                </tr>
+                <tr>
+                    <td>Linux</td>
+                    <td>Ubuntu 18.04+, Debian 10+, CentOS 7+, curl, jq, bc installiert</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Schritt 1: Enrollment-Token generieren</h2>
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <p>Öffnen Sie das IT REX ServiceDesk und navigieren Sie zu <strong>RMM → Übersicht</strong></p>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <p>Klicken Sie auf <strong>+ Enrollment-Token</strong></p>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <p>Wählen Sie die <strong>Organisation</strong> und den <strong>Gerätetyp</strong></p>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <p>Kopieren Sie den generierten Token (z.B. <code>ITREX-ABC123DEF-456GHI</code>)</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Schritt 2: Agent installieren</h2>
+            
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('windows')">Windows</button>
+                <button class="tab" onclick="showTab('linux')">Linux</button>
+            </div>
+
+            <div id="windows" class="tab-content active">
+                <h3 style="margin-bottom: 1rem;">Windows Installation (PowerShell)</h3>
+                
+                <div class="info">
+                    <strong>Tipp:</strong> Führen Sie PowerShell als Administrator aus!
+                </div>
+
+                <p><strong>Option 1: Direkt ausführen</strong></p>
+                <pre>
+# Agent herunterladen und starten
+$token = "IHR-ENROLLMENT-TOKEN"
+$server = "https://ihr-servicedesk.domain.de"
+
+Invoke-WebRequest -Uri "$server/agent/itrex-rmm-agent.ps1" -OutFile "C:\Temp\itrex-rmm-agent.ps1"
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+& "C:\Temp\itrex-rmm-agent.ps1" -EnrollmentToken $token -ServerUrl $server</pre>
+
+                <p style="margin-top: 1rem;"><strong>Option 2: Als Windows-Dienst installieren</strong></p>
+                <pre>
+# Als geplante Aufgabe registrieren (startet bei Systemstart)
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -File C:\Temp\itrex-rmm-agent.ps1 -EnrollmentToken IHR-TOKEN -ServerUrl https://ihr-server.de"
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "IT REX RMM Agent" -Action $action -Trigger $trigger -Settings $settings -User "SYSTEM" -RunLevel Highest</pre>
+
+                <div style="margin-top: 1rem;">
+                    <a href="/agent/itrex-rmm-agent.ps1" class="btn" download>
+                        ⬇️ Windows Agent herunterladen
+                    </a>
+                </div>
+            </div>
+
+            <div id="linux" class="tab-content">
+                <h3 style="margin-bottom: 1rem;">Linux Installation (Bash)</h3>
+
+                <div class="info">
+                    <strong>Voraussetzungen installieren:</strong><br>
+                    <code>sudo apt-get install -y curl jq bc</code>
+                </div>
+
+                <p><strong>Installation:</strong></p>
+                <pre>
+# Agent herunterladen und ausführen
+TOKEN="IHR-ENROLLMENT-TOKEN"
+SERVER="https://ihr-servicedesk.domain.de"
+
+curl -o /opt/itrex-rmm-agent.sh "$SERVER/agent/itrex-rmm-agent.sh"
+chmod +x /opt/itrex-rmm-agent.sh
+sudo /opt/itrex-rmm-agent.sh -t "$TOKEN" -s "$SERVER"</pre>
+
+                <p style="margin-top: 1rem;"><strong>Als Systemd-Service installieren:</strong></p>
+                <pre>
+# Systemd Service erstellen
+sudo tee /etc/systemd/system/itrex-rmm-agent.service > /dev/null << EOF
+[Unit]
+Description=IT REX RMM Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/itrex-rmm-agent.sh -t IHR-TOKEN -s https://ihr-server.de
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Service aktivieren und starten
+sudo systemctl daemon-reload
+sudo systemctl enable itrex-rmm-agent
+sudo systemctl start itrex-rmm-agent</pre>
+
+                <div style="margin-top: 1rem;">
+                    <a href="/agent/itrex-rmm-agent.sh" class="btn" download>
+                        ⬇️ Linux Agent herunterladen
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Schritt 3: Überprüfen</h2>
+            <div class="step">
+                <div class="step-number">✓</div>
+                <div class="step-content">
+                    <p>Öffnen Sie <strong>RMM → Geräte</strong> im ServiceDesk</p>
+                    <p>Das neue Gerät sollte mit Status <strong>🟢 Online</strong> erscheinen</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Agent-Funktionen</h2>
+            <table>
+                <tr>
+                    <th>Funktion</th>
+                    <th>Beschreibung</th>
+                    <th>Intervall</th>
+                </tr>
+                <tr>
+                    <td>Heartbeat</td>
+                    <td>CPU, RAM, Disk-Auslastung, Uptime</td>
+                    <td>60 Sekunden</td>
+                </tr>
+                <tr>
+                    <td>Inventar</td>
+                    <td>Hardware- und Software-Inventar</td>
+                    <td>Stündlich</td>
+                </tr>
+                <tr>
+                    <td>Jobs</td>
+                    <td>Remote-Skripte und Deployments ausführen</td>
+                    <td>Bei Heartbeat geprüft</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="card">
+            <h2>Fehlerbehebung</h2>
+            <div class="warning">
+                <strong>Agent registriert sich nicht?</strong>
+                <ul style="margin-top: 0.5rem; margin-left: 1.5rem;">
+                    <li>Prüfen Sie, ob der Token noch gültig ist</li>
+                    <li>Stellen Sie sicher, dass der Server erreichbar ist</li>
+                    <li>Prüfen Sie die Firewall-Einstellungen (HTTPS Port 443)</li>
+                </ul>
+            </div>
+
+            <p><strong>Log-Dateien:</strong></p>
+            <ul style="margin-left: 1.5rem;">
+                <li>Windows: <code>C:\ProgramData\ITREX-RMM\agent.log</code></li>
+                <li>Linux: <code>/var/log/itrex-rmm-agent.log</code></li>
+            </ul>
+        </div>
+
+        <div style="text-align: center; margin-top: 2rem; color: #64748b;">
+            <p>IT REX RMM Agent v1.0.0 | © IT REX Solutions</p>
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            document.querySelector(`[onclick="showTab('${tabId}')"]`).classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        }
+    </script>
+</body>
+</html>

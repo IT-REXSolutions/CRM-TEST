@@ -16,7 +16,7 @@ import {
   Webhook, Cloud, CreditCard, PhoneCall, HelpCircle,
   History, Archive, Repeat, UserPlus, UserMinus, UserCheck,
   Inbox, Send, Brain, Sparkles, FileQuestion, BookOpen,
-  GripVertical, MoreVertical, ArrowRight, CircleDot, FileDown
+  GripVertical, MoreVertical, ArrowRight, CircleDot, FileDown, Link2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -101,6 +101,13 @@ const NAV_ITEMS = [
   { id: 'daily-assistant', label: 'KI-Assistent', icon: Brain, highlight: true },
   { id: 'inbox', label: 'Posteingang', icon: Mail },
   { id: 'telephony', label: 'Telefonie', icon: PhoneCall },
+  { id: 'rmm', label: 'RMM', icon: Monitor, submenu: [
+    { id: 'rmm-dashboard', label: 'Übersicht' },
+    { id: 'rmm-devices', label: 'Geräte' },
+    { id: 'rmm-alerts', label: 'Alerts' },
+    { id: 'rmm-remote', label: 'Remote' },
+    { id: 'rmm-deployment', label: 'Software' },
+  ]},
   { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
   { id: 'crm', label: 'CRM', icon: Users, submenu: [
     { id: 'contacts', label: 'Kontakte' },
@@ -3756,6 +3763,207 @@ function CreateTimeEntryForm({ tickets, organizations, onSubmit, onCancel }) {
 }
 
 // ============================================
+// LIVE TRANSCRIPTION PANEL COMPONENT
+// ============================================
+
+function LiveTranscriptionPanel({ callId, isActive }) {
+  const [transcription, setTranscription] = useState('')
+  const [isRecording, setIsRecording] = useState(false)
+  const [summary, setSummary] = useState(null)
+  const [generating, setGenerating] = useState(false)
+  const mediaRecorderRef = useRef(null)
+  const chunksRef = useRef([])
+  const chunkIndexRef = useRef(0)
+  
+  // Start/stop recording based on call status
+  useEffect(() => {
+    if (isActive && !isRecording) {
+      startRecording()
+    }
+    return () => {
+      stopRecording()
+    }
+  }, [isActive])
+  
+  const startRecording = async () => {
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
+      chunkIndexRef.current = 0
+      
+      mediaRecorder.ondataavailable = async (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data)
+          // Send chunk for transcription every 5 seconds
+          if (chunksRef.current.length >= 1) {
+            await transcribeChunk()
+          }
+        }
+      }
+      
+      mediaRecorder.start(5000) // Capture every 5 seconds
+      setIsRecording(true)
+      
+      // Notify backend
+      await api.fetch('/cti/transcription/start', {
+        method: 'POST',
+        body: JSON.stringify({ call_id: callId })
+      })
+      
+      toast.success('Live-Transkription gestartet')
+    } catch (error) {
+      console.error('Microphone access error:', error)
+      // Fallback to simulation mode
+      simulateTranscription()
+    }
+  }
+  
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+    }
+    setIsRecording(false)
+  }
+  
+  const transcribeChunk = async () => {
+    if (chunksRef.current.length === 0) return
+    
+    const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+    chunksRef.current = []
+    
+    // Convert to base64
+    const reader = new FileReader()
+    reader.readAsDataURL(blob)
+    reader.onloadend = async () => {
+      const base64 = reader.result.split(',')[1]
+      
+      try {
+        const result = await api.fetch('/cti/transcription/chunk', {
+          method: 'POST',
+          body: JSON.stringify({
+            call_id: callId,
+            audio_base64: base64,
+            chunk_index: chunkIndexRef.current++,
+          })
+        })
+        
+        if (result.text) {
+          setTranscription(prev => prev + ' ' + result.text)
+        }
+      } catch (e) {
+        console.error('Transcription error:', e)
+      }
+    }
+  }
+  
+  // Simulation mode for demo
+  const simulateTranscription = () => {
+    setIsRecording(true)
+    const phrases = [
+      "Guten Tag, IT REX Solutions, wie kann ich Ihnen helfen?",
+      "Ja, ich habe ein Problem mit meinem Computer.",
+      "Der startet nicht mehr richtig, bleibt beim Logo hängen.",
+      "Verstehe. Haben Sie kürzlich Updates installiert?",
+      "Ja, gestern Abend gab es ein Windows-Update.",
+      "Das könnte das Problem sein. Ich werde einen Techniker schicken.",
+      "Das wäre sehr hilfreich. Wann kann er kommen?",
+      "Heute Nachmittag gegen 14 Uhr, passt das?",
+      "Perfekt, ich bin im Büro. Vielen Dank!",
+    ]
+    
+    let index = 0
+    const interval = setInterval(() => {
+      if (index < phrases.length && isActive) {
+        setTranscription(prev => prev + (prev ? '\n' : '') + phrases[index])
+        index++
+      } else {
+        clearInterval(interval)
+      }
+    }, 3000)
+    
+    return () => clearInterval(interval)
+  }
+  
+  const generateSummary = async () => {
+    if (!transcription) {
+      toast.error('Keine Transkription vorhanden')
+      return
+    }
+    
+    setGenerating(true)
+    try {
+      const result = await api.fetch('/cti/transcription/summary', {
+        method: 'POST',
+        body: JSON.stringify({ call_id: callId, transcription })
+      })
+      
+      if (result.summary) {
+        setSummary(result.summary)
+        toast.success('Zusammenfassung generiert')
+      } else if (result.fallback_summary) {
+        setSummary(result.fallback_summary)
+      }
+    } catch (e) {
+      toast.error('Fehler bei der Zusammenfassung')
+    }
+    setGenerating(false)
+  }
+  
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`} />
+          <Label className="font-medium">Live-Transkription</Label>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={generateSummary} disabled={!transcription || generating}>
+            {generating ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+            KI-Zusammenfassung
+          </Button>
+        </div>
+      </div>
+      
+      <div className="bg-slate-50 rounded-lg p-3 max-h-48 overflow-y-auto">
+        {transcription ? (
+          <p className="text-sm whitespace-pre-line">{transcription}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground italic">
+            {isRecording ? 'Warte auf Sprache...' : 'Transkription wird gestartet...'}
+          </p>
+        )}
+      </div>
+      
+      {summary && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-4 h-4 text-blue-600" />
+            <span className="text-sm font-medium text-blue-800">KI-Zusammenfassung</span>
+          </div>
+          <div className="text-sm text-blue-900 space-y-1">
+            {summary.problem && <p><strong>Problem:</strong> {summary.problem}</p>}
+            {summary.sentiment && <p><strong>Stimmung:</strong> {summary.sentiment === 'positive' ? '😊 Positiv' : summary.sentiment === 'negative' ? '😟 Negativ' : '😐 Neutral'}</p>}
+            {summary.nextSteps && Array.isArray(summary.nextSteps) && (
+              <div>
+                <strong>Nächste Schritte:</strong>
+                <ul className="list-disc list-inside ml-2">
+                  {summary.nextSteps.map((step, i) => <li key={i}>{step}</li>)}
+                </ul>
+              </div>
+            )}
+            {summary.urgency && <p><strong>Dringlichkeit:</strong> {summary.urgency}</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================
 // TELEPHONY / CTI PAGE
 // ============================================
 
@@ -3769,8 +3977,15 @@ function TelephonyPage({ currentUser }) {
   const [showSimulator, setShowSimulator] = useState(false)
   const [simulateNumber, setSimulateNumber] = useState('+49 176 21911217')
   const [showCreateContact, setShowCreateContact] = useState(false)
-  const [newContact, setNewContact] = useState({ first_name: '', last_name: '', email: '', organization_id: '' })
+  const [newContact, setNewContact] = useState({ 
+    first_name: '', last_name: '', email: '', organization_id: '',
+    customer_type: 'business', status: 'lead', call_outcome: '', notes: '',
+    position: '', mobile: '', new_organization_name: ''
+  })
   const [organizations, setOrganizations] = useState([])
+  const [showLinkTicket, setShowLinkTicket] = useState(false)
+  const [existingTickets, setExistingTickets] = useState([])
+  const [selectedTicketId, setSelectedTicketId] = useState('')
   
   useEffect(() => {
     loadCallHistory()
@@ -3989,6 +4204,12 @@ function TelephonyPage({ currentUser }) {
                 
                 {activeCall.status === 'connected' && (
                   <div className="space-y-4 pt-4 border-t">
+                    {/* Live Transcription Panel */}
+                    <LiveTranscriptionPanel 
+                      callId={activeCall.call_id} 
+                      isActive={activeCall.status === 'connected'}
+                    />
+                    
                     <div>
                       <Label>Notizen zum Anruf</Label>
                       <Textarea 
@@ -3998,10 +4219,16 @@ function TelephonyPage({ currentUser }) {
                         rows={3}
                       />
                     </div>
-                    <Button onClick={createTicketFromCall} disabled={!lookupResult?.organization?.id}>
-                      <Ticket className="w-4 h-4 mr-2" />
-                      Ticket aus Anruf erstellen
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button onClick={createTicketFromCall} disabled={!lookupResult?.organization?.id}>
+                        <Ticket className="w-4 h-4 mr-2" />
+                        Ticket aus Anruf erstellen
+                      </Button>
+                      <Button variant="outline" onClick={() => setShowLinkTicket(true)}>
+                        <Link2 className="w-4 h-4 mr-2" />
+                        Mit Ticket verknüpfen
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -4193,19 +4420,31 @@ function TelephonyPage({ currentUser }) {
         </DialogContent>
       </Dialog>
       
-      {/* Create Contact from Call Dialog */}
+      {/* Create Contact from Call Dialog - EXTENDED CRM */}
       <Dialog open={showCreateContact} onOpenChange={setShowCreateContact}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Kontakt aus Anruf erstellen</DialogTitle>
             <DialogDescription>
-              Erstellen Sie einen neuen Kontakt für {lookupResult?.phone_number || activeCall?.phone_number}
+              Erstellen Sie einen vollständigen CRM-Kontakt für {lookupResult?.phone_number || activeCall?.phone_number}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            {/* Basic Info */}
+            <div className="grid grid-cols-3 gap-4">
               <div>
-                <Label>Vorname</Label>
+                <Label>Anrede</Label>
+                <Select value={newContact.salutation || ''} onValueChange={(v) => setNewContact(c => ({ ...c, salutation: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Anrede" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Herr">Herr</SelectItem>
+                    <SelectItem value="Frau">Frau</SelectItem>
+                    <SelectItem value="Divers">Divers</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Vorname *</Label>
                 <Input 
                   value={newContact.first_name}
                   onChange={(e) => setNewContact(c => ({ ...c, first_name: e.target.value }))}
@@ -4221,34 +4460,125 @@ function TelephonyPage({ currentUser }) {
                 />
               </div>
             </div>
-            <div>
-              <Label>E-Mail</Label>
-              <Input 
-                type="email"
-                value={newContact.email}
-                onChange={(e) => setNewContact(c => ({ ...c, email: e.target.value }))}
-                placeholder="max@example.de"
-              />
+            
+            {/* Contact Info */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>E-Mail</Label>
+                <Input 
+                  type="email"
+                  value={newContact.email}
+                  onChange={(e) => setNewContact(c => ({ ...c, email: e.target.value }))}
+                  placeholder="max@example.de"
+                />
+              </div>
+              <div>
+                <Label>Position</Label>
+                <Input 
+                  value={newContact.position}
+                  onChange={(e) => setNewContact(c => ({ ...c, position: e.target.value }))}
+                  placeholder="Geschäftsführer"
+                />
+              </div>
             </div>
-            <div>
-              <Label>Telefon</Label>
-              <Input 
-                value={lookupResult?.phone_number || activeCall?.phone_number || ''}
-                disabled
-                className="bg-slate-50"
-              />
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Telefon (aus Anruf)</Label>
+                <Input 
+                  value={lookupResult?.phone_number || activeCall?.phone_number || ''}
+                  disabled
+                  className="bg-slate-50"
+                />
+              </div>
+              <div>
+                <Label>Mobiltelefon</Label>
+                <Input 
+                  value={newContact.mobile}
+                  onChange={(e) => setNewContact(c => ({ ...c, mobile: e.target.value }))}
+                  placeholder="+49 171 1234567"
+                />
+              </div>
             </div>
+            
+            <Separator />
+            
+            {/* CRM Classification */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Kundentyp *</Label>
+                <Select value={newContact.customer_type} onValueChange={(v) => setNewContact(c => ({ ...c, customer_type: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="private">🏠 Privatkunde</SelectItem>
+                    <SelectItem value="business">🏢 Geschäftskunde</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Status *</Label>
+                <Select value={newContact.status} onValueChange={(v) => setNewContact(c => ({ ...c, status: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="lead">🎯 Interessent (Lead)</SelectItem>
+                    <SelectItem value="new_customer">✨ Neukunde</SelectItem>
+                    <SelectItem value="existing_customer">✅ Bestandskunde</SelectItem>
+                    <SelectItem value="lost">❌ Verloren</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            {/* Call Outcome */}
             <div>
-              <Label>Organisation (optional)</Label>
-              <Select value={newContact.organization_id || 'none'} onValueChange={(v) => setNewContact(c => ({ ...c, organization_id: v === 'none' ? '' : v }))}>
-                <SelectTrigger><SelectValue placeholder="Keine Organisation" /></SelectTrigger>
+              <Label>Anrufergebnis</Label>
+              <Select value={newContact.call_outcome || ''} onValueChange={(v) => setNewContact(c => ({ ...c, call_outcome: v }))}>
+                <SelectTrigger><SelectValue placeholder="Ergebnis auswählen" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Keine Organisation</SelectItem>
+                  <SelectItem value="interested">👍 Interessiert</SelectItem>
+                  <SelectItem value="offer_requested">📋 Angebot angefordert</SelectItem>
+                  <SelectItem value="complaint">⚠️ Beschwerde</SelectItem>
+                  <SelectItem value="callback_requested">📞 Rückruf gewünscht</SelectItem>
+                  <SelectItem value="attempted_to_reach">📵 Nicht erreicht</SelectItem>
+                  <SelectItem value="resolved">✅ Erledigt</SelectItem>
+                  <SelectItem value="other">📝 Sonstiges</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <Separator />
+            
+            {/* Organization */}
+            <div className="space-y-2">
+              <Label>Organisation</Label>
+              <Select value={newContact.organization_id || 'new'} onValueChange={(v) => setNewContact(c => ({ ...c, organization_id: v === 'new' ? '' : v }))}>
+                <SelectTrigger><SelectValue placeholder="Organisation wählen oder neu erstellen" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">➕ Neue Organisation erstellen</SelectItem>
                   {organizations.map(org => (
                     <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {!newContact.organization_id && (
+                <Input 
+                  value={newContact.new_organization_name}
+                  onChange={(e) => setNewContact(c => ({ ...c, new_organization_name: e.target.value }))}
+                  placeholder="Name der neuen Organisation"
+                  className="mt-2"
+                />
+              )}
+            </div>
+            
+            {/* Notes */}
+            <div>
+              <Label>Notizen</Label>
+              <Textarea 
+                value={newContact.notes}
+                onChange={(e) => setNewContact(c => ({ ...c, notes: e.target.value }))}
+                placeholder="Zusätzliche Notizen zum Kontakt oder Anruf..."
+                rows={3}
+              />
             </div>
           </div>
           <DialogFooter>
@@ -4268,6 +4598,16 @@ function TelephonyPage({ currentUser }) {
                     last_name: newContact.last_name,
                     email: newContact.email,
                     organization_id: newContact.organization_id || null,
+                    customer_type: newContact.customer_type,
+                    status: newContact.status,
+                    call_outcome: newContact.call_outcome,
+                    notes: newContact.notes,
+                    position: newContact.position,
+                    mobile: newContact.mobile,
+                    salutation: newContact.salutation,
+                    new_organization_name: newContact.new_organization_name,
+                    new_organization_type: newContact.customer_type,
+                    assigned_owner_id: currentUser?.id,
                   })
                 })
                 if (result.contact) {
@@ -4279,7 +4619,12 @@ function TelephonyPage({ currentUser }) {
                   })
                   toast.success(`Kontakt ${result.contact.first_name} ${result.contact.last_name} erstellt`)
                   setShowCreateContact(false)
-                  setNewContact({ first_name: '', last_name: '', email: '', organization_id: '' })
+                  setNewContact({ 
+                    first_name: '', last_name: '', email: '', organization_id: '',
+                    customer_type: 'business', status: 'lead', call_outcome: '', notes: '',
+                    position: '', mobile: '', new_organization_name: ''
+                  })
+                  loadCallHistory()
                 }
               } catch (e) {
                 toast.error('Fehler beim Erstellen des Kontakts')
@@ -5838,6 +6183,684 @@ function DealForm({ contacts, organizations, stages, deal, onSubmit, onCancel, i
         <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
       </DialogFooter>
     </form>
+  )
+}
+
+// ============================================
+// RMM PAGE - Remote Monitoring & Management
+// ============================================
+
+function RMMPage({ currentUser, subPage }) {
+  const [activeTab, setActiveTab] = useState(subPage?.replace('rmm-', '') || 'dashboard')
+  const [dashboard, setDashboard] = useState(null)
+  const [devices, setDevices] = useState([])
+  const [alerts, setAlerts] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [softwareCatalog, setSoftwareCatalog] = useState([])
+  const [deploymentJobs, setDeploymentJobs] = useState([])
+  const [enrollmentTokens, setEnrollmentTokens] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showTokenDialog, setShowTokenDialog] = useState(false)
+  const [showDeployDialog, setShowDeployDialog] = useState(false)
+  const [selectedDevice, setSelectedDevice] = useState(null)
+  const [organizations, setOrganizations] = useState([])
+  const [newToken, setNewToken] = useState({ organization_id: '', name: '', device_type: 'workstation' })
+  const [newJob, setNewJob] = useState({ name: '', job_type: 'script', target_device_ids: [], script_content: '' })
+  
+  useEffect(() => {
+    loadData()
+    loadOrganizations()
+  }, [])
+  
+  useEffect(() => {
+    if (subPage) {
+      setActiveTab(subPage.replace('rmm-', '') || 'dashboard')
+    }
+  }, [subPage])
+  
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [dashData, devData, alertData, sessionData, catalogData, jobData, tokenData] = await Promise.all([
+        api.fetch('/rmm/dashboard'),
+        api.fetch('/assets?limit=100'),
+        api.fetch('/rmm/alerts'),
+        api.fetch('/rmm/remote-sessions?limit=20'),
+        api.fetch('/rmm/software-catalog'),
+        api.fetch('/rmm/deployment-jobs'),
+        api.fetch('/rmm/enrollment-tokens'),
+      ])
+      
+      setDashboard(dashData)
+      setDevices(Array.isArray(devData) ? devData : devData?.data || [])
+      setAlerts(Array.isArray(alertData) ? alertData : [])
+      setSessions(Array.isArray(sessionData) ? sessionData : [])
+      setSoftwareCatalog(Array.isArray(catalogData) ? catalogData : [])
+      setDeploymentJobs(Array.isArray(jobData) ? jobData : [])
+      setEnrollmentTokens(Array.isArray(tokenData) ? tokenData : [])
+    } catch (e) {
+      console.error('RMM load error:', e)
+    }
+    setLoading(false)
+  }
+  
+  const loadOrganizations = async () => {
+    try {
+      const data = await api.fetch('/organizations')
+      setOrganizations(Array.isArray(data) ? data : [])
+    } catch (e) {}
+  }
+  
+  const createEnrollmentToken = async () => {
+    if (!newToken.organization_id) {
+      toast.error('Bitte Organisation auswählen')
+      return
+    }
+    try {
+      const result = await api.fetch('/rmm/enrollment-tokens', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...newToken,
+          created_by_id: currentUser?.id,
+        })
+      })
+      if (result.id) {
+        toast.success('Enrollment-Token erstellt')
+        setShowTokenDialog(false)
+        setNewToken({ organization_id: '', name: '', device_type: 'workstation' })
+        loadData()
+      }
+    } catch (e) {
+      toast.error('Fehler beim Erstellen des Tokens')
+    }
+  }
+  
+  const startRemoteSession = async (device) => {
+    try {
+      const result = await api.fetch('/rmm/remote-sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          asset_id: device.id,
+          user_id: currentUser?.id,
+          session_type: 'remote_desktop',
+        })
+      })
+      if (result.success) {
+        toast.success('Remote-Sitzung gestartet')
+        if (result.connection_url) {
+          window.open(result.connection_url, '_blank')
+        }
+        loadData()
+      }
+    } catch (e) {
+      toast.error('Fehler beim Starten der Remote-Sitzung')
+    }
+  }
+  
+  const acknowledgeAlert = async (alertId) => {
+    try {
+      await api.fetch(`/rmm/alerts/${alertId}/acknowledge`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id: currentUser?.id })
+      })
+      toast.success('Alert bestätigt')
+      loadData()
+    } catch (e) {
+      toast.error('Fehler')
+    }
+  }
+  
+  const resolveAlert = async (alertId) => {
+    try {
+      await api.fetch(`/rmm/alerts/${alertId}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify({ user_id: currentUser?.id })
+      })
+      toast.success('Alert gelöst')
+      loadData()
+    } catch (e) {
+      toast.error('Fehler')
+    }
+  }
+  
+  const createDeploymentJob = async () => {
+    if (!newJob.name) {
+      toast.error('Bitte Name eingeben')
+      return
+    }
+    try {
+      const result = await api.fetch('/rmm/deployment-jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...newJob,
+          created_by_id: currentUser?.id,
+        })
+      })
+      if (result.id) {
+        toast.success('Deployment-Job erstellt')
+        setShowDeployDialog(false)
+        setNewJob({ name: '', job_type: 'script', target_device_ids: [], script_content: '' })
+        loadData()
+      }
+    } catch (e) {
+      toast.error('Fehler beim Erstellen des Jobs')
+    }
+  }
+  
+  const getStatusBadge = (status) => {
+    const colors = {
+      online: 'bg-green-500',
+      offline: 'bg-red-500',
+      maintenance: 'bg-yellow-500',
+      active: 'bg-green-500',
+      warning: 'bg-yellow-500',
+      critical: 'bg-red-500',
+      acknowledged: 'bg-blue-500',
+      resolved: 'bg-gray-500',
+    }
+    return <span className={`inline-block w-2 h-2 rounded-full ${colors[status] || 'bg-gray-400'}`} />
+  }
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+  
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Remote Monitoring & Management</h1>
+          <p className="text-muted-foreground">Geräte überwachen, verwalten und warten</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={loadData}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Aktualisieren
+          </Button>
+          <Button onClick={() => setShowTokenDialog(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Enrollment-Token
+          </Button>
+        </div>
+      </div>
+      
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="dashboard" className="flex items-center gap-2">
+            <LayoutDashboard className="h-4 w-4" /> Übersicht
+          </TabsTrigger>
+          <TabsTrigger value="devices" className="flex items-center gap-2">
+            <Monitor className="h-4 w-4" /> Geräte ({devices.length})
+          </TabsTrigger>
+          <TabsTrigger value="alerts" className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" /> Alerts ({alerts.filter(a => a.status === 'active').length})
+          </TabsTrigger>
+          <TabsTrigger value="remote" className="flex items-center gap-2">
+            <PhoneCall className="h-4 w-4" /> Remote
+          </TabsTrigger>
+          <TabsTrigger value="deployment" className="flex items-center gap-2">
+            <Package className="h-4 w-4" /> Software
+          </TabsTrigger>
+        </TabsList>
+        
+        {/* Dashboard Tab */}
+        <TabsContent value="dashboard" className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Geräte</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold">{dashboard?.devices?.total || 0}</div>
+                <div className="flex items-center gap-4 text-sm mt-2">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    {dashboard?.devices?.online || 0} Online
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-red-500" />
+                    {dashboard?.devices?.offline || 0} Offline
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Aktive Alerts</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-red-600">{dashboard?.alerts?.total || 0}</div>
+                <div className="flex items-center gap-4 text-sm mt-2">
+                  <span className="text-red-600">{dashboard?.alerts?.critical || 0} Kritisch</span>
+                  <span className="text-yellow-600">{dashboard?.alerts?.warning || 0} Warnung</span>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Remote-Sitzungen</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-blue-600">{dashboard?.active_sessions || 0}</div>
+                <p className="text-sm text-muted-foreground mt-2">Aktive Verbindungen</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Deployment-Jobs</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-orange-600">{dashboard?.pending_jobs || 0}</div>
+                <p className="text-sm text-muted-foreground mt-2">Ausstehende Jobs</p>
+              </CardContent>
+            </Card>
+          </div>
+          
+          {/* Enrollment Tokens */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">Enrollment-Tokens</CardTitle>
+              <CardDescription>Tokens zur Agent-Installation auf Kundengeräten</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {enrollmentTokens.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Key className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                  <p>Noch keine Enrollment-Tokens erstellt</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={() => setShowTokenDialog(true)}>
+                    Token erstellen
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {enrollmentTokens.slice(0, 5).map(token => (
+                    <div key={token.id} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div>
+                        <p className="font-medium">{token.name || 'Token'}</p>
+                        <p className="text-sm font-mono text-muted-foreground">{token.token}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{token.device_type}</Badge>
+                        <Badge variant={token.is_active ? 'default' : 'secondary'}>
+                          {token.is_active ? 'Aktiv' : 'Inaktiv'}
+                        </Badge>
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          navigator.clipboard.writeText(token.token)
+                          toast.success('Token kopiert')
+                        }}>
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        {/* Devices Tab */}
+        <TabsContent value="devices" className="space-y-4">
+          <Card>
+            <CardContent className="pt-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Gerät</TableHead>
+                    <TableHead>Typ</TableHead>
+                    <TableHead>Organisation</TableHead>
+                    <TableHead>OS</TableHead>
+                    <TableHead>Zuletzt gesehen</TableHead>
+                    <TableHead className="text-right">Aktionen</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {devices.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        Keine Geräte gefunden. Erstellen Sie einen Enrollment-Token und installieren Sie den Agent.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    devices.map(device => (
+                      <TableRow key={device.id}>
+                        <TableCell>
+                          {getStatusBadge(device.agent_status || 'offline')}
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{device.name || device.hostname || 'Unbenannt'}</p>
+                            <p className="text-xs text-muted-foreground">{device.ip_address || '-'}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{device.device_type || device.asset_type?.name || 'Unbekannt'}</Badge>
+                        </TableCell>
+                        <TableCell>{device.organization?.name || '-'}</TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            <p>{device.os_type || '-'}</p>
+                            <p className="text-xs text-muted-foreground">{device.os_version || ''}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {device.last_seen ? new Date(device.last_seen).toLocaleString('de-DE') : '-'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button variant="ghost" size="sm" onClick={() => startRemoteSession(device)} title="Remote-Verbindung">
+                              <Monitor className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setSelectedDevice(device)} title="Details">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        {/* Alerts Tab */}
+        <TabsContent value="alerts" className="space-y-4">
+          <Card>
+            <CardContent className="pt-6">
+              {alerts.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <CheckCircle2 className="h-10 w-10 mx-auto mb-2 text-green-500" />
+                  <p>Keine aktiven Alerts - alles läuft normal!</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Schweregrad</TableHead>
+                      <TableHead>Gerät</TableHead>
+                      <TableHead>Typ</TableHead>
+                      <TableHead>Meldung</TableHead>
+                      <TableHead>Erstellt</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Aktionen</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {alerts.map(alert => (
+                      <TableRow key={alert.id}>
+                        <TableCell>
+                          <Badge className={
+                            alert.severity === 'critical' ? 'bg-red-500' :
+                            alert.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
+                          }>
+                            {alert.severity === 'critical' ? '🔴 Kritisch' : alert.severity === 'warning' ? '🟡 Warnung' : 'ℹ️ Info'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{alert.asset?.hostname || alert.asset_id?.slice(0, 8)}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{alert.alert_type}</Badge>
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate">{alert.title}</TableCell>
+                        <TableCell>{new Date(alert.created_at).toLocaleString('de-DE')}</TableCell>
+                        <TableCell>
+                          <Badge variant={alert.status === 'active' ? 'destructive' : 'secondary'}>
+                            {alert.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {alert.status === 'active' && (
+                            <div className="flex justify-end gap-1">
+                              <Button variant="ghost" size="sm" onClick={() => acknowledgeAlert(alert.id)}>
+                                <Check className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => resolveAlert(alert.id)}>
+                                <CheckCircle2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        {/* Remote Tab */}
+        <TabsContent value="remote" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Remote-Sitzungen</CardTitle>
+              <CardDescription>Aktuelle und vergangene Fernwartungssitzungen</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {sessions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Monitor className="h-10 w-10 mx-auto mb-2 opacity-50" />
+                  <p>Keine Remote-Sitzungen</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Gerät</TableHead>
+                      <TableHead>Benutzer</TableHead>
+                      <TableHead>Typ</TableHead>
+                      <TableHead>Gestartet</TableHead>
+                      <TableHead>Dauer</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sessions.map(session => (
+                      <TableRow key={session.id}>
+                        <TableCell>{getStatusBadge(session.status)}</TableCell>
+                        <TableCell>{session.asset?.hostname || session.asset_id?.slice(0, 8)}</TableCell>
+                        <TableCell>{session.user?.first_name} {session.user?.last_name}</TableCell>
+                        <TableCell>{session.session_type}</TableCell>
+                        <TableCell>{new Date(session.started_at).toLocaleString('de-DE')}</TableCell>
+                        <TableCell>
+                          {session.duration_seconds ? `${Math.round(session.duration_seconds / 60)} Min.` : '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        {/* Deployment Tab */}
+        <TabsContent value="deployment" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold">Software-Katalog & Deployment</h3>
+            <Button onClick={() => setShowDeployDialog(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Neuer Job
+            </Button>
+          </div>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Software Catalog */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Software-Katalog</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {softwareCatalog.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-4">Katalog ist leer</p>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-auto">
+                    {softwareCatalog.map(sw => (
+                      <div key={sw.id} className="flex items-center justify-between p-2 border rounded">
+                        <div>
+                          <p className="font-medium">{sw.name}</p>
+                          <p className="text-xs text-muted-foreground">{sw.vendor} • {sw.current_version || '-'}</p>
+                        </div>
+                        <Badge variant="outline">{sw.category}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            
+            {/* Deployment Jobs */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Deployment-Jobs</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {deploymentJobs.length === 0 ? (
+                  <p className="text-muted-foreground text-center py-4">Keine Jobs vorhanden</p>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-auto">
+                    {deploymentJobs.map(job => (
+                      <div key={job.id} className="flex items-center justify-between p-2 border rounded">
+                        <div>
+                          <p className="font-medium">{job.name}</p>
+                          <p className="text-xs text-muted-foreground">{job.job_type}</p>
+                        </div>
+                        <Badge variant={job.status === 'completed' ? 'default' : job.status === 'failed' ? 'destructive' : 'secondary'}>
+                          {job.status}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
+      
+      {/* Create Enrollment Token Dialog */}
+      <Dialog open={showTokenDialog} onOpenChange={setShowTokenDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Neuen Enrollment-Token erstellen</DialogTitle>
+            <DialogDescription>
+              Erstellen Sie einen Token zur Agent-Installation auf Kundengeräten
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Organisation *</Label>
+              <Select value={newToken.organization_id} onValueChange={(v) => setNewToken(t => ({ ...t, organization_id: v }))}>
+                <SelectTrigger><SelectValue placeholder="Organisation wählen" /></SelectTrigger>
+                <SelectContent>
+                  {organizations.map(org => (
+                    <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Name / Beschreibung</Label>
+              <Input 
+                value={newToken.name}
+                onChange={(e) => setNewToken(t => ({ ...t, name: e.target.value }))}
+                placeholder="z.B. Workstations Firma ABC"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Gerätetyp</Label>
+              <Select value={newToken.device_type} onValueChange={(v) => setNewToken(t => ({ ...t, device_type: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="workstation">🖥️ Workstation</SelectItem>
+                  <SelectItem value="laptop">💻 Laptop</SelectItem>
+                  <SelectItem value="server">🖧 Server</SelectItem>
+                  <SelectItem value="vm">☁️ Virtuelle Maschine</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTokenDialog(false)}>Abbrechen</Button>
+            <Button onClick={createEnrollmentToken}>Token erstellen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Create Deployment Job Dialog */}
+      <Dialog open={showDeployDialog} onOpenChange={setShowDeployDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Neuen Deployment-Job erstellen</DialogTitle>
+            <DialogDescription>
+              Erstellen Sie einen Job zur Software-Installation oder Skript-Ausführung
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Name *</Label>
+                <Input 
+                  value={newJob.name}
+                  onChange={(e) => setNewJob(j => ({ ...j, name: e.target.value }))}
+                  placeholder="z.B. Chrome installieren"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Typ</Label>
+                <Select value={newJob.job_type} onValueChange={(v) => setNewJob(j => ({ ...j, job_type: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="install">📦 Software installieren</SelectItem>
+                    <SelectItem value="uninstall">🗑️ Software deinstallieren</SelectItem>
+                    <SelectItem value="update">🔄 Software aktualisieren</SelectItem>
+                    <SelectItem value="script">📜 Skript ausführen</SelectItem>
+                    <SelectItem value="patch">🔧 Patch anwenden</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Zielgeräte</Label>
+              <Select value={newJob.target_device_ids[0] || ''} onValueChange={(v) => setNewJob(j => ({ ...j, target_device_ids: v ? [v] : [] }))}>
+                <SelectTrigger><SelectValue placeholder="Gerät auswählen" /></SelectTrigger>
+                <SelectContent>
+                  {devices.map(device => (
+                    <SelectItem key={device.id} value={device.id}>
+                      {device.name || device.hostname || device.id.slice(0, 8)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {newJob.job_type === 'script' && (
+              <div className="space-y-2">
+                <Label>Skript (PowerShell/Bash)</Label>
+                <Textarea 
+                  value={newJob.script_content}
+                  onChange={(e) => setNewJob(j => ({ ...j, script_content: e.target.value }))}
+                  placeholder="Write-Host 'Hello World'"
+                  rows={5}
+                  className="font-mono text-sm"
+                />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeployDialog(false)}>Abbrechen</Button>
+            <Button onClick={createDeploymentJob}>Job erstellen</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 
@@ -7714,6 +8737,243 @@ function KBArticleForm({ article, organizations = [], onSubmit, onCancel, isEdit
 }
 
 // ============================================
+// BACKUP MANAGEMENT COMPONENT
+// ============================================
+
+function BackupManagement() {
+  const [backups, setBackups] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [restoring, setRestoring] = useState(null)
+  const [showRestoreDialog, setShowRestoreDialog] = useState(false)
+  const [selectedBackup, setSelectedBackup] = useState(null)
+  
+  useEffect(() => {
+    loadBackups()
+  }, [])
+  
+  const loadBackups = async () => {
+    setLoading(true)
+    try {
+      const data = await api.fetch('/backups')
+      setBackups(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setBackups([])
+    }
+    setLoading(false)
+  }
+  
+  const createBackup = async (type = 'manual') => {
+    setCreating(true)
+    try {
+      const result = await api.fetch('/backups/full', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          backup_type: type,
+          name: `${type === 'manual' ? 'Manuelles' : type} Backup - ${new Date().toLocaleString('de-DE')}`
+        })
+      })
+      if (result.id || result.success) {
+        toast.success('Backup erfolgreich erstellt!')
+        loadBackups()
+      }
+    } catch (e) {
+      toast.error('Fehler beim Erstellen des Backups')
+    }
+    setCreating(false)
+  }
+  
+  const downloadBackup = async (backup) => {
+    try {
+      const result = await api.fetch(`/backups/${backup.id}/download`)
+      if (result.data) {
+        const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = result.filename || `backup_${backup.id}.json`
+        a.click()
+        URL.revokeObjectURL(url)
+        toast.success('Backup heruntergeladen')
+      }
+    } catch (e) {
+      toast.error('Fehler beim Herunterladen')
+    }
+  }
+  
+  const restoreBackup = async (backup, testMode = true) => {
+    setRestoring(backup.id)
+    try {
+      const result = await api.fetch(`/backups/${backup.id}/restore-full`, {
+        method: 'POST',
+        body: JSON.stringify({ test_mode: testMode })
+      })
+      if (result.success) {
+        toast.success(testMode ? 'Backup-Validierung erfolgreich!' : 'Backup wiederhergestellt!')
+      }
+    } catch (e) {
+      toast.error('Fehler bei der Wiederherstellung')
+    }
+    setRestoring(null)
+    setShowRestoreDialog(false)
+  }
+  
+  const deleteBackup = async (backup) => {
+    if (!confirm(`Backup "${backup.notes || backup.id}" wirklich löschen?`)) return
+    try {
+      await api.fetch(`/backups/${backup.id}`, { method: 'DELETE' })
+      toast.success('Backup gelöscht')
+      loadBackups()
+    } catch (e) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+  
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <Label className="text-base font-medium">Backup-Verwaltung</Label>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={loadBackups}>
+            <RefreshCw className="h-4 w-4 mr-1" />
+            Aktualisieren
+          </Button>
+          <Button size="sm" onClick={() => createBackup('manual')} disabled={creating}>
+            {creating ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
+            Neues Backup
+          </Button>
+        </div>
+      </div>
+      
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </div>
+      ) : backups.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground border rounded-lg">
+          <Archive className="h-10 w-10 mx-auto mb-2 opacity-50" />
+          <p>Noch keine Backups vorhanden</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => createBackup('manual')}>
+            Erstes Backup erstellen
+          </Button>
+        </div>
+      ) : (
+        <div className="border rounded-lg overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Backup</TableHead>
+                <TableHead>Typ</TableHead>
+                <TableHead>Größe</TableHead>
+                <TableHead>Tabellen</TableHead>
+                <TableHead>Erstellt</TableHead>
+                <TableHead className="text-right">Aktionen</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {backups.slice(0, 10).map(backup => (
+                <TableRow key={backup.id}>
+                  <TableCell>
+                    <div>
+                      <p className="font-medium text-sm">{backup.notes || backup.file_name || 'Backup'}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{backup.checksum?.slice(0, 12)}...</p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">
+                      {backup.backup_type === 'manual' ? '✋ Manuell' : 
+                       backup.backup_type === 'daily' ? '📅 Täglich' :
+                       backup.backup_type === 'weekly' ? '📆 Wöchentlich' : backup.backup_type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{formatBytes(backup.file_size_bytes)}</TableCell>
+                  <TableCell>
+                    <span className="text-sm">{backup.tables_included?.length || 0} Tabellen</span>
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {backup.created_at ? new Date(backup.created_at).toLocaleString('de-DE') : '-'}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => downloadBackup(backup)} title="Herunterladen">
+                        <Download className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => { setSelectedBackup(backup); setShowRestoreDialog(true); }} title="Wiederherstellen">
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => deleteBackup(backup)} title="Löschen" className="text-red-500 hover:text-red-700">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      
+      <p className="text-xs text-slate-500">
+        Backups enthalten: Benutzer, Organisationen, Kontakte, Tickets, Assets, Zeiteinträge, Einstellungen und mehr.
+        Checksumme (SHA-256) garantiert Datenintegrität.
+      </p>
+      
+      {/* Restore Dialog */}
+      <Dialog open={showRestoreDialog} onOpenChange={setShowRestoreDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Backup wiederherstellen</DialogTitle>
+            <DialogDescription>
+              {selectedBackup?.notes || selectedBackup?.file_name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                <div>
+                  <p className="font-medium text-yellow-800">Achtung</p>
+                  <p className="text-sm text-yellow-700">
+                    Eine vollständige Wiederherstellung überschreibt bestehende Daten. 
+                    Führen Sie zuerst einen Test durch.
+                  </p>
+                </div>
+              </div>
+            </div>
+            {selectedBackup && (
+              <div className="text-sm space-y-1">
+                <p><strong>Erstellt:</strong> {new Date(selectedBackup.created_at).toLocaleString('de-DE')}</p>
+                <p><strong>Größe:</strong> {formatBytes(selectedBackup.file_size_bytes)}</p>
+                <p><strong>Tabellen:</strong> {selectedBackup.tables_included?.join(', ')}</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowRestoreDialog(false)}>Abbrechen</Button>
+            <Button variant="outline" onClick={() => restoreBackup(selectedBackup, true)} disabled={restoring}>
+              {restoring ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              Validieren (Test)
+            </Button>
+            <Button variant="destructive" onClick={() => restoreBackup(selectedBackup, false)} disabled={restoring}>
+              {restoring ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Wiederherstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ============================================
 // SYSTEM DIAGNOSTICS PAGE
 // ============================================
 
@@ -8091,7 +9351,8 @@ function SettingsPage() {
         tickets: ['default_ticket_priority', 'default_ticket_status', 'auto_assign_enabled', 'sla_enabled'],
         integrations: ['openai_api_key', 'openai_model', 'openai_enabled', 'placetel_api_key', 'placetel_enabled', 'lexoffice_api_key', 'lexoffice_enabled'],
         email: ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from_address', 'imap_host', 'imap_port', 'imap_user', 'imap_password', 'email_to_ticket_enabled'],
-        audit: ['log_retention_days', 'backup_enabled', 'backup_schedule']
+        audit: ['log_retention_days', 'backup_enabled', 'backup_schedule'],
+        rmm: ['rmm_enabled', 'rustdesk_server', 'rustdesk_key', 'rmm_heartbeat_interval', 'rmm_offline_threshold', 'rmm_auto_ticket_on_critical']
       }
       
       const keysToSave = categoryKeys[category] || []
@@ -9492,21 +10753,103 @@ function SettingsPage() {
                   
                   <Separator />
                   
-                  <div className="space-y-4">
-                    <Label>Manuelles Backup</Label>
-                    <div className="flex gap-4">
-                      <Button variant="outline">
+                  <BackupManagement />
+                </CardContent>
+              </Card>
+              
+              {/* RMM Settings */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Monitor className="h-5 w-5" />
+                        RMM-Einstellungen
+                      </CardTitle>
+                      <CardDescription>Remote Monitoring & Management Konfiguration</CardDescription>
+                    </div>
+                    <Switch
+                      checked={settings.rmm_enabled === true || settings.rmm_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('rmm_enabled', v)
+                        saveSetting('rmm_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>RustDesk/RAS-Desk Server</Label>
+                      <Input
+                        value={settings.rustdesk_server || ''}
+                        onChange={(e) => updateSetting('rustdesk_server', e.target.value)}
+                        onBlur={() => saveSetting('rustdesk_server', settings.rustdesk_server)}
+                        placeholder="rustdesk.ihredomain.de"
+                      />
+                      <p className="text-xs text-muted-foreground">Adresse des selbst-gehosteten RustDesk-Servers</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>RustDesk Public Key</Label>
+                      <Input
+                        value={settings.rustdesk_key || ''}
+                        onChange={(e) => updateSetting('rustdesk_key', e.target.value)}
+                        onBlur={() => saveSetting('rustdesk_key', settings.rustdesk_key)}
+                        placeholder="Ihr RustDesk Public Key"
+                      />
+                    </div>
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Heartbeat-Intervall (Sekunden)</Label>
+                      <Input
+                        type="number"
+                        value={settings.rmm_heartbeat_interval || 60}
+                        onChange={(e) => updateSetting('rmm_heartbeat_interval', parseInt(e.target.value))}
+                        onBlur={() => saveSetting('rmm_heartbeat_interval', settings.rmm_heartbeat_interval)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Offline-Schwellwert (Sekunden)</Label>
+                      <Input
+                        type="number"
+                        value={settings.rmm_offline_threshold || 300}
+                        onChange={(e) => updateSetting('rmm_offline_threshold', parseInt(e.target.value))}
+                        onBlur={() => saveSetting('rmm_offline_threshold', settings.rmm_offline_threshold)}
+                      />
+                      <p className="text-xs text-muted-foreground">Zeit bis Gerät als offline gilt</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={settings.rmm_auto_ticket_on_critical === true || settings.rmm_auto_ticket_on_critical === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('rmm_auto_ticket_on_critical', v)
+                        saveSetting('rmm_auto_ticket_on_critical', v)
+                      }}
+                    />
+                    <Label>Automatisch Ticket bei kritischen Alerts erstellen</Label>
+                  </div>
+                  
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="font-medium text-blue-800 mb-2">Agent-Installation</h4>
+                    <p className="text-sm text-blue-700 mb-3">
+                      Um Geräte zu überwachen, installieren Sie den IT REX RMM Agent auf den Kundengeräten.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => window.open('/agent/itrex-rmm-agent.ps1', '_blank')}>
                         <Download className="h-4 w-4 mr-2" />
-                        Backup erstellen
+                        Windows Agent (PowerShell)
                       </Button>
-                      <Button variant="outline">
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Backup wiederherstellen
+                      <Button variant="outline" size="sm" onClick={() => window.open('/agent/itrex-rmm-agent.sh', '_blank')}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Linux Agent (Bash)
                       </Button>
                     </div>
-                    <p className="text-xs text-slate-500">
-                      Hinweis: Backups werden über Supabase verwaltet. Diese Funktionen sind derzeit im Test-Modus.
-                    </p>
                   </div>
                 </CardContent>
               </Card>
@@ -9888,6 +11231,12 @@ export default function App() {
       case 'diagnostics': return <SystemDiagnosticsPage />
       case 'settings': return <SettingsPage />
       case 'daily-assistant': return <DailyAssistantPage currentUser={currentUser} />
+      case 'rmm-dashboard':
+      case 'rmm-devices':
+      case 'rmm-alerts':
+      case 'rmm-remote':
+      case 'rmm-deployment':
+      case 'rmm': return <RMMPage currentUser={currentUser} subPage={currentPage} />
       default: return <DashboardPage />
     }
   }

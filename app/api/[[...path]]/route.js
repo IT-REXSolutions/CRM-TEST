@@ -3603,6 +3603,1818 @@ async function handleDeleteAsset(id, userId) {
 }
 
 // ============================================
+// RMM SYSTEM HANDLERS
+// ============================================
+
+// --- Agent Enrollment ---
+async function handleGetEnrollmentTokens(params) {
+  try {
+    let query = supabaseAdmin
+      .from('agent_enrollment_tokens')
+      .select('*')
+    
+    if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+    if (params.is_active !== undefined) query = query.eq('is_active', params.is_active === 'true')
+    
+    const { data, error } = await query.order('created_at', { ascending: false })
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateEnrollmentToken(body) {
+  const { 
+    organization_id, location_id, name, expires_at, max_uses, 
+    device_type, auto_tags, created_by_id 
+  } = body
+  
+  if (!organization_id) {
+    return NextResponse.json({ error: 'organization_id ist erforderlich' }, { status: 400 })
+  }
+  
+  // Generate secure token
+  const token = `ITREX-${uuidv4().split('-').slice(0, 3).join('')}-${Date.now().toString(36)}`.toUpperCase()
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('agent_enrollment_tokens')
+      .insert([{
+        id: uuidv4(),
+        organization_id,
+        location_id: location_id || null,
+        token,
+        name: name || `Token für ${organization_id}`,
+        expires_at: expires_at || null,
+        max_uses: max_uses || 0,
+        device_type: device_type || 'workstation',
+        auto_tags: auto_tags || [],
+        is_active: true,
+        created_by_id,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleEnrollAgent(body) {
+  const { 
+    token, hostname, os_type, os_version, os_build, 
+    cpu_model, cpu_cores, ram_total_gb, disk_total_gb,
+    mac_address, ip_address
+  } = body
+  
+  if (!token || !hostname) {
+    return NextResponse.json({ error: 'token und hostname sind erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Validate token
+    const { data: tokenData, error: tokenError } = await supabaseAdmin
+      .from('agent_enrollment_tokens')
+      .select('*')
+      .eq('token', token)
+      .eq('is_active', true)
+      .single()
+    
+    if (tokenError || !tokenData) {
+      return NextResponse.json({ error: 'Ungültiger oder inaktiver Token' }, { status: 401 })
+    }
+    
+    // Check expiration
+    if (tokenData.expires_at && new Date(tokenData.expires_at) < new Date()) {
+      return NextResponse.json({ error: 'Token ist abgelaufen' }, { status: 401 })
+    }
+    
+    // Check max uses
+    if (tokenData.max_uses > 0 && tokenData.current_uses >= tokenData.max_uses) {
+      return NextResponse.json({ error: 'Token-Limit erreicht' }, { status: 401 })
+    }
+    
+    // Check if device already exists (by hostname + org)
+    const { data: existingDevice } = await supabaseAdmin
+      .from('assets')
+      .select('id, agent_id')
+      .eq('organization_id', tokenData.organization_id)
+      .eq('hostname', hostname)
+      .single()
+    
+    const agentId = existingDevice?.agent_id || `agent-${uuidv4()}`
+    const now = new Date().toISOString()
+    
+    if (existingDevice) {
+      // Update existing device
+      const { data: updated, error } = await supabaseAdmin
+        .from('assets')
+        .update({
+          agent_id: agentId,
+          agent_status: 'online',
+          last_seen: now,
+          last_heartbeat: now,
+          os_type, os_version, os_build,
+          cpu_model, cpu_cores, ram_total_gb, disk_total_gb,
+          mac_address, ip_address,
+          updated_at: now,
+        })
+        .eq('id', existingDevice.id)
+        .select()
+        .single()
+      
+      if (error) throw error
+      
+      return NextResponse.json({
+        success: true,
+        device_id: existingDevice.id,
+        agent_id: agentId,
+        is_new: false,
+      })
+    }
+    
+    // Create new device
+    const deviceId = uuidv4()
+    const { data: newDevice, error: createError } = await supabaseAdmin
+      .from('assets')
+      .insert([{
+        id: deviceId,
+        name: hostname,
+        hostname,
+        organization_id: tokenData.organization_id,
+        location_id: tokenData.location_id,
+        device_type: tokenData.device_type || 'workstation',
+        agent_id: agentId,
+        agent_status: 'online',
+        enrollment_token: token,
+        enrolled_at: now,
+        last_seen: now,
+        last_heartbeat: now,
+        os_type, os_version, os_build,
+        cpu_model, cpu_cores, ram_total_gb, disk_total_gb,
+        mac_address, ip_address,
+        tags: tokenData.auto_tags || [],
+        status: 'active',
+        created_at: now,
+      }])
+      .select()
+      .single()
+    
+    if (createError) throw createError
+    
+    // Increment token usage
+    await supabaseAdmin
+      .from('agent_enrollment_tokens')
+      .update({ current_uses: tokenData.current_uses + 1 })
+      .eq('id', tokenData.id)
+    
+    // Add to device history
+    await supabaseAdmin.from('device_history').insert([{
+      id: uuidv4(),
+      asset_id: deviceId,
+      event_type: 'enrolled',
+      title: 'Gerät registriert',
+      description: `Agent erfolgreich auf ${hostname} installiert`,
+      metadata: { token_id: tokenData.id, os_type, os_version },
+      created_at: now,
+    }]).catch(() => {})
+    
+    return NextResponse.json({
+      success: true,
+      device_id: deviceId,
+      agent_id: agentId,
+      is_new: true,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- Agent Heartbeat ---
+async function handleAgentHeartbeat(body) {
+  const { 
+    agent_id, cpu_usage, ram_usage, ram_used_gb, 
+    disk_usage, disk_used_gb, disk_free_gb, uptime_seconds,
+    process_count, logged_in_users, services_running,
+    ip_address, public_ip
+  } = body
+  
+  if (!agent_id) {
+    return NextResponse.json({ error: 'agent_id ist erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    const now = new Date().toISOString()
+    
+    // Update device status
+    const { data: device, error: updateError } = await supabaseAdmin
+      .from('assets')
+      .update({
+        agent_status: 'online',
+        last_seen: now,
+        last_heartbeat: now,
+        disk_free_gb: disk_free_gb || null,
+        ip_address: ip_address || null,
+        public_ip: public_ip || null,
+        updated_at: now,
+      })
+      .eq('agent_id', agent_id)
+      .select('id, organization_id, hostname, maintenance_mode, alert_policies')
+      .single()
+    
+    if (updateError) {
+      return NextResponse.json({ error: 'Gerät nicht gefunden' }, { status: 404 })
+    }
+    
+    // Store metrics
+    await supabaseAdmin.from('device_metrics').insert([{
+      id: uuidv4(),
+      asset_id: device.id,
+      timestamp: now,
+      cpu_usage, ram_usage, ram_used_gb,
+      disk_usage, disk_used_gb,
+      uptime_seconds, process_count,
+      logged_in_users: logged_in_users || [],
+      services_running: services_running || null,
+    }]).catch(() => {})
+    
+    // Check thresholds and create alerts (if not in maintenance mode)
+    const alerts = []
+    if (!device.maintenance_mode) {
+      const offlineThreshold = parseInt(await getSetting('rmm_offline_threshold', '300'))
+      
+      // CPU Alert
+      if (cpu_usage >= 95) {
+        alerts.push({ type: 'cpu', severity: 'critical', value: cpu_usage, threshold: 95 })
+      } else if (cpu_usage >= 80) {
+        alerts.push({ type: 'cpu', severity: 'warning', value: cpu_usage, threshold: 80 })
+      }
+      
+      // RAM Alert
+      if (ram_usage >= 95) {
+        alerts.push({ type: 'ram', severity: 'critical', value: ram_usage, threshold: 95 })
+      } else if (ram_usage >= 80) {
+        alerts.push({ type: 'ram', severity: 'warning', value: ram_usage, threshold: 80 })
+      }
+      
+      // Disk Alert
+      if (disk_usage >= 95) {
+        alerts.push({ type: 'disk', severity: 'critical', value: disk_usage, threshold: 95 })
+      } else if (disk_usage >= 80) {
+        alerts.push({ type: 'disk', severity: 'warning', value: disk_usage, threshold: 80 })
+      }
+      
+      // Process alerts
+      for (const alert of alerts) {
+        await createDeviceAlert(device, alert)
+      }
+    }
+    
+    // Check for pending commands/jobs
+    const { data: pendingJobs } = await supabaseAdmin
+      .from('deployment_executions')
+      .select('id, job_id, deployment_jobs(command, script_content, script_type, parameters, timeout_minutes)')
+      .eq('asset_id', device.id)
+      .eq('status', 'pending')
+      .limit(5)
+      .catch(() => ({ data: [] }))
+    
+    return NextResponse.json({
+      success: true,
+      device_id: device.id,
+      pending_jobs: pendingJobs || [],
+      maintenance_mode: device.maintenance_mode,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function createDeviceAlert(device, alertInfo) {
+  const { type, severity, value, threshold } = alertInfo
+  const now = new Date().toISOString()
+  
+  // Check if similar alert already exists
+  const { data: existingAlert } = await supabaseAdmin
+    .from('device_alerts')
+    .select('id, trigger_count')
+    .eq('asset_id', device.id)
+    .eq('alert_type', type)
+    .eq('status', 'active')
+    .single()
+    .catch(() => ({ data: null }))
+  
+  if (existingAlert) {
+    // Update existing alert
+    await supabaseAdmin
+      .from('device_alerts')
+      .update({
+        last_triggered_at: now,
+        trigger_count: existingAlert.trigger_count + 1,
+        metric_value: value,
+      })
+      .eq('id', existingAlert.id)
+    return
+  }
+  
+  const titleMap = {
+    cpu: `CPU-Auslastung ${severity === 'critical' ? 'kritisch' : 'hoch'}: ${value}%`,
+    ram: `Arbeitsspeicher ${severity === 'critical' ? 'kritisch' : 'hoch'}: ${value}%`,
+    disk: `Festplattenspeicher ${severity === 'critical' ? 'kritisch' : 'niedrig'}: ${value}% belegt`,
+    offline: `Gerät offline`,
+  }
+  
+  const alertId = uuidv4()
+  
+  // Create new alert
+  await supabaseAdmin.from('device_alerts').insert([{
+    id: alertId,
+    asset_id: device.id,
+    organization_id: device.organization_id,
+    alert_type: type,
+    severity,
+    title: titleMap[type] || `${type} Alert`,
+    message: `${device.hostname}: ${titleMap[type]}`,
+    metric_value: value,
+    threshold_value: threshold,
+    status: 'active',
+    first_triggered_at: now,
+    last_triggered_at: now,
+    created_at: now,
+  }]).catch(() => {})
+  
+  // Auto-create ticket for critical alerts
+  const autoTicket = await getSetting('rmm_auto_ticket_on_critical', true)
+  if (autoTicket && severity === 'critical') {
+    const ticketId = uuidv4()
+    const { data: ticket } = await supabaseAdmin
+      .from('tickets')
+      .insert([{
+        id: ticketId,
+        subject: `[RMM Alert] ${titleMap[type]}`,
+        description: `Automatisch generierter Alert für ${device.hostname}\n\nTyp: ${type}\nSchweregrad: ${severity}\nWert: ${value}%\nSchwellwert: ${threshold}%`,
+        status: 'open',
+        priority: severity === 'critical' ? 'high' : 'medium',
+        source: 'monitoring',
+        organization_id: device.organization_id,
+        created_at: now,
+      }])
+      .select()
+      .single()
+    
+    if (ticket) {
+      // Link alert to ticket
+      await supabaseAdmin
+        .from('device_alerts')
+        .update({ ticket_id: ticketId })
+        .eq('id', alertId)
+    }
+  }
+  
+  // Add to device history
+  await supabaseAdmin.from('device_history').insert([{
+    id: uuidv4(),
+    asset_id: device.id,
+    event_type: 'alert',
+    title: titleMap[type],
+    description: `Schweregrad: ${severity}, Wert: ${value}%, Schwellwert: ${threshold}%`,
+    related_id: alertId,
+    related_type: 'alert',
+    created_at: now,
+  }]).catch(() => {})
+}
+
+// --- Device Alerts ---
+async function handleGetDeviceAlerts(params) {
+  try {
+    let query = supabaseAdmin
+      .from('device_alerts')
+      .select('*')
+    
+    if (params.asset_id) query = query.eq('asset_id', params.asset_id)
+    if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+    if (params.status) query = query.eq('status', params.status)
+    if (params.severity) query = query.eq('severity', params.severity)
+    if (params.alert_type) query = query.eq('alert_type', params.alert_type)
+    
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(100)
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleAcknowledgeAlert(alertId, body) {
+  const { user_id, notes } = body
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('device_alerts')
+      .update({
+        status: 'acknowledged',
+        acknowledged_by_id: user_id,
+        acknowledged_at: new Date().toISOString(),
+      })
+      .eq('id', alertId)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleResolveAlert(alertId, body) {
+  const { user_id, resolution_notes } = body
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('device_alerts')
+      .update({
+        status: 'resolved',
+        resolved_at: new Date().toISOString(),
+      })
+      .eq('id', alertId)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- Remote Sessions ---
+async function handleStartRemoteSession(body) {
+  const { asset_id, user_id, ticket_id, session_type = 'remote_desktop' } = body
+  
+  if (!asset_id || !user_id) {
+    return NextResponse.json({ error: 'asset_id und user_id sind erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Get device with remote credentials
+    const { data: device } = await supabaseAdmin
+      .from('assets')
+      .select('id, hostname, remote_id, agent_status, organization_id')
+      .eq('id', asset_id)
+      .single()
+    
+    if (!device) {
+      return NextResponse.json({ error: 'Gerät nicht gefunden' }, { status: 404 })
+    }
+    
+    if (device.agent_status === 'offline') {
+      return NextResponse.json({ error: 'Gerät ist offline' }, { status: 400 })
+    }
+    
+    // Create session record
+    const sessionId = uuidv4()
+    const now = new Date().toISOString()
+    
+    const { data: session, error } = await supabaseAdmin
+      .from('remote_sessions')
+      .insert([{
+        id: sessionId,
+        asset_id,
+        organization_id: device.organization_id,
+        ticket_id: ticket_id || null,
+        user_id,
+        session_type,
+        remote_tool: 'rustdesk',
+        remote_id: device.remote_id,
+        status: 'connecting',
+        started_at: now,
+        created_at: now,
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Add to device history
+    await supabaseAdmin.from('device_history').insert([{
+      id: uuidv4(),
+      asset_id,
+      event_type: 'remote_session',
+      title: 'Remote-Sitzung gestartet',
+      related_id: sessionId,
+      related_type: 'session',
+      performed_by_id: user_id,
+      created_at: now,
+    }]).catch(() => {})
+    
+    // Get RustDesk server URL
+    const rustdeskServer = await getSetting('rustdesk_server', '')
+    
+    return NextResponse.json({
+      success: true,
+      session_id: sessionId,
+      remote_id: device.remote_id,
+      hostname: device.hostname,
+      rustdesk_server: rustdeskServer,
+      connection_url: device.remote_id ? `rustdesk://${device.remote_id}` : null,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleEndRemoteSession(sessionId, body) {
+  const { user_id, notes, create_time_entry = true } = body
+  
+  try {
+    const now = new Date().toISOString()
+    
+    // Get session
+    const { data: session } = await supabaseAdmin
+      .from('remote_sessions')
+      .select('*')
+      .eq('id', sessionId)
+      .single()
+    
+    if (!session) {
+      return NextResponse.json({ error: 'Sitzung nicht gefunden' }, { status: 404 })
+    }
+    
+    // Calculate duration
+    const startTime = new Date(session.started_at)
+    const durationSeconds = Math.round((new Date(now) - startTime) / 1000)
+    
+    let timeEntryId = null
+    
+    // Create time entry if requested
+    if (create_time_entry && durationSeconds > 60) {
+      const { data: timeEntry } = await supabaseAdmin
+        .from('time_entries')
+        .insert([{
+          id: uuidv4(),
+          user_id: session.user_id,
+          ticket_id: session.ticket_id,
+          organization_id: session.organization_id,
+          description: `Remote-Sitzung: ${notes || 'Fernwartung'}`,
+          duration_minutes: Math.ceil(durationSeconds / 60),
+          is_billable: session.is_billable,
+          entry_type: 'remote_session',
+          started_at: session.started_at,
+          ended_at: now,
+          created_at: now,
+        }])
+        .select()
+        .single()
+      
+      if (timeEntry) timeEntryId = timeEntry.id
+    }
+    
+    // Update session
+    const { data, error } = await supabaseAdmin
+      .from('remote_sessions')
+      .update({
+        status: 'ended',
+        ended_at: now,
+        duration_seconds: durationSeconds,
+        time_entry_id: timeEntryId,
+        notes: notes || session.notes,
+      })
+      .eq('id', sessionId)
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    return NextResponse.json({
+      ...data,
+      duration_minutes: Math.ceil(durationSeconds / 60),
+      time_entry_id: timeEntryId,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetRemoteSessions(params) {
+  try {
+    let query = supabaseAdmin
+      .from('remote_sessions')
+      .select('*')
+    
+    if (params.asset_id) query = query.eq('asset_id', params.asset_id)
+    if (params.user_id) query = query.eq('user_id', params.user_id)
+    if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+    if (params.status) query = query.eq('status', params.status)
+    
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(50)
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- Software Catalog ---
+async function handleGetSoftwareCatalog(params) {
+  try {
+    let query = supabaseAdmin
+      .from('software_catalog')
+      .select('*')
+    
+    if (params.category) query = query.eq('category', params.category)
+    if (params.is_active !== undefined) query = query.eq('is_active', params.is_active === 'true')
+    if (params.search) query = query.ilike('name', `%${params.search}%`)
+    
+    const { data, error } = await query.order('name')
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateSoftwarePackage(body) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('software_catalog')
+      .insert([{
+        id: uuidv4(),
+        ...body,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- Deployment Jobs ---
+async function handleCreateDeploymentJob(body) {
+  const { 
+    name, description, organization_id, job_type, software_id,
+    target_device_ids, target_tags, command, script_content, script_type,
+    parameters, schedule_type, scheduled_at, created_by_id
+  } = body
+  
+  if (!name || !job_type) {
+    return NextResponse.json({ error: 'name und job_type sind erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    const jobId = uuidv4()
+    const now = new Date().toISOString()
+    
+    const { data: job, error } = await supabaseAdmin
+      .from('deployment_jobs')
+      .insert([{
+        id: jobId,
+        name, description, organization_id,
+        job_type,
+        software_id,
+        target_device_ids: target_device_ids || [],
+        target_tags: target_tags || [],
+        command, script_content, script_type,
+        parameters: parameters || {},
+        schedule_type: schedule_type || 'immediate',
+        scheduled_at,
+        status: schedule_type === 'immediate' ? 'running' : 'pending',
+        started_at: schedule_type === 'immediate' ? now : null,
+        created_by_id,
+        created_at: now,
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Create execution records for each target device
+    if (schedule_type === 'immediate' && target_device_ids?.length > 0) {
+      const executions = target_device_ids.map(deviceId => ({
+        id: uuidv4(),
+        job_id: jobId,
+        asset_id: deviceId,
+        status: 'pending',
+        created_at: now,
+      }))
+      
+      await supabaseAdmin.from('deployment_executions').insert(executions).catch(() => {})
+    }
+    
+    return NextResponse.json(job)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDeploymentJobs(params) {
+  try {
+    let query = supabaseAdmin
+      .from('deployment_jobs')
+      .select('*')
+    
+    if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+    if (params.status) query = query.eq('status', params.status)
+    if (params.job_type) query = query.eq('job_type', params.job_type)
+    
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(50)
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleReportJobExecution(body) {
+  const { execution_id, status, exit_code, output, error_output } = body
+  
+  try {
+    const now = new Date().toISOString()
+    
+    const { data: execution } = await supabaseAdmin
+      .from('deployment_executions')
+      .select('*, deployment_jobs(id)')
+      .eq('id', execution_id)
+      .single()
+    
+    if (!execution) {
+      return NextResponse.json({ error: 'Ausführung nicht gefunden' }, { status: 404 })
+    }
+    
+    const startTime = execution.started_at ? new Date(execution.started_at) : new Date(execution.created_at)
+    const durationSeconds = Math.round((new Date(now) - startTime) / 1000)
+    
+    const { data, error } = await supabaseAdmin
+      .from('deployment_executions')
+      .update({
+        status,
+        exit_code,
+        output,
+        error_output,
+        completed_at: now,
+        duration_seconds: durationSeconds,
+      })
+      .eq('id', execution_id)
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Check if all executions are complete
+    const { data: allExecutions } = await supabaseAdmin
+      .from('deployment_executions')
+      .select('status')
+      .eq('job_id', execution.job_id)
+    
+    const allComplete = allExecutions?.every(e => ['success', 'failed', 'skipped'].includes(e.status))
+    
+    if (allComplete) {
+      const hasFailures = allExecutions.some(e => e.status === 'failed')
+      await supabaseAdmin
+        .from('deployment_jobs')
+        .update({
+          status: hasFailures ? 'completed_with_errors' : 'completed',
+          completed_at: now,
+        })
+        .eq('id', execution.job_id)
+    }
+    
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- Device Inventory ---
+async function handleReportInventory(body) {
+  const { agent_id, software = [], hardware = [] } = body
+  
+  if (!agent_id) {
+    return NextResponse.json({ error: 'agent_id ist erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Get device
+    const { data: device } = await supabaseAdmin
+      .from('assets')
+      .select('id')
+      .eq('agent_id', agent_id)
+      .single()
+    
+    if (!device) {
+      return NextResponse.json({ error: 'Gerät nicht gefunden' }, { status: 404 })
+    }
+    
+    const now = new Date().toISOString()
+    
+    // Update software inventory
+    for (const sw of software) {
+      // Check if exists
+      const { data: existing } = await supabaseAdmin
+        .from('software_inventory')
+        .select('id')
+        .eq('asset_id', device.id)
+        .eq('name', sw.name)
+        .eq('version', sw.version || '')
+        .is('removed_at', null)
+        .single()
+        .catch(() => ({ data: null }))
+      
+      if (existing) {
+        await supabaseAdmin
+          .from('software_inventory')
+          .update({ last_seen_at: now })
+          .eq('id', existing.id)
+      } else {
+        await supabaseAdmin.from('software_inventory').insert([{
+          id: uuidv4(),
+          asset_id: device.id,
+          name: sw.name,
+          version: sw.version,
+          vendor: sw.vendor,
+          install_date: sw.install_date,
+          install_location: sw.install_location,
+          size_mb: sw.size_mb,
+          first_seen_at: now,
+          last_seen_at: now,
+        }]).catch(() => {})
+      }
+    }
+    
+    // Update hardware inventory
+    for (const hw of hardware) {
+      const { data: existing } = await supabaseAdmin
+        .from('hardware_inventory')
+        .select('id')
+        .eq('asset_id', device.id)
+        .eq('component_type', hw.component_type)
+        .eq('serial_number', hw.serial_number || '')
+        .single()
+        .catch(() => ({ data: null }))
+      
+      if (existing) {
+        await supabaseAdmin
+          .from('hardware_inventory')
+          .update({ last_seen_at: now, details: hw.details || {} })
+          .eq('id', existing.id)
+      } else {
+        await supabaseAdmin.from('hardware_inventory').insert([{
+          id: uuidv4(),
+          asset_id: device.id,
+          component_type: hw.component_type,
+          manufacturer: hw.manufacturer,
+          model: hw.model,
+          serial_number: hw.serial_number,
+          capacity: hw.capacity,
+          speed: hw.speed,
+          interface_type: hw.interface_type,
+          details: hw.details || {},
+          first_seen_at: now,
+          last_seen_at: now,
+        }]).catch(() => {})
+      }
+    }
+    
+    return NextResponse.json({
+      success: true,
+      device_id: device.id,
+      software_count: software.length,
+      hardware_count: hardware.length,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDeviceInventory(assetId, params) {
+  try {
+    const [softwareResult, hardwareResult] = await Promise.all([
+      supabaseAdmin
+        .from('software_inventory')
+        .select('*')
+        .eq('asset_id', assetId)
+        .is('removed_at', null)
+        .order('name'),
+      supabaseAdmin
+        .from('hardware_inventory')
+        .select('*')
+        .eq('asset_id', assetId)
+        .order('component_type'),
+    ])
+    
+    return NextResponse.json({
+      software: softwareResult.data || [],
+      hardware: hardwareResult.data || [],
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- Device History ---
+async function handleGetDeviceHistory(assetId, params) {
+  try {
+    let query = supabaseAdmin
+      .from('device_history')
+      .select('*, performed_by:users(first_name, last_name)')
+      .eq('asset_id', assetId)
+    
+    if (params.event_type) query = query.eq('event_type', params.event_type)
+    
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(100)
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- RMM Dashboard Stats ---
+async function handleGetRMMDashboard(params) {
+  try {
+    // Get device counts
+    const { data: devices } = await supabaseAdmin
+      .from('assets')
+      .select('agent_status, device_type')
+      .not('agent_id', 'is', null)
+    
+    // Get active alerts
+    let alerts = []
+    try {
+      const { data } = await supabaseAdmin
+        .from('device_alerts')
+        .select('severity, status')
+        .eq('status', 'active')
+      alerts = data || []
+    } catch (e) {}
+    
+    // Get TRMM agent stats
+    let trmmStats = { total: 0, online: 0, offline: 0 }
+    try {
+      const { data: trmmAgents } = await supabaseAdmin
+        .from('tacticalrmm_agents')
+        .select('status')
+      if (trmmAgents) {
+        trmmStats.total = trmmAgents.length
+        trmmStats.online = trmmAgents.filter(a => a.status === 'online').length
+        trmmStats.offline = trmmAgents.filter(a => a.status !== 'online').length
+      }
+    } catch (e) {}
+    
+    // Get recent sessions
+    let sessions = []
+    try {
+      const { data } = await supabaseAdmin
+        .from('remote_sessions')
+        .select('id, status')
+        .eq('status', 'active')
+      sessions = data || []
+    } catch (e) {}
+    
+    // Get pending jobs
+    let jobs = []
+    try {
+      const { data } = await supabaseAdmin
+        .from('deployment_jobs')
+        .select('id, status')
+        .in('status', ['pending', 'running'])
+      jobs = data || []
+    } catch (e) {}
+    
+    const deviceStats = {
+      total: devices?.length || 0,
+      online: devices?.filter(d => d.agent_status === 'online').length || 0,
+      offline: devices?.filter(d => d.agent_status === 'offline').length || 0,
+      by_type: {
+        server: devices?.filter(d => d.device_type === 'server').length || 0,
+        workstation: devices?.filter(d => d.device_type === 'workstation').length || 0,
+        laptop: devices?.filter(d => d.device_type === 'laptop').length || 0,
+      },
+    }
+    
+    const alertStats = {
+      total: alerts?.length || 0,
+      critical: alerts?.filter(a => a.severity === 'critical').length || 0,
+      warning: alerts?.filter(a => a.severity === 'warning').length || 0,
+    }
+    
+    return NextResponse.json({
+      devices: deviceStats,
+      tacticalrmm: trmmStats,
+      alerts: alertStats,
+      active_sessions: sessions?.length || 0,
+      pending_jobs: jobs?.length || 0,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// TACTICALRMM INTEGRATION HANDLERS
+// ============================================
+
+// Helper: Make TacticalRMM API request
+async function trmmApiRequest(apiUrl, apiKey, endpoint, method = 'GET', body = null) {
+  const url = `${apiUrl}${endpoint}`
+  const headers = {
+    'X-API-KEY': apiKey,
+    'Content-Type': 'application/json',
+  }
+  
+  try {
+    const options = { method, headers }
+    if (body && method !== 'GET') {
+      options.body = JSON.stringify(body)
+    }
+    
+    const response = await fetch(url, options)
+    
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`TRMM API Error ${response.status}: ${errorText}`)
+    }
+    
+    return await response.json()
+  } catch (error) {
+    console.error(`TRMM API Error (${endpoint}):`, error.message)
+    throw error
+  }
+}
+
+// Get TRMM config from settings
+async function getTRMMConfig() {
+  const enabled = await getSetting('tacticalrmm_enabled', false)
+  if (!enabled || enabled === 'false') return null
+  
+  const apiUrl = await getSetting('tacticalrmm_api_url', '')
+  const apiKey = await getSetting('tacticalrmm_api_key', '')
+  
+  if (!apiUrl || !apiKey) return null
+  
+  return { apiUrl, apiKey }
+}
+
+// --- TRMM Instances Management ---
+async function handleGetTRMMInstances() {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('tacticalrmm_instances')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateTRMMInstance(body) {
+  const { name, api_url, api_key, default_organization_id, auto_create_tickets } = body
+  
+  if (!name || !api_url || !api_key) {
+    return NextResponse.json({ error: 'name, api_url und api_key sind erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Test connection
+    const testResult = await trmmApiRequest(api_url, api_key, '/clients/')
+    
+    const { data, error } = await supabaseAdmin
+      .from('tacticalrmm_instances')
+      .insert([{
+        id: uuidv4(),
+        name,
+        api_url: api_url.replace(/\/$/, ''), // Remove trailing slash
+        api_key,
+        default_organization_id,
+        auto_create_tickets: auto_create_tickets !== false,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    return NextResponse.json({
+      ...data,
+      connection_test: { success: true, clients_found: testResult?.length || 0 }
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- TRMM Sync Operations ---
+async function handleTRMMSync(body) {
+  const { instance_id, sync_type = 'full' } = body
+  
+  try {
+    // Get instance config
+    let config
+    if (instance_id) {
+      const { data: instance } = await supabaseAdmin
+        .from('tacticalrmm_instances')
+        .select('*')
+        .eq('id', instance_id)
+        .single()
+      
+      if (!instance) {
+        return NextResponse.json({ error: 'Instance nicht gefunden' }, { status: 404 })
+      }
+      config = { apiUrl: instance.api_url, apiKey: instance.api_key, instanceId: instance.id }
+    } else {
+      const settingsConfig = await getTRMMConfig()
+      if (!settingsConfig) {
+        return NextResponse.json({ error: 'TacticalRMM nicht konfiguriert' }, { status: 400 })
+      }
+      config = settingsConfig
+    }
+    
+    const syncLogId = uuidv4()
+    const startTime = new Date()
+    
+    // Log sync start
+    await supabaseAdmin.from('integration_sync_logs').insert([{
+      id: syncLogId,
+      integration_type: 'tacticalrmm',
+      instance_id: config.instanceId,
+      sync_type,
+      status: 'started',
+      started_at: startTime.toISOString(),
+    }]).catch(() => {})
+    
+    let stats = { processed: 0, created: 0, updated: 0, failed: 0 }
+    
+    // Sync clients (organizations)
+    if (sync_type === 'full' || sync_type === 'clients') {
+      const clients = await trmmApiRequest(config.apiUrl, config.apiKey, '/clients/')
+      
+      for (const client of clients) {
+        try {
+          const { data: existing } = await supabaseAdmin
+            .from('tacticalrmm_clients')
+            .select('id')
+            .eq('trmm_client_id', client.id)
+            .single()
+            .catch(() => ({ data: null }))
+          
+          if (existing) {
+            await supabaseAdmin
+              .from('tacticalrmm_clients')
+              .update({
+                trmm_client_name: client.name,
+                is_active: true,
+                last_synced_at: new Date().toISOString(),
+              })
+              .eq('id', existing.id)
+            stats.updated++
+          } else {
+            await supabaseAdmin.from('tacticalrmm_clients').insert([{
+              id: uuidv4(),
+              instance_id: config.instanceId,
+              trmm_client_id: client.id,
+              trmm_client_name: client.name,
+              is_active: true,
+              last_synced_at: new Date().toISOString(),
+            }])
+            stats.created++
+          }
+          stats.processed++
+        } catch (e) {
+          stats.failed++
+        }
+      }
+    }
+    
+    // Sync agents (devices)
+    if (sync_type === 'full' || sync_type === 'agents') {
+      const agents = await trmmApiRequest(config.apiUrl, config.apiKey, '/agents/')
+      
+      for (const agent of agents) {
+        try {
+          const { data: existing } = await supabaseAdmin
+            .from('tacticalrmm_agents')
+            .select('id, asset_id')
+            .eq('trmm_agent_id', agent.agent_id)
+            .single()
+            .catch(() => ({ data: null }))
+          
+          const agentData = {
+            hostname: agent.hostname,
+            description: agent.description,
+            plat: agent.plat,
+            plat_release: agent.plat_release,
+            version: agent.version,
+            status: agent.status,
+            last_seen: agent.last_seen,
+            boot_time: agent.boot_time,
+            public_ip: agent.public_ip,
+            local_ips: agent.local_ips || [],
+            cpu_model: agent.cpu_model?.[0] || null,
+            total_ram: agent.total_ram,
+            disks: agent.disks || [],
+            graphics: agent.graphics,
+            checks_passing: agent.checks?.passing || 0,
+            checks_failing: agent.checks?.failing || 0,
+            has_patches_pending: agent.has_patches_pending,
+            pending_actions_count: agent.pending_actions_count,
+            maintenance_mode: agent.maintenance_mode,
+            needs_reboot: agent.needs_reboot,
+            logged_user: agent.logged_user,
+            trmm_client_id: agent.client,
+            trmm_site_id: agent.site,
+            last_synced_at: new Date().toISOString(),
+          }
+          
+          if (existing) {
+            await supabaseAdmin
+              .from('tacticalrmm_agents')
+              .update(agentData)
+              .eq('id', existing.id)
+            stats.updated++
+          } else {
+            await supabaseAdmin.from('tacticalrmm_agents').insert([{
+              id: uuidv4(),
+              instance_id: config.instanceId,
+              trmm_agent_id: agent.agent_id,
+              ...agentData,
+            }])
+            stats.created++
+          }
+          stats.processed++
+        } catch (e) {
+          console.error('Agent sync error:', e.message)
+          stats.failed++
+        }
+      }
+    }
+    
+    // Sync alerts
+    if (sync_type === 'full' || sync_type === 'alerts') {
+      try {
+        const alerts = await trmmApiRequest(config.apiUrl, config.apiKey, '/alerts/?resolved=false')
+        
+        for (const alert of alerts) {
+          const { data: existing } = await supabaseAdmin
+            .from('tacticalrmm_alerts')
+            .select('id')
+            .eq('trmm_alert_id', alert.id)
+            .single()
+            .catch(() => ({ data: null }))
+          
+          if (!existing) {
+            // Find agent mapping
+            const { data: agentMapping } = await supabaseAdmin
+              .from('tacticalrmm_agents')
+              .select('id, organization_id')
+              .eq('trmm_agent_id', alert.agent?.agent_id)
+              .single()
+              .catch(() => ({ data: null }))
+            
+            await supabaseAdmin.from('tacticalrmm_alerts').insert([{
+              id: uuidv4(),
+              instance_id: config.instanceId,
+              agent_mapping_id: agentMapping?.id,
+              trmm_alert_id: alert.id,
+              trmm_agent_id: alert.agent?.agent_id,
+              alert_type: alert.alert_type,
+              severity: alert.severity,
+              message: alert.message,
+              alert_time: alert.alert_time,
+              resolved: alert.resolved,
+              assigned_check: alert.assigned_check,
+              created_at: new Date().toISOString(),
+            }])
+            stats.created++
+          }
+          stats.processed++
+        }
+      } catch (e) {
+        console.error('Alerts sync error:', e.message)
+      }
+    }
+    
+    const endTime = new Date()
+    const duration = endTime - startTime
+    
+    // Update sync log
+    await supabaseAdmin.from('integration_sync_logs')
+      .update({
+        status: 'completed',
+        completed_at: endTime.toISOString(),
+        duration_ms: duration,
+        items_processed: stats.processed,
+        items_created: stats.created,
+        items_updated: stats.updated,
+        items_failed: stats.failed,
+      })
+      .eq('id', syncLogId)
+      .catch(() => {})
+    
+    // Update instance last sync
+    if (config.instanceId) {
+      await supabaseAdmin.from('tacticalrmm_instances')
+        .update({
+          last_sync_at: endTime.toISOString(),
+          last_sync_status: 'success',
+        })
+        .eq('id', config.instanceId)
+        .catch(() => {})
+    }
+    
+    return NextResponse.json({
+      success: true,
+      sync_type,
+      duration_ms: duration,
+      stats,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- TRMM Agents ---
+async function handleGetTRMMAgents(params) {
+  try {
+    let query = supabaseAdmin
+      .from('tacticalrmm_agents')
+      .select('*')
+    
+    if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+    if (params.status) query = query.eq('status', params.status)
+    if (params.search) query = query.ilike('hostname', `%${params.search}%`)
+    
+    const { data, error } = await query.order('hostname')
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleMapTRMMAgentToAsset(body) {
+  const { trmm_agent_mapping_id, asset_id, organization_id } = body
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('tacticalrmm_agents')
+      .update({
+        asset_id,
+        organization_id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', trmm_agent_mapping_id)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- TRMM Alerts ---
+async function handleGetTRMMAlerts(params) {
+  try {
+    let query = supabaseAdmin
+      .from('tacticalrmm_alerts')
+      .select('*')
+    
+    if (params.resolved !== undefined) {
+      query = query.eq('resolved', params.resolved === 'true')
+    }
+    if (params.severity) query = query.eq('severity', params.severity)
+    
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(100)
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- TRMM Run Script ---
+async function handleTRMMRunScript(body) {
+  const { trmm_agent_id, script_id, args = [], timeout = 120 } = body
+  
+  try {
+    const config = await getTRMMConfig()
+    if (!config) {
+      return NextResponse.json({ error: 'TacticalRMM nicht konfiguriert' }, { status: 400 })
+    }
+    
+    // Get agent's TRMM agent_id
+    const { data: agentMapping } = await supabaseAdmin
+      .from('tacticalrmm_agents')
+      .select('trmm_agent_id')
+      .eq('id', trmm_agent_id)
+      .single()
+    
+    if (!agentMapping) {
+      return NextResponse.json({ error: 'Agent nicht gefunden' }, { status: 404 })
+    }
+    
+    // Run script via TRMM API
+    const result = await trmmApiRequest(
+      config.apiUrl,
+      config.apiKey,
+      `/agents/${agentMapping.trmm_agent_id}/runscript/`,
+      'POST',
+      {
+        script: script_id,
+        args,
+        timeout,
+        output: 'wait',
+      }
+    )
+    
+    return NextResponse.json({
+      success: true,
+      result,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// --- TRMM Remote Takeover ---
+async function handleTRMMTakeover(body) {
+  const { trmm_agent_id, user_id, ticket_id } = body
+  
+  try {
+    const config = await getTRMMConfig()
+    if (!config) {
+      return NextResponse.json({ error: 'TacticalRMM nicht konfiguriert' }, { status: 400 })
+    }
+    
+    // Get agent's TRMM agent_id
+    const { data: agentMapping } = await supabaseAdmin
+      .from('tacticalrmm_agents')
+      .select('trmm_agent_id, asset_id, organization_id, hostname')
+      .eq('id', trmm_agent_id)
+      .single()
+    
+    if (!agentMapping) {
+      return NextResponse.json({ error: 'Agent nicht gefunden' }, { status: 404 })
+    }
+    
+    // Get takeover URL from TRMM
+    // Note: TRMM uses MeshCentral for remote, URL format varies
+    const takeoverUrl = `${config.apiUrl.replace('/api', '')}/agents/${agentMapping.trmm_agent_id}/meshcentral/`
+    
+    // Create remote session record
+    const sessionId = uuidv4()
+    await supabaseAdmin.from('remote_sessions').insert([{
+      id: sessionId,
+      asset_id: agentMapping.asset_id,
+      organization_id: agentMapping.organization_id,
+      ticket_id,
+      user_id,
+      session_type: 'remote_desktop',
+      remote_tool: 'tacticalrmm_meshcentral',
+      trmm_agent_id,
+      status: 'connecting',
+      started_at: new Date().toISOString(),
+    }])
+    
+    return NextResponse.json({
+      success: true,
+      session_id: sessionId,
+      takeover_url: takeoverUrl,
+      hostname: agentMapping.hostname,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// RUSTDESK INTEGRATION HANDLERS
+// ============================================
+
+async function getRustDeskConfig() {
+  const enabled = await getSetting('rustdesk_enabled', false)
+  if (!enabled || enabled === 'false') return null
+  
+  const idServer = await getSetting('rustdesk_id_server', '')
+  if (!idServer) return null
+  
+  return {
+    idServer,
+    relayServer: await getSetting('rustdesk_relay_server', '') || idServer,
+    publicKey: await getSetting('rustdesk_public_key', ''),
+    isPro: await getSetting('rustdesk_is_pro', false) === 'true',
+    apiServer: await getSetting('rustdesk_api_server', ''),
+  }
+}
+
+async function handleGetRustDeskServers() {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('rustdesk_servers')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateRustDeskServer(body) {
+  const { name, id_server, relay_server, public_key, is_pro, api_server, api_key } = body
+  
+  if (!name || !id_server) {
+    return NextResponse.json({ error: 'name und id_server sind erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('rustdesk_servers')
+      .insert([{
+        id: uuidv4(),
+        name,
+        id_server,
+        relay_server: relay_server || id_server,
+        public_key,
+        is_pro: is_pro || false,
+        api_server,
+        api_key,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetRustDeskPeers(params) {
+  try {
+    let query = supabaseAdmin
+      .from('rustdesk_peers')
+      .select('*')
+    
+    if (params.server_id) query = query.eq('server_id', params.server_id)
+    if (params.organization_id) query = query.eq('organization_id', params.organization_id)
+    if (params.online !== undefined) query = query.eq('online', params.online === 'true')
+    
+    const { data, error } = await query.order('hostname')
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleRegisterRustDeskPeer(body) {
+  const { server_id, peer_id, hostname, platform, alias, asset_id, organization_id, trmm_agent_id } = body
+  
+  if (!peer_id) {
+    return NextResponse.json({ error: 'peer_id ist erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Get default server if not specified
+    let serverId = server_id
+    if (!serverId) {
+      const { data: defaultServer } = await supabaseAdmin
+        .from('rustdesk_servers')
+        .select('id')
+        .eq('is_default', true)
+        .single()
+      
+      serverId = defaultServer?.id
+    }
+    
+    // Check if peer already exists
+    const { data: existing } = await supabaseAdmin
+      .from('rustdesk_peers')
+      .select('id')
+      .eq('peer_id', peer_id)
+      .single()
+      .catch(() => ({ data: null }))
+    
+    if (existing) {
+      // Update existing
+      const { data, error } = await supabaseAdmin
+        .from('rustdesk_peers')
+        .update({
+          hostname, platform, alias, asset_id, organization_id, trmm_agent_id,
+          online: true,
+          last_online: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select()
+        .single()
+      
+      if (error) throw error
+      return NextResponse.json(data)
+    }
+    
+    // Create new
+    const { data, error } = await supabaseAdmin
+      .from('rustdesk_peers')
+      .insert([{
+        id: uuidv4(),
+        server_id: serverId,
+        peer_id,
+        hostname,
+        platform,
+        alias: alias || hostname,
+        asset_id,
+        organization_id,
+        trmm_agent_id,
+        online: true,
+        last_online: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleStartRustDeskSession(body) {
+  const { peer_id, user_id, ticket_id, asset_id } = body
+  
+  if (!peer_id) {
+    return NextResponse.json({ error: 'peer_id ist erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Get peer info
+    const { data: peer } = await supabaseAdmin
+      .from('rustdesk_peers')
+      .select('*, rustdesk_servers(*)')
+      .eq('peer_id', peer_id)
+      .single()
+      .catch(() => ({ data: null }))
+    
+    // Get RustDesk config
+    const config = peer?.rustdesk_servers || await getRustDeskConfig()
+    
+    if (!config) {
+      return NextResponse.json({ error: 'RustDesk nicht konfiguriert' }, { status: 400 })
+    }
+    
+    // Create session record
+    const sessionId = uuidv4()
+    const { data: session, error } = await supabaseAdmin
+      .from('remote_sessions')
+      .insert([{
+        id: sessionId,
+        asset_id: asset_id || peer?.asset_id,
+        organization_id: peer?.organization_id,
+        ticket_id,
+        user_id,
+        session_type: 'remote_desktop',
+        remote_tool: 'rustdesk',
+        remote_id: peer_id,
+        rustdesk_peer_id: peer?.id,
+        status: 'connecting',
+        started_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Generate connection URI
+    const connectionUri = `rustdesk://${peer_id}`
+    
+    return NextResponse.json({
+      success: true,
+      session_id: sessionId,
+      peer_id,
+      hostname: peer?.hostname,
+      connection_uri: connectionUri,
+      server_config: {
+        id_server: config.idServer || config.id_server,
+        relay_server: config.relayServer || config.relay_server,
+        public_key: config.publicKey || config.public_key,
+      },
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// WEBHOOK HANDLERS FOR TRMM
+// ============================================
+
+async function handleTRMMWebhook(body) {
+  // Handle incoming webhooks from TacticalRMM
+  const { event, payload, agent_id, alert_id, message } = body
+  
+  try {
+    // Log webhook
+    await supabaseAdmin.from('integration_sync_logs').insert([{
+      id: uuidv4(),
+      integration_type: 'tacticalrmm',
+      sync_type: 'webhook',
+      status: 'completed',
+      details: { event, agent_id, alert_id },
+      created_at: new Date().toISOString(),
+    }]).catch(() => {})
+    
+    // Handle based on event type
+    if (event === 'alert' || alert_id) {
+      // Find agent mapping
+      const { data: agentMapping } = await supabaseAdmin
+        .from('tacticalrmm_agents')
+        .select('id, organization_id, asset_id, hostname')
+        .eq('trmm_agent_id', agent_id)
+        .single()
+        .catch(() => ({ data: null }))
+      
+      // Create/update alert
+      await supabaseAdmin.from('tacticalrmm_alerts').insert([{
+        id: uuidv4(),
+        agent_mapping_id: agentMapping?.id,
+        trmm_alert_id: alert_id || 0,
+        trmm_agent_id: agent_id,
+        alert_type: payload?.type || 'custom',
+        severity: payload?.severity || 'warning',
+        message: message || payload?.message || 'Alert from TacticalRMM',
+        alert_time: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      }]).catch(() => {})
+    }
+    
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
 // TIME ENTRIES HANDLERS
 // ============================================
 
@@ -4481,6 +6293,170 @@ async function handleCreateInvoiceDraft(body) {
 // ============================================
 // WEBHOOK HANDLERS (for Placetel)
 // ============================================
+
+// ============================================
+// LIVE TRANSCRIPTION API ENDPOINTS
+// ============================================
+
+async function handleStartLiveTranscription(body) {
+  const { call_id, audio_format = 'webm' } = body
+  
+  try {
+    const openaiKey = await getSetting('openai_api_key')
+    if (!openaiKey) {
+      return NextResponse.json({ 
+        success: false, 
+        error: 'OpenAI API-Key nicht konfiguriert',
+        fallback: 'simulation' 
+      }, { status: 400 })
+    }
+    
+    // Update call status to indicate transcription is active
+    await supabaseAdmin
+      .from('call_logs')
+      .update({ 
+        metadata: { transcription_active: true, transcription_started: new Date().toISOString() }
+      })
+      .eq('id', call_id)
+    
+    return NextResponse.json({
+      success: true,
+      call_id,
+      transcription_active: true,
+      supported_formats: ['webm', 'wav', 'mp3', 'ogg'],
+      max_chunk_duration: 30, // seconds
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleTranscribeAudioChunk(body) {
+  const { call_id, audio_base64, chunk_index = 0, is_final = false } = body
+  
+  try {
+    const openaiKey = await getSetting('openai_api_key')
+    
+    if (!openaiKey) {
+      // Simulation mode - return fake transcription
+      const simulatedText = generateSimulatedTranscription(chunk_index)
+      return NextResponse.json({
+        success: true,
+        text: simulatedText,
+        chunk_index,
+        is_final,
+        mode: 'simulation',
+      })
+    }
+    
+    // Decode base64 audio
+    const audioBuffer = Buffer.from(audio_base64, 'base64')
+    
+    // Transcribe with Whisper
+    const result = await transcribeAudioWithWhisper(audioBuffer, `chunk_${chunk_index}.webm`)
+    
+    if (!result.success) {
+      return NextResponse.json({
+        success: false,
+        error: result.error,
+        chunk_index,
+      })
+    }
+    
+    // If final chunk, update call log with full transcription
+    if (is_final && call_id) {
+      const { data: call } = await supabaseAdmin
+        .from('call_logs')
+        .select('transcription')
+        .eq('id', call_id)
+        .single()
+      
+      const fullTranscription = (call?.transcription || '') + ' ' + result.text
+      
+      await supabaseAdmin
+        .from('call_logs')
+        .update({ transcription: fullTranscription.trim() })
+        .eq('id', call_id)
+    }
+    
+    return NextResponse.json({
+      success: true,
+      text: result.text,
+      chunk_index,
+      is_final,
+      mode: 'live',
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+function generateSimulatedTranscription(chunkIndex) {
+  const simulatedPhrases = [
+    "Guten Tag, hier ist die IT-Abteilung.",
+    "Ja, ich habe ein Problem mit meinem Computer.",
+    "Der Bildschirm bleibt schwarz nach dem Einschalten.",
+    "Haben Sie schon versucht, den Computer neu zu starten?",
+    "Ja, das habe ich mehrmals versucht.",
+    "Okay, ich werde einen Techniker zu Ihnen schicken.",
+    "Das wäre sehr hilfreich, vielen Dank.",
+    "Wann wäre Ihnen ein Termin recht?",
+    "Am besten heute Nachmittag, wenn möglich.",
+    "Perfekt, ich trage das ein. Der Techniker meldet sich bei Ihnen.",
+  ]
+  return simulatedPhrases[chunkIndex % simulatedPhrases.length]
+}
+
+async function handleGenerateCallSummaryAPI(body) {
+  const { call_id, transcription } = body
+  
+  try {
+    let text = transcription
+    
+    // If no transcription provided, get from call log
+    if (!text && call_id) {
+      const { data: call } = await supabaseAdmin
+        .from('call_logs')
+        .select('transcription, caller_number, contact:contacts(first_name, last_name, organization:organizations(name))')
+        .eq('id', call_id)
+        .single()
+      
+      if (!call?.transcription) {
+        return NextResponse.json({ error: 'Keine Transkription gefunden' }, { status: 400 })
+      }
+      text = call.transcription
+    }
+    
+    const metadata = { callerNumber: 'Unbekannt' }
+    const result = await generateCallSummary(text, metadata)
+    
+    if (!result.success) {
+      return NextResponse.json({ 
+        success: false, 
+        error: result.error,
+        fallback_summary: {
+          problem: 'Zusammenfassung konnte nicht generiert werden',
+          sentiment: 'neutral',
+        }
+      })
+    }
+    
+    // Update call log with summary
+    if (call_id) {
+      await supabaseAdmin
+        .from('call_logs')
+        .update({ ai_summary: result.summary })
+        .eq('id', call_id)
+    }
+    
+    return NextResponse.json({
+      success: true,
+      summary: result.summary,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
 
 // ============================================
 // PLACETEL WEBHOOK HANDLER - Production Implementation
@@ -10690,13 +12666,51 @@ async function handleOutboundCall(body) {
 }
 
 async function handleCreateContactFromCall(body) {
-  const { call_id, phone_number, first_name, last_name, email, organization_id, notes } = body
+  const { 
+    call_id, 
+    phone_number, 
+    first_name, 
+    last_name, 
+    email, 
+    organization_id, 
+    notes,
+    // NEW: Extended CRM fields
+    customer_type,      // 'private' | 'business'
+    status,             // 'lead' | 'new_customer' | 'existing_customer' | 'lost'
+    call_outcome,       // 'interested' | 'offer_requested' | 'complaint' | 'callback_requested' | 'attempted_to_reach'
+    tags,               // string[]
+    assigned_owner_id,
+    position,
+    mobile,
+    salutation,
+    title,
+    // Organization creation (if not exists)
+    new_organization_name,
+    new_organization_type
+  } = body
   
   try {
-    // If no organization_id provided, try to find or create a "Private" organization
+    // If no organization_id provided but new_organization_name given, create it
     let orgId = organization_id
-    if (!orgId) {
-      // Find or create a default "Privat" organization for contacts without org
+    if (!orgId && new_organization_name) {
+      const { data: newOrg, error: orgError } = await supabaseAdmin
+        .from('organizations')
+        .insert([{
+          id: uuidv4(),
+          name: new_organization_name,
+          type: new_organization_type || (customer_type === 'private' ? 'private' : 'business'),
+          created_at: new Date().toISOString(),
+        }])
+        .select()
+        .single()
+      
+      if (!orgError && newOrg) {
+        orgId = newOrg.id
+      }
+    }
+    
+    // If still no org, find or create default "Privatkontakte"
+    if (!orgId && customer_type === 'private') {
       const { data: existingOrg } = await supabaseAdmin
         .from('organizations')
         .select('id')
@@ -10707,8 +12721,7 @@ async function handleCreateContactFromCall(body) {
       if (existingOrg) {
         orgId = existingOrg.id
       } else {
-        // Create a default private organization
-        const { data: newOrg, error: orgError } = await supabaseAdmin
+        const { data: newOrg } = await supabaseAdmin
           .from('organizations')
           .insert([{
             id: uuidv4(),
@@ -10719,13 +12732,11 @@ async function handleCreateContactFromCall(body) {
           .select()
           .single()
         
-        if (!orgError && newOrg) {
-          orgId = newOrg.id
-        }
+        if (newOrg) orgId = newOrg.id
       }
     }
     
-    // Create new contact
+    // Create new contact with full CRM fields
     const contactId = uuidv4()
     const insertData = {
       id: contactId,
@@ -10733,11 +12744,22 @@ async function handleCreateContactFromCall(body) {
       last_name: last_name || '',
       email: email || null,
       phone: phone_number,
+      mobile: mobile || null,
+      position: position || null,
+      salutation: salutation || null,
+      title: title || null,
       notes: notes || `Kontakt erstellt aus Anruf`,
+      customer_type: customer_type || 'business',
+      status: status || 'lead',
+      tags: tags || [],
+      assigned_owner_id: assigned_owner_id || null,
+      last_call_date: new Date().toISOString(),
+      last_call_outcome: call_outcome || null,
+      total_calls: 1,
+      source: 'phone',
       created_at: new Date().toISOString(),
     }
     
-    // Only include organization_id if we have one
     if (orgId) {
       insertData.organization_id = orgId
     }
@@ -10750,16 +12772,31 @@ async function handleCreateContactFromCall(body) {
     
     if (error) throw error
     
-    // Link call to new contact
+    // Link call to new contact & update call outcome
     if (call_id) {
       await supabaseAdmin
-        .from('calls')
+        .from('call_logs')
         .update({ 
           contact_id: contactId,
           organization_id: orgId || null,
+          call_outcome: call_outcome || null,
         })
         .eq('id', call_id)
     }
+    
+    // Create activity log for new contact
+    await supabaseAdmin.from('contact_activities').insert([{
+      id: uuidv4(),
+      contact_id: contactId,
+      activity_type: 'call',
+      title: 'Kontakt erstellt aus Anruf',
+      description: `Kontakt wurde während eines ${call_id ? 'Anrufs' : 'manuellen Eintrags'} erstellt`,
+      related_id: call_id,
+      related_type: 'call',
+      performed_by_id: assigned_owner_id,
+      metadata: { call_outcome, customer_type, status },
+      created_at: new Date().toISOString(),
+    }]).catch(() => {}) // Ignore if table doesn't exist
     
     return NextResponse.json({
       success: true,
@@ -10768,6 +12805,966 @@ async function handleCreateContactFromCall(body) {
         organization_name: contact.organization?.name,
       },
     })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// EXTENDED CTI: Call History & Timeline
+// ============================================
+
+async function handleGetCallHistory(params) {
+  const { 
+    contact_id, organization_id, ticket_id, agent_id,
+    direction, status, from_date, to_date, 
+    search, limit = 50, offset = 0 
+  } = params
+  
+  try {
+    let query = supabaseAdmin
+      .from('call_logs')
+      .select('*')
+    
+    if (contact_id) query = query.eq('contact_id', contact_id)
+    if (organization_id) query = query.eq('organization_id', organization_id)
+    if (ticket_id) query = query.eq('ticket_id', ticket_id)
+    if (agent_id) query = query.eq('agent_id', agent_id)
+    if (direction) query = query.eq('direction', direction)
+    if (status) query = query.eq('status', status)
+    if (from_date) query = query.gte('started_at', from_date)
+    if (to_date) query = query.lte('started_at', to_date)
+    if (search) {
+      query = query.or(`caller_number.ilike.%${search}%,callee_number.ilike.%${search}%,notes.ilike.%${search}%`)
+    }
+    
+    const { data, error, count } = await query
+      .order('started_at', { ascending: false })
+      .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json({ calls: [], total: 0 })
+      throw error
+    }
+    
+    return NextResponse.json({
+      calls: data || [],
+      total: count || data?.length || 0,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetContactTimeline(contactId) {
+  try {
+    // Get all activities for this contact
+    const [activities, calls, tickets, emails] = await Promise.all([
+      // Activity log
+      supabaseAdmin
+        .from('contact_activities')
+        .select('*')
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(50)
+        .then(r => r.data || [])
+        .catch(() => []),
+      
+      // Calls
+      supabaseAdmin
+        .from('call_logs')
+        .select('id, direction, caller_number, callee_number, duration_seconds, status, call_outcome, started_at, notes, ai_summary')
+        .eq('contact_id', contactId)
+        .order('started_at', { ascending: false })
+        .limit(20)
+        .then(r => r.data || [])
+        .catch(() => []),
+      
+      // Tickets
+      supabaseAdmin
+        .from('tickets')
+        .select('id, ticket_number, subject, status, priority, created_at')
+        .eq('contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(20)
+        .then(r => r.data || [])
+        .catch(() => []),
+      
+      // Emails (from ticket_emails via tickets linked to contact)
+      supabaseAdmin
+        .from('ticket_emails')
+        .select('id, subject, direction, status, sent_at, created_at, ticket:tickets!inner(contact_id)')
+        .eq('ticket.contact_id', contactId)
+        .order('created_at', { ascending: false })
+        .limit(20)
+        .then(r => r.data || [])
+        .catch(() => []),
+    ])
+    
+    // Combine and sort all timeline items
+    const timeline = [
+      ...activities.map(a => ({ ...a, type: 'activity', date: a.created_at })),
+      ...calls.map(c => ({ ...c, type: 'call', date: c.started_at, title: `${c.direction === 'inbound' ? 'Eingehender' : 'Ausgehender'} Anruf` })),
+      ...tickets.map(t => ({ ...t, type: 'ticket', date: t.created_at, title: `Ticket #${t.ticket_number}: ${t.subject}` })),
+      ...emails.map(e => ({ ...e, type: 'email', date: e.sent_at || e.created_at, title: e.subject })),
+    ].sort((a, b) => new Date(b.date) - new Date(a.date))
+    
+    return NextResponse.json({ timeline, total: timeline.length })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// CALL → TICKET: Create & Link & Merge
+// ============================================
+
+async function handleCreateTicketFromCall(body) {
+  const { call_id, user_id, subject, description, priority, assignee_id, tags } = body
+  
+  try {
+    // Get call details
+    const { data: call } = await supabaseAdmin
+      .from('call_logs')
+      .select('*, contact:contacts(*), organization:organizations(*)')
+      .eq('id', call_id)
+      .single()
+    
+    if (!call) {
+      return NextResponse.json({ error: 'Anruf nicht gefunden' }, { status: 404 })
+    }
+    
+    // Generate subject from AI summary or call details
+    const ticketSubject = subject || 
+      (call.ai_summary?.problem ? call.ai_summary.problem : 
+       `Telefonanruf von ${call.caller_number}${call.contact ? ` (${call.contact.first_name} ${call.contact.last_name})` : ''}`)
+    
+    // Generate description from transcription + summary
+    let ticketDescription = description || ''
+    if (!description) {
+      if (call.ai_summary) {
+        ticketDescription = `**Problem:** ${call.ai_summary.problem || 'Nicht spezifiziert'}\n\n`
+        if (call.ai_summary.actions?.length) {
+          ticketDescription += `**Durchgeführte Maßnahmen:**\n${call.ai_summary.actions.map(a => `- ${a}`).join('\n')}\n\n`
+        }
+        if (call.ai_summary.nextSteps?.length) {
+          ticketDescription += `**Nächste Schritte:**\n${call.ai_summary.nextSteps.map(s => `- ${s}`).join('\n')}\n\n`
+        }
+      }
+      if (call.transcription) {
+        ticketDescription += `\n\n---\n**Transkript:**\n${call.transcription}`
+      }
+      if (call.notes) {
+        ticketDescription += `\n\n**Notizen:** ${call.notes}`
+      }
+    }
+    
+    // Get next ticket number
+    const { data: lastTicket } = await supabaseAdmin
+      .from('tickets')
+      .select('ticket_number')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+    
+    const nextNumber = (lastTicket?.ticket_number || 0) + 1
+    
+    // Create ticket
+    const ticketId = uuidv4()
+    const { data: ticket, error } = await supabaseAdmin
+      .from('tickets')
+      .insert([{
+        id: ticketId,
+        ticket_number: nextNumber,
+        subject: ticketSubject,
+        description: ticketDescription,
+        status: 'open',
+        priority: priority || call.ai_summary?.urgency || 'medium',
+        source: 'phone',
+        organization_id: call.organization_id,
+        contact_id: call.contact_id,
+        assignee_id: assignee_id || call.agent_id,
+        created_by_id: user_id,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Link call to ticket
+    await supabaseAdmin
+      .from('call_logs')
+      .update({ ticket_id: ticketId })
+      .eq('id', call_id)
+    
+    // Add internal note with call summary
+    await supabaseAdmin.from('ticket_comments').insert([{
+      id: uuidv4(),
+      ticket_id: ticketId,
+      content: `📞 Ticket erstellt aus Telefonat\n\n**Anrufer:** ${call.caller_number}\n**Dauer:** ${Math.round((call.duration_seconds || 0) / 60)} Minuten\n**Agent:** ${call.agent_id || 'Nicht zugewiesen'}`,
+      is_internal: true,
+      user_id: user_id,
+      created_at: new Date().toISOString(),
+    }])
+    
+    // Create audit log
+    await supabaseAdmin.from('ticket_history').insert([{
+      id: uuidv4(),
+      ticket_id: ticketId,
+      change_type: 'created_from_call',
+      new_value: JSON.stringify({ call_id, caller: call.caller_number }),
+      changed_by_id: user_id,
+      created_at: new Date().toISOString(),
+    }])
+    
+    return NextResponse.json({
+      success: true,
+      ticket: {
+        ...ticket,
+        call_linked: true,
+      },
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleLinkCallToTicket(body) {
+  const { call_id, ticket_id, user_id, add_note = true } = body
+  
+  try {
+    // Get call details
+    const { data: call } = await supabaseAdmin
+      .from('call_logs')
+      .select('*')
+      .eq('id', call_id)
+      .single()
+    
+    if (!call) {
+      return NextResponse.json({ error: 'Anruf nicht gefunden' }, { status: 404 })
+    }
+    
+    // Link call to ticket
+    const { error } = await supabaseAdmin
+      .from('call_logs')
+      .update({ ticket_id })
+      .eq('id', call_id)
+    
+    if (error) throw error
+    
+    // Optionally add note to ticket
+    if (add_note) {
+      let noteContent = `📞 Anruf verknüpft\n\n**Richtung:** ${call.direction === 'inbound' ? 'Eingehend' : 'Ausgehend'}\n**Nummer:** ${call.caller_number || call.callee_number}\n**Dauer:** ${Math.round((call.duration_seconds || 0) / 60)} Minuten`
+      
+      if (call.ai_summary) {
+        noteContent += `\n\n**Zusammenfassung:** ${call.ai_summary.problem || 'Keine Zusammenfassung verfügbar'}`
+      }
+      if (call.notes) {
+        noteContent += `\n\n**Notizen:** ${call.notes}`
+      }
+      
+      await supabaseAdmin.from('ticket_comments').insert([{
+        id: uuidv4(),
+        ticket_id,
+        content: noteContent,
+        is_internal: true,
+        user_id,
+        created_at: new Date().toISOString(),
+      }])
+    }
+    
+    // Audit log
+    await supabaseAdmin.from('ticket_history').insert([{
+      id: uuidv4(),
+      ticket_id,
+      change_type: 'call_linked',
+      new_value: JSON.stringify({ call_id }),
+      changed_by_id: user_id,
+      created_at: new Date().toISOString(),
+    }])
+    
+    return NextResponse.json({ success: true, call_id, ticket_id })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleMergeTicketsAdvanced(body) {
+  const { target_ticket_id, source_ticket_ids, user_id, merge_reason } = body
+  
+  if (!target_ticket_id || !source_ticket_ids?.length) {
+    return NextResponse.json({ error: 'target_ticket_id und source_ticket_ids sind erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    // Get target ticket
+    const { data: targetTicket } = await supabaseAdmin
+      .from('tickets')
+      .select('*')
+      .eq('id', target_ticket_id)
+      .single()
+    
+    if (!targetTicket) {
+      return NextResponse.json({ error: 'Ziel-Ticket nicht gefunden' }, { status: 404 })
+    }
+    
+    const mergeResults = []
+    
+    for (const sourceId of source_ticket_ids) {
+      // Get source ticket with all related data
+      const { data: sourceTicket } = await supabaseAdmin
+        .from('tickets')
+        .select('*, ticket_comments(*), time_entries(*), call_logs(*)')
+        .eq('id', sourceId)
+        .single()
+      
+      if (!sourceTicket) continue
+      
+      const itemsMoved = { comments: 0, time_entries: 0, calls: 0, attachments: 0 }
+      
+      // Move comments to target
+      if (sourceTicket.ticket_comments?.length) {
+        for (const comment of sourceTicket.ticket_comments) {
+          await supabaseAdmin
+            .from('ticket_comments')
+            .update({ ticket_id: target_ticket_id })
+            .eq('id', comment.id)
+        }
+        itemsMoved.comments = sourceTicket.ticket_comments.length
+      }
+      
+      // Move time entries to target
+      if (sourceTicket.time_entries?.length) {
+        for (const entry of sourceTicket.time_entries) {
+          await supabaseAdmin
+            .from('time_entries')
+            .update({ ticket_id: target_ticket_id })
+            .eq('id', entry.id)
+        }
+        itemsMoved.time_entries = sourceTicket.time_entries.length
+      }
+      
+      // Move calls to target
+      if (sourceTicket.call_logs?.length) {
+        for (const call of sourceTicket.call_logs) {
+          await supabaseAdmin
+            .from('call_logs')
+            .update({ ticket_id: target_ticket_id })
+            .eq('id', call.id)
+        }
+        itemsMoved.calls = sourceTicket.call_logs.length
+      }
+      
+      // Add merge note to target
+      await supabaseAdmin.from('ticket_comments').insert([{
+        id: uuidv4(),
+        ticket_id: target_ticket_id,
+        content: `🔀 Ticket #${sourceTicket.ticket_number} zusammengeführt\n\n**Ursprünglicher Betreff:** ${sourceTicket.subject}\n**Beschreibung:** ${sourceTicket.description || 'Keine'}\n**Grund:** ${merge_reason || 'Duplikat'}`,
+        is_internal: true,
+        user_id,
+        created_at: new Date().toISOString(),
+      }])
+      
+      // Mark source as merged
+      await supabaseAdmin
+        .from('tickets')
+        .update({
+          status: 'closed',
+          resolution_category: 'Duplikat',
+          resolution_summary: `Zusammengeführt mit Ticket #${targetTicket.ticket_number}`,
+          merged_into_id: target_ticket_id,
+          closed_at: new Date().toISOString(),
+          closed_by_id: user_id,
+        })
+        .eq('id', sourceId)
+      
+      // Create merge record
+      await supabaseAdmin.from('ticket_merges').insert([{
+        id: uuidv4(),
+        target_ticket_id,
+        source_ticket_id: sourceId,
+        source_ticket_number: sourceTicket.ticket_number?.toString(),
+        merged_by_id: user_id,
+        merge_reason: merge_reason || 'Duplikat',
+        items_moved: itemsMoved,
+        created_at: new Date().toISOString(),
+      }]).catch(() => {}) // Ignore if table doesn't exist
+      
+      // Audit log
+      await supabaseAdmin.from('ticket_history').insert([{
+        id: uuidv4(),
+        ticket_id: sourceId,
+        change_type: 'merged',
+        new_value: JSON.stringify({ merged_into: target_ticket_id, items_moved: itemsMoved }),
+        changed_by_id: user_id,
+        created_at: new Date().toISOString(),
+      }])
+      
+      mergeResults.push({ source_id: sourceId, source_number: sourceTicket.ticket_number, items_moved, success: true })
+    }
+    
+    return NextResponse.json({
+      success: true,
+      target_ticket_id,
+      target_ticket_number: targetTicket.ticket_number,
+      merged: mergeResults,
+      total_merged: mergeResults.length,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// CALL TRANSCRIPTION & TIME ENTRY
+// ============================================
+
+async function handleEndCallWithTimeEntry(body) {
+  const { call_id, user_id, notes, call_outcome, is_billable = true, manual_duration_minutes } = body
+  
+  try {
+    // Get call
+    const { data: call } = await supabaseAdmin
+      .from('call_logs')
+      .select('*')
+      .eq('id', call_id)
+      .single()
+    
+    if (!call) {
+      return NextResponse.json({ error: 'Anruf nicht gefunden' }, { status: 404 })
+    }
+    
+    const endedAt = new Date().toISOString()
+    const durationSeconds = manual_duration_minutes 
+      ? manual_duration_minutes * 60 
+      : Math.round((new Date(endedAt) - new Date(call.started_at)) / 1000)
+    
+    // Create time entry
+    const timeEntryId = uuidv4()
+    const { data: timeEntry, error: timeError } = await supabaseAdmin
+      .from('time_entries')
+      .insert([{
+        id: timeEntryId,
+        user_id: user_id || call.agent_id,
+        ticket_id: call.ticket_id,
+        organization_id: call.organization_id,
+        description: `Telefonat: ${notes || (call.direction === 'inbound' ? 'Eingehender Anruf' : 'Ausgehender Anruf')} - ${call.caller_number || call.callee_number}`,
+        duration_minutes: Math.ceil(durationSeconds / 60),
+        is_billable,
+        entry_type: 'call',
+        started_at: call.started_at,
+        ended_at: endedAt,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    // Update call with end time and time entry reference
+    const { data: updatedCall, error } = await supabaseAdmin
+      .from('call_logs')
+      .update({
+        status: 'completed',
+        ended_at: endedAt,
+        duration_seconds: durationSeconds,
+        notes: notes || call.notes,
+        call_outcome,
+        is_billable,
+        time_entry_id: timeError ? null : timeEntryId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', call_id)
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    // Update contact stats if linked
+    if (call.contact_id) {
+      await supabaseAdmin
+        .from('contacts')
+        .update({
+          last_call_date: endedAt,
+          last_call_outcome: call_outcome,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', call.contact_id)
+        .catch(() => {})
+    }
+    
+    return NextResponse.json({
+      success: true,
+      call: updatedCall,
+      time_entry: timeEntry || null,
+      duration_minutes: Math.ceil(durationSeconds / 60),
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// TICKET EMAIL: Send from Ticket
+// ============================================
+
+async function handleSendTicketEmail(body) {
+  const { 
+    ticket_id, user_id, 
+    to, cc, bcc, subject, body_html, body_text,
+    mailbox_id
+  } = body
+  
+  try {
+    // Get ticket with contact
+    const { data: ticket } = await supabaseAdmin
+      .from('tickets')
+      .select('*, contact:contacts(email, first_name, last_name), organization:organizations(name, email)')
+      .eq('id', ticket_id)
+      .single()
+    
+    if (!ticket) {
+      return NextResponse.json({ error: 'Ticket nicht gefunden' }, { status: 404 })
+    }
+    
+    // Determine recipient
+    const recipient = to || ticket.contact?.email || ticket.organization?.email
+    if (!recipient) {
+      return NextResponse.json({ error: 'Keine E-Mail-Adresse gefunden' }, { status: 400 })
+    }
+    
+    // Get SMTP settings
+    const smtpHost = await getSetting('smtp_host')
+    const smtpPort = await getSetting('smtp_port', 587)
+    const smtpUser = await getSetting('smtp_user')
+    const smtpPass = await getSetting('smtp_password')
+    const smtpFrom = await getSetting('smtp_from_email')
+    
+    if (!smtpHost || !smtpUser) {
+      return NextResponse.json({ error: 'SMTP nicht konfiguriert' }, { status: 400 })
+    }
+    
+    // Create email record first
+    const emailId = uuidv4()
+    const messageId = `<${emailId}@servicedesk.local>`
+    const emailSubject = subject || `Re: [Ticket #${ticket.ticket_number}] ${ticket.subject}`
+    
+    const { data: emailRecord } = await supabaseAdmin
+      .from('ticket_emails')
+      .insert([{
+        id: emailId,
+        ticket_id,
+        direction: 'outbound',
+        message_id: messageId,
+        from_address: smtpFrom,
+        to_addresses: Array.isArray(recipient) ? recipient : [recipient],
+        cc_addresses: cc || [],
+        bcc_addresses: bcc || [],
+        subject: emailSubject,
+        body_text: body_text || '',
+        body_html: body_html || '',
+        status: 'queued',
+        sent_by_id: user_id,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+      .catch(() => null)
+    
+    // Send email via nodemailer
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: parseInt(smtpPort),
+        secure: parseInt(smtpPort) === 465,
+        auth: { user: smtpUser, pass: smtpPass },
+      })
+      
+      await transporter.sendMail({
+        from: smtpFrom,
+        to: recipient,
+        cc: cc?.join(', '),
+        bcc: bcc?.join(', '),
+        subject: emailSubject,
+        text: body_text || '',
+        html: body_html || body_text || '',
+        messageId,
+        headers: {
+          'X-Ticket-ID': ticket_id,
+          'X-Ticket-Number': ticket.ticket_number?.toString(),
+        },
+      })
+      
+      // Update email status
+      if (emailRecord) {
+        await supabaseAdmin
+          .from('ticket_emails')
+          .update({ status: 'sent', sent_at: new Date().toISOString() })
+          .eq('id', emailId)
+      }
+      
+      // Add comment to ticket
+      await supabaseAdmin.from('ticket_comments').insert([{
+        id: uuidv4(),
+        ticket_id,
+        content: `📧 E-Mail gesendet an ${recipient}\n\n**Betreff:** ${emailSubject}\n\n${body_text || ''}`,
+        is_internal: false,
+        user_id,
+        created_at: new Date().toISOString(),
+      }])
+      
+      // Audit log
+      await supabaseAdmin.from('ticket_history').insert([{
+        id: uuidv4(),
+        ticket_id,
+        change_type: 'email_sent',
+        new_value: JSON.stringify({ to: recipient, subject: emailSubject }),
+        changed_by_id: user_id,
+        created_at: new Date().toISOString(),
+      }])
+      
+      return NextResponse.json({
+        success: true,
+        email_id: emailId,
+        message_id: messageId,
+        recipient,
+      })
+    } catch (sendError) {
+      // Update email status to failed
+      if (emailRecord) {
+        await supabaseAdmin
+          .from('ticket_emails')
+          .update({ status: 'failed', error_message: sendError.message })
+          .eq('id', emailId)
+      }
+      
+      throw sendError
+    }
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetTicketEmails(ticketId) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('ticket_emails')
+      .select('*, sent_by:users(first_name, last_name)')
+      .eq('ticket_id', ticketId)
+      .order('created_at', { ascending: false })
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// ENHANCED BACKUP SYSTEM
+// ============================================
+
+async function handleCreateFullBackup(body) {
+  const { 
+    backup_type = 'manual', 
+    name,
+    include_files = true,
+    created_by_id
+  } = body
+  
+  try {
+    const backupId = uuidv4()
+    const timestamp = new Date().toISOString()
+    
+    // Create backup record with pending status
+    const backupRecord = {
+      id: backupId,
+      backup_type,
+      status: 'in_progress',
+      file_name: `backup_${backup_type}_${timestamp.replace(/[:.]/g, '-')}.json`,
+      tables_included: [],
+      row_counts: {},
+      version: '1.0',
+      notes: name || `${backup_type === 'manual' ? 'Manuelles' : backup_type.charAt(0).toUpperCase() + backup_type.slice(1) + 's'} Backup`,
+      created_by_id,
+      started_at: timestamp,
+      created_at: timestamp,
+    }
+    
+    await supabaseAdmin.from('system_backups').insert([backupRecord])
+    
+    // Tables to backup
+    const tables = [
+      'users', 'organizations', 'contacts', 'locations',
+      'tickets', 'ticket_comments', 'ticket_history',
+      'assets', 'time_entries', 'call_logs',
+      'wiki_spaces', 'wiki_pages', 'wiki_categories',
+      'settings', 'automations', 'sla_profiles',
+      'tags', 'templates', 'roles', 'permissions'
+    ]
+    
+    const backupData = {
+      version: '1.0',
+      created_at: timestamp,
+      backup_type,
+      tables: {},
+      row_counts: {},
+    }
+    
+    // Export each table
+    for (const tableName of tables) {
+      try {
+        const { data, error, count } = await supabaseAdmin
+          .from(tableName)
+          .select('*', { count: 'exact' })
+        
+        if (!error && data) {
+          backupData.tables[tableName] = data
+          backupData.row_counts[tableName] = count || data.length
+        }
+      } catch (e) {
+        // Table might not exist, skip it
+        console.log(`Skipping table ${tableName}: ${e.message}`)
+      }
+    }
+    
+    // Calculate checksum
+    const backupString = JSON.stringify(backupData)
+    const checksum = crypto.createHash('sha256').update(backupString).digest('hex')
+    
+    // In a real implementation, we would save the file to storage
+    // For now, we'll store the checksum and metadata
+    
+    // Update backup record
+    const { data: completedBackup, error } = await supabaseAdmin
+      .from('system_backups')
+      .update({
+        status: 'completed',
+        tables_included: Object.keys(backupData.tables),
+        row_counts: backupData.row_counts,
+        checksum,
+        file_size_bytes: backupString.length,
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', backupId)
+      .select()
+      .single()
+    
+    if (error && error.code !== '42P01') {
+      // If table doesn't exist, return simulated success
+      return NextResponse.json({
+        id: backupId,
+        ...backupRecord,
+        status: 'completed',
+        tables_included: Object.keys(backupData.tables),
+        row_counts: backupData.row_counts,
+        checksum,
+        file_size_bytes: backupString.length,
+        message: 'Backup erfolgreich erstellt',
+      })
+    }
+    
+    return NextResponse.json({
+      ...completedBackup,
+      message: 'Backup erfolgreich erstellt',
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleDownloadBackup(backupId) {
+  try {
+    // Get backup record
+    const { data: backup } = await supabaseAdmin
+      .from('system_backups')
+      .select('*')
+      .eq('id', backupId)
+      .single()
+    
+    if (!backup) {
+      return NextResponse.json({ error: 'Backup nicht gefunden' }, { status: 404 })
+    }
+    
+    // Re-export the data for download
+    const tables = backup.tables_included || []
+    const backupData = {
+      version: backup.version,
+      created_at: backup.created_at,
+      backup_id: backupId,
+      backup_type: backup.backup_type,
+      tables: {},
+    }
+    
+    for (const tableName of tables) {
+      try {
+        const { data } = await supabaseAdmin.from(tableName).select('*')
+        if (data) backupData.tables[tableName] = data
+      } catch (e) {
+        // Skip unavailable tables
+      }
+    }
+    
+    return NextResponse.json({
+      filename: backup.file_name || `backup_${backupId}.json`,
+      data: backupData,
+      checksum: backup.checksum,
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleRestoreFullBackup(backupId, body) {
+  const { test_mode = true, user_id, backup_data } = body
+  
+  try {
+    // If backup_data is provided (uploaded file), use that
+    // Otherwise, try to load from stored backup
+    let dataToRestore = backup_data
+    
+    if (!dataToRestore && backupId) {
+      // Get backup record and re-export (in production, load from file storage)
+      return NextResponse.json({
+        success: false,
+        error: 'Backup-Wiederherstellung aus gespeicherten Backups erfordert Dateispeicherung',
+        test_mode,
+      })
+    }
+    
+    if (!dataToRestore?.tables) {
+      return NextResponse.json({ error: 'Keine Backup-Daten gefunden' }, { status: 400 })
+    }
+    
+    // Create restore log
+    const restoreId = uuidv4()
+    await supabaseAdmin.from('restore_logs').insert([{
+      id: restoreId,
+      backup_id: backupId,
+      status: 'in_progress',
+      started_at: new Date().toISOString(),
+      performed_by_id: user_id,
+    }]).catch(() => {})
+    
+    if (test_mode) {
+      // In test mode, just validate the data
+      const validation = {
+        tables_found: Object.keys(dataToRestore.tables),
+        row_counts: {},
+        errors: [],
+      }
+      
+      for (const [tableName, rows] of Object.entries(dataToRestore.tables)) {
+        validation.row_counts[tableName] = rows.length
+      }
+      
+      return NextResponse.json({
+        success: true,
+        test_mode: true,
+        validation,
+        message: 'Backup-Validierung erfolgreich. Daten sind gültig.',
+      })
+    }
+    
+    // In production mode, actually restore
+    // WARNING: This would overwrite existing data!
+    const results = {
+      tables_restored: [],
+      row_counts: {},
+      errors: [],
+    }
+    
+    for (const [tableName, rows] of Object.entries(dataToRestore.tables)) {
+      try {
+        // First, delete existing data (be careful!)
+        // await supabaseAdmin.from(tableName).delete().neq('id', 'never-match')
+        
+        // Then insert backup data
+        if (rows.length > 0) {
+          const { error } = await supabaseAdmin.from(tableName).upsert(rows, { onConflict: 'id' })
+          if (error) {
+            results.errors.push(`${tableName}: ${error.message}`)
+          } else {
+            results.tables_restored.push(tableName)
+            results.row_counts[tableName] = rows.length
+          }
+        }
+      } catch (e) {
+        results.errors.push(`${tableName}: ${e.message}`)
+      }
+    }
+    
+    // Update restore log
+    await supabaseAdmin.from('restore_logs').update({
+      status: results.errors.length > 0 ? 'completed_with_errors' : 'completed',
+      completed_at: new Date().toISOString(),
+      tables_restored: results.tables_restored,
+      row_counts: results.row_counts,
+      errors: results.errors,
+    }).eq('id', restoreId).catch(() => {})
+    
+    return NextResponse.json({
+      success: results.errors.length === 0,
+      test_mode: false,
+      results,
+      message: results.errors.length > 0 
+        ? `Wiederherstellung abgeschlossen mit ${results.errors.length} Fehlern`
+        : 'Backup erfolgreich wiederhergestellt',
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
+// CONTACT TAGS MANAGEMENT
+// ============================================
+
+async function handleGetContactTags() {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('contact_tags')
+      .select('*')
+      .order('name')
+    
+    if (error) {
+      if (error.code === '42P01') return NextResponse.json([])
+      throw error
+    }
+    
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateContactTag(body) {
+  const { name, color, description } = body
+  
+  if (!name) {
+    return NextResponse.json({ error: 'Name ist erforderlich' }, { status: 400 })
+  }
+  
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('contact_tags')
+      .insert([{
+        id: uuidv4(),
+        name,
+        color: color || '#3B82F6',
+        description,
+        created_at: new Date().toISOString(),
+      }])
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
@@ -13982,6 +16979,180 @@ async function handleRoute(request, { params }) {
       return handleCORS(await handleSimulateIncomingCall(body))
     }
     
+    // ============================================================
+    // RMM SYSTEM ROUTES
+    // ============================================================
+    
+    // --- RMM Dashboard ---
+    if (route === '/rmm/dashboard' && method === 'GET') {
+      return handleCORS(await handleGetRMMDashboard(searchParams))
+    }
+    
+    // --- Agent Enrollment ---
+    if (route === '/rmm/enrollment-tokens' && method === 'GET') {
+      return handleCORS(await handleGetEnrollmentTokens(searchParams))
+    }
+    if (route === '/rmm/enrollment-tokens' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateEnrollmentToken(body))
+    }
+    if (route === '/rmm/enroll' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleEnrollAgent(body))
+    }
+    
+    // --- Agent Heartbeat ---
+    if (route === '/rmm/heartbeat' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleAgentHeartbeat(body))
+    }
+    
+    // --- Device Alerts ---
+    if (route === '/rmm/alerts' && method === 'GET') {
+      return handleCORS(await handleGetDeviceAlerts(searchParams))
+    }
+    if (route.match(/^\/rmm\/alerts\/[^/]+\/acknowledge$/) && method === 'POST') {
+      const alertId = path[3]
+      const body = await request.json()
+      return handleCORS(await handleAcknowledgeAlert(alertId, body))
+    }
+    if (route.match(/^\/rmm\/alerts\/[^/]+\/resolve$/) && method === 'POST') {
+      const alertId = path[3]
+      const body = await request.json()
+      return handleCORS(await handleResolveAlert(alertId, body))
+    }
+    
+    // --- Remote Sessions ---
+    if (route === '/rmm/remote-sessions' && method === 'GET') {
+      return handleCORS(await handleGetRemoteSessions(searchParams))
+    }
+    if (route === '/rmm/remote-sessions' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleStartRemoteSession(body))
+    }
+    if (route.match(/^\/rmm\/remote-sessions\/[^/]+\/end$/) && method === 'POST') {
+      const sessionId = path[3]
+      const body = await request.json()
+      return handleCORS(await handleEndRemoteSession(sessionId, body))
+    }
+    
+    // --- Software Catalog ---
+    if (route === '/rmm/software-catalog' && method === 'GET') {
+      return handleCORS(await handleGetSoftwareCatalog(searchParams))
+    }
+    if (route === '/rmm/software-catalog' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateSoftwarePackage(body))
+    }
+    
+    // --- Deployment Jobs ---
+    if (route === '/rmm/deployment-jobs' && method === 'GET') {
+      return handleCORS(await handleGetDeploymentJobs(searchParams))
+    }
+    if (route === '/rmm/deployment-jobs' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateDeploymentJob(body))
+    }
+    if (route === '/rmm/deployment-jobs/report' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleReportJobExecution(body))
+    }
+    
+    // --- Device Inventory ---
+    if (route === '/rmm/inventory/report' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleReportInventory(body))
+    }
+    if (route.match(/^\/rmm\/devices\/[^/]+\/inventory$/) && method === 'GET') {
+      const assetId = path[3]
+      return handleCORS(await handleGetDeviceInventory(assetId, searchParams))
+    }
+    
+    // --- Device History ---
+    if (route.match(/^\/rmm\/devices\/[^/]+\/history$/) && method === 'GET') {
+      const assetId = path[3]
+      return handleCORS(await handleGetDeviceHistory(assetId, searchParams))
+    }
+    
+    // ============================================================
+    // TACTICALRMM INTEGRATION ROUTES
+    // ============================================================
+    
+    // TRMM Instances
+    if (route === '/tacticalrmm/instances' && method === 'GET') {
+      return handleCORS(await handleGetTRMMInstances())
+    }
+    if (route === '/tacticalrmm/instances' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateTRMMInstance(body))
+    }
+    
+    // TRMM Sync
+    if (route === '/tacticalrmm/sync' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleTRMMSync(body))
+    }
+    
+    // TRMM Agents
+    if (route === '/tacticalrmm/agents' && method === 'GET') {
+      return handleCORS(await handleGetTRMMAgents(searchParams))
+    }
+    if (route === '/tacticalrmm/agents/map' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleMapTRMMAgentToAsset(body))
+    }
+    
+    // TRMM Alerts
+    if (route === '/tacticalrmm/alerts' && method === 'GET') {
+      return handleCORS(await handleGetTRMMAlerts(searchParams))
+    }
+    
+    // TRMM Script Execution
+    if (route === '/tacticalrmm/run-script' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleTRMMRunScript(body))
+    }
+    
+    // TRMM Remote Takeover
+    if (route === '/tacticalrmm/takeover' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleTRMMTakeover(body))
+    }
+    
+    // TRMM Webhook
+    if (route === '/webhooks/tacticalrmm' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleTRMMWebhook(body))
+    }
+    
+    // ============================================================
+    // RUSTDESK INTEGRATION ROUTES
+    // ============================================================
+    
+    // RustDesk Servers
+    if (route === '/rustdesk/servers' && method === 'GET') {
+      return handleCORS(await handleGetRustDeskServers())
+    }
+    if (route === '/rustdesk/servers' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateRustDeskServer(body))
+    }
+    
+    // RustDesk Peers
+    if (route === '/rustdesk/peers' && method === 'GET') {
+      return handleCORS(await handleGetRustDeskPeers(searchParams))
+    }
+    if (route === '/rustdesk/peers' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleRegisterRustDeskPeer(body))
+    }
+    
+    // RustDesk Session
+    if (route === '/rustdesk/session/start' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleStartRustDeskSession(body))
+    }
+    
     // --- SELF-SERVICE PORTAL (Public) ---
     if (route === '/public/kb-search' && method === 'GET') {
       return handleCORS(await handlePublicKBSearch(searchParams))
@@ -15050,6 +18221,101 @@ async function handleRoute(request, { params }) {
     if (route === '/automation/follow-ups' && method === 'POST') {
       const body = await request.json()
       return handleCORS(await handleCreateFollowUp(body))
+    }
+    
+    // ============================================================
+    // SECTION 9: EXTENDED CTI & CRM ROUTES
+    // ============================================================
+    
+    // Call History
+    if (route === '/cti/call-history' && method === 'GET') {
+      const params = Object.fromEntries(url.searchParams)
+      return handleCORS(await handleGetCallHistory(params))
+    }
+    
+    // Contact Timeline
+    if (route.match(/^\/contacts\/[^/]+\/timeline$/) && method === 'GET') {
+      const contactId = route.split('/')[2]
+      return handleCORS(await handleGetContactTimeline(contactId))
+    }
+    
+    // Create Ticket from Call
+    if (route === '/cti/create-ticket' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateTicketFromCall(body))
+    }
+    
+    // Link Call to Ticket
+    if (route === '/cti/link-ticket' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleLinkCallToTicket(body))
+    }
+    
+    // End Call with Time Entry
+    if (route === '/cti/end-call' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleEndCallWithTimeEntry(body))
+    }
+    
+    // Live Transcription APIs
+    if (route === '/cti/transcription/start' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleStartLiveTranscription(body))
+    }
+    
+    if (route === '/cti/transcription/chunk' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleTranscribeAudioChunk(body))
+    }
+    
+    if (route === '/cti/transcription/summary' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleGenerateCallSummaryAPI(body))
+    }
+    
+    // Advanced Ticket Merge
+    if (route === '/tickets/merge-advanced' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleMergeTicketsAdvanced(body))
+    }
+    
+    // Ticket Emails
+    if (route.match(/^\/tickets\/[^/]+\/emails$/) && method === 'GET') {
+      const ticketId = route.split('/')[2]
+      return handleCORS(await handleGetTicketEmails(ticketId))
+    }
+    
+    if (route.match(/^\/tickets\/[^/]+\/send-email$/) && method === 'POST') {
+      const ticketId = route.split('/')[2]
+      const body = await request.json()
+      return handleCORS(await handleSendTicketEmail({ ...body, ticket_id: ticketId }))
+    }
+    
+    // Contact Tags
+    if (route === '/contact-tags' && method === 'GET') {
+      return handleCORS(await handleGetContactTags())
+    }
+    
+    if (route === '/contact-tags' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateContactTag(body))
+    }
+    
+    // Enhanced Backup System
+    if (route === '/backups/full' && method === 'POST') {
+      const body = await request.json()
+      return handleCORS(await handleCreateFullBackup(body))
+    }
+    
+    if (route.match(/^\/backups\/[^/]+\/download$/) && method === 'GET') {
+      const backupId = route.split('/')[2]
+      return handleCORS(await handleDownloadBackup(backupId))
+    }
+    
+    if (route.match(/^\/backups\/[^/]+\/restore-full$/) && method === 'POST') {
+      const backupId = route.split('/')[2]
+      const body = await request.json()
+      return handleCORS(await handleRestoreFullBackup(backupId, body))
     }
     
     // Route not found

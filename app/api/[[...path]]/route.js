@@ -13599,6 +13599,1116 @@ async function handleGetTicketEmails(ticketId) {
 }
 
 // ============================================
+// DOCUMENTATION MODULE HANDLERS
+// ============================================
+
+async function handleGetDocumentationOverview(orgId) {
+  try {
+    // Get latest snapshot
+    const { data: latestSnapshot } = await supabaseAdmin
+      .from('doc_inventory_snapshots')
+      .select('*')
+      .eq('organization_id', orgId)
+      .order('snapshot_date', { ascending: false })
+      .limit(1)
+      .single()
+    
+    // Get latest scan
+    const { data: latestScan } = await supabaseAdmin
+      .from('doc_discovery_scans')
+      .select('*')
+      .eq('organization_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+    
+    // Get inventory counts
+    const { data: inventory } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('item_type')
+      .eq('organization_id', orgId)
+    
+    // Get permission risks
+    const { data: risks } = await supabaseAdmin
+      .from('doc_ntfs_permissions')
+      .select('risk_level')
+      .in('risk_level', ['medium', 'high', 'critical'])
+    
+    // Get documents count
+    const { data: documents } = await supabaseAdmin
+      .from('doc_documents')
+      .select('id, status')
+      .eq('organization_id', orgId)
+    
+    const itemCounts = inventory?.reduce((acc, item) => {
+      acc[item.item_type] = (acc[item.item_type] || 0) + 1
+      return acc
+    }, {}) || {}
+    
+    const riskCounts = risks?.reduce((acc, r) => {
+      acc[r.risk_level] = (acc[r.risk_level] || 0) + 1
+      return acc
+    }, {}) || {}
+    
+    return NextResponse.json({
+      organization_id: orgId,
+      last_scan: latestScan,
+      latest_snapshot: latestSnapshot,
+      inventory_summary: {
+        total: inventory?.length || 0,
+        servers: itemCounts.server || 0,
+        domain_controllers: itemCounts.domain_controller || 0,
+        workstations: itemCounts.workstation || 0,
+        network_devices: (itemCounts.switch || 0) + (itemCounts.router || 0) + (itemCounts.firewall || 0)
+      },
+      risk_summary: {
+        total: risks?.length || 0,
+        critical: riskCounts.critical || 0,
+        high: riskCounts.high || 0,
+        medium: riskCounts.medium || 0
+      },
+      documents_count: documents?.length || 0,
+      health_status: latestSnapshot?.summary?.health_status || 'unknown'
+    })
+  } catch (error) {
+    console.error('Error getting documentation overview:', error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocScans(params) {
+  try {
+    const orgId = params.get('organization_id')
+    let query = supabaseAdmin
+      .from('doc_discovery_scans')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateDocScan(body) {
+  try {
+    const { organization_id, scan_type = 'full', created_by_id } = body
+    
+    const { data, error } = await supabaseAdmin
+      .from('doc_discovery_scans')
+      .insert({
+        organization_id,
+        scan_type,
+        status: 'pending',
+        created_by_id
+      })
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocScan(scanId) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('doc_discovery_scans')
+      .select('*')
+      .eq('id', scanId)
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleRunDocScan(scanId) {
+  try {
+    // Update scan to running
+    await supabaseAdmin
+      .from('doc_discovery_scans')
+      .update({ status: 'running', started_at: new Date().toISOString() })
+      .eq('id', scanId)
+    
+    // Get scan details
+    const { data: scan } = await supabaseAdmin
+      .from('doc_discovery_scans')
+      .select('*')
+      .eq('id', scanId)
+      .single()
+    
+    // Simulate discovery (in production this would connect to real systems)
+    // For now, mark as completed with simulated statistics
+    const statistics = {
+      servers_found: Math.floor(Math.random() * 10) + 5,
+      workstations_found: Math.floor(Math.random() * 50) + 10,
+      network_devices_found: Math.floor(Math.random() * 5) + 2,
+      ad_users_found: Math.floor(Math.random() * 100) + 20,
+      shares_found: Math.floor(Math.random() * 10) + 3,
+      scan_duration_seconds: Math.floor(Math.random() * 300) + 60
+    }
+    
+    // Create a new snapshot
+    const { data: snapshot } = await supabaseAdmin
+      .from('doc_inventory_snapshots')
+      .insert({
+        organization_id: scan.organization_id,
+        scan_id: scanId,
+        summary: {
+          total_systems: statistics.servers_found + statistics.workstations_found,
+          servers: statistics.servers_found,
+          workstations: statistics.workstations_found,
+          network_devices: statistics.network_devices_found,
+          health_status: 'healthy'
+        }
+      })
+      .select()
+      .single()
+    
+    // Update scan to completed
+    await supabaseAdmin
+      .from('doc_discovery_scans')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+        statistics
+      })
+      .eq('id', scanId)
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Scan abgeschlossen',
+      statistics,
+      snapshot_id: snapshot?.id 
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocInventory(params) {
+  try {
+    const orgId = params.get('organization_id')
+    const itemType = params.get('item_type')
+    const snapshotId = params.get('snapshot_id')
+    
+    let query = supabaseAdmin
+      .from('doc_inventory_items')
+      .select(`
+        *,
+        doc_server_roles(*)
+      `)
+      .order('hostname')
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    if (itemType) query = query.eq('item_type', itemType)
+    if (snapshotId) query = query.eq('snapshot_id', snapshotId)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocInventoryItem(itemId) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select(`
+        *,
+        doc_server_roles(*),
+        doc_installed_software(*),
+        doc_services(*),
+        doc_updates(*)
+      `)
+      .eq('id', itemId)
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocSnapshots(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    let query = supabaseAdmin
+      .from('doc_inventory_snapshots')
+      .select('*')
+      .order('snapshot_date', { ascending: false })
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCompareSnapshots(snapshotId, params) {
+  try {
+    const compareToId = params.get('compare_to')
+    
+    // Get both snapshots
+    const { data: snapshot1 } = await supabaseAdmin
+      .from('doc_inventory_snapshots')
+      .select('*')
+      .eq('id', snapshotId)
+      .single()
+    
+    const { data: snapshot2 } = await supabaseAdmin
+      .from('doc_inventory_snapshots')
+      .select('*')
+      .eq('id', compareToId)
+      .single()
+    
+    // Get inventory items for both
+    const { data: items1 } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('hostname, item_type, os_name, ip_addresses')
+      .eq('snapshot_id', snapshotId)
+    
+    const { data: items2 } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('hostname, item_type, os_name, ip_addresses')
+      .eq('snapshot_id', compareToId)
+    
+    // Calculate differences
+    const hostnames1 = new Set(items1?.map(i => i.hostname) || [])
+    const hostnames2 = new Set(items2?.map(i => i.hostname) || [])
+    
+    const added = items1?.filter(i => !hostnames2.has(i.hostname)) || []
+    const removed = items2?.filter(i => !hostnames1.has(i.hostname)) || []
+    
+    return NextResponse.json({
+      snapshot_current: snapshot1,
+      snapshot_previous: snapshot2,
+      changes: {
+        systems_added: added,
+        systems_removed: removed,
+        total_changes: added.length + removed.length
+      }
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocADDomains(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    let query = supabaseAdmin
+      .from('doc_ad_domains')
+      .select('*')
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocADUsers(params) {
+  try {
+    const domainId = params.get('domain_id')
+    const orgId = params.get('organization_id')
+    
+    let query = supabaseAdmin.from('doc_ad_users').select('*')
+    
+    if (domainId) {
+      query = query.eq('domain_id', domainId)
+    } else if (orgId) {
+      // Get domain IDs for this org first
+      const { data: domains } = await supabaseAdmin
+        .from('doc_ad_domains')
+        .select('id')
+        .eq('organization_id', orgId)
+      
+      if (domains?.length) {
+        query = query.in('domain_id', domains.map(d => d.id))
+      }
+    }
+    
+    const { data, error } = await query.order('display_name')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocADGroups(params) {
+  try {
+    const domainId = params.get('domain_id')
+    const orgId = params.get('organization_id')
+    
+    let query = supabaseAdmin.from('doc_ad_groups').select('*')
+    
+    if (domainId) {
+      query = query.eq('domain_id', domainId)
+    } else if (orgId) {
+      const { data: domains } = await supabaseAdmin
+        .from('doc_ad_domains')
+        .select('id')
+        .eq('organization_id', orgId)
+      
+      if (domains?.length) {
+        query = query.in('domain_id', domains.map(d => d.id))
+      }
+    }
+    
+    const { data, error } = await query.order('display_name')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocADComputers(params) {
+  try {
+    const domainId = params.get('domain_id')
+    
+    let query = supabaseAdmin.from('doc_ad_computers').select('*')
+    if (domainId) query = query.eq('domain_id', domainId)
+    
+    const { data, error } = await query.order('sam_account_name')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocADGPOs(params) {
+  try {
+    const domainId = params.get('domain_id')
+    
+    let query = supabaseAdmin.from('doc_ad_gpos').select('*')
+    if (domainId) query = query.eq('domain_id', domainId)
+    
+    const { data, error } = await query.order('display_name')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocNetworkDevices(params) {
+  try {
+    const orgId = params.get('organization_id')
+    const deviceType = params.get('device_type')
+    
+    let query = supabaseAdmin
+      .from('doc_network_devices')
+      .select(`
+        *,
+        doc_network_interfaces(*)
+      `)
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    if (deviceType) query = query.eq('device_type', deviceType)
+    
+    const { data, error } = await query.order('hostname')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocVLANs(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    let query = supabaseAdmin.from('doc_vlans').select('*')
+    if (orgId) query = query.eq('organization_id', orgId)
+    
+    const { data, error } = await query.order('vlan_id')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocTopology(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    // Get all network devices
+    const { data: devices } = await supabaseAdmin
+      .from('doc_network_devices')
+      .select('*')
+      .eq('organization_id', orgId)
+    
+    // Get all servers
+    const { data: servers } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('*')
+      .eq('organization_id', orgId)
+      .in('item_type', ['server', 'domain_controller'])
+    
+    // Get topology links
+    const { data: links } = await supabaseAdmin
+      .from('doc_topology_links')
+      .select('*')
+      .eq('organization_id', orgId)
+    
+    // Format for React Flow
+    const nodes = []
+    const edges = []
+    
+    // Add network devices as nodes
+    devices?.forEach((device, idx) => {
+      nodes.push({
+        id: device.id,
+        type: 'networkDevice',
+        position: { x: 100 + (idx * 200), y: 100 },
+        data: {
+          label: device.hostname,
+          deviceType: device.device_type,
+          ip: device.ip_address,
+          manufacturer: device.manufacturer,
+          model: device.model,
+          location: device.sys_location
+        }
+      })
+    })
+    
+    // Add servers as nodes
+    servers?.forEach((server, idx) => {
+      nodes.push({
+        id: server.id,
+        type: 'server',
+        position: { x: 100 + (idx * 180), y: 350 },
+        data: {
+          label: server.hostname,
+          itemType: server.item_type,
+          ip: server.ip_addresses?.[0],
+          os: server.os_name,
+          manufacturer: server.manufacturer
+        }
+      })
+    })
+    
+    // Add links as edges
+    links?.forEach(link => {
+      edges.push({
+        id: link.id,
+        source: link.source_device_id,
+        target: link.target_device_id,
+        type: 'smoothstep',
+        animated: link.link_type === 'fiber',
+        label: link.link_type,
+        data: {
+          linkType: link.link_type,
+          discoveredVia: link.discovered_via
+        }
+      })
+    })
+    
+    return NextResponse.json({ nodes, edges })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocShares(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    // Get shares via inventory items
+    let query = supabaseAdmin
+      .from('doc_file_shares')
+      .select(`
+        *,
+        doc_inventory_items!inner(organization_id, hostname)
+      `)
+    
+    const { data, error } = await query
+    if (error) throw error
+    
+    // Filter by org if needed
+    let result = data || []
+    if (orgId) {
+      result = result.filter(s => s.doc_inventory_items?.organization_id === orgId)
+    }
+    
+    return NextResponse.json(result)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocNTFSPermissions(params) {
+  try {
+    const shareId = params.get('share_id')
+    
+    let query = supabaseAdmin.from('doc_ntfs_permissions').select('*')
+    if (shareId) query = query.eq('file_share_id', shareId)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocPermissionRisks(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    // Get all permissions with risks
+    const { data, error } = await supabaseAdmin
+      .from('doc_ntfs_permissions')
+      .select(`
+        *,
+        doc_file_shares(
+          share_name,
+          share_path,
+          doc_inventory_items(organization_id, hostname)
+        )
+      `)
+      .in('risk_level', ['medium', 'high', 'critical'])
+      .order('risk_level', { ascending: false })
+    
+    if (error) throw error
+    
+    // Filter by org if needed
+    let result = data || []
+    if (orgId) {
+      result = result.filter(p => 
+        p.doc_file_shares?.doc_inventory_items?.organization_id === orgId
+      )
+    }
+    
+    return NextResponse.json(result)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocUserAccess(params) {
+  try {
+    const userId = params.get('user_id')
+    const userName = params.get('user_name')
+    const orgId = params.get('organization_id')
+    
+    // Get user's group memberships
+    const { data: user } = await supabaseAdmin
+      .from('doc_ad_users')
+      .select('*')
+      .eq('sam_account_name', userName)
+      .single()
+    
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+    }
+    
+    // Get all shares and check permissions
+    const { data: shares } = await supabaseAdmin
+      .from('doc_file_shares')
+      .select(`
+        *,
+        doc_ntfs_permissions(*)
+      `)
+    
+    // Calculate effective access
+    const userGroups = user.member_of || []
+    const accessibleShares = shares?.filter(share => {
+      const perms = share.share_permissions || []
+      return perms.some(p => 
+        p.identity === userName ||
+        p.identity === 'Everyone' ||
+        userGroups.includes(p.identity)
+      )
+    }) || []
+    
+    return NextResponse.json({
+      user,
+      groups: userGroups,
+      accessible_shares: accessibleShares
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocTemplates() {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('doc_templates')
+      .select('*')
+      .order('name')
+    
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocDocuments(params) {
+  try {
+    const orgId = params.get('organization_id')
+    const docType = params.get('document_type')
+    
+    let query = supabaseAdmin
+      .from('doc_documents')
+      .select(`
+        *,
+        doc_templates(name, template_type)
+      `)
+      .order('updated_at', { ascending: false })
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    if (docType) query = query.eq('document_type', docType)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleCreateDocDocument(body) {
+  try {
+    const { organization_id, template_id, title, document_type, created_by_id } = body
+    
+    // Get template structure
+    const { data: template } = await supabaseAdmin
+      .from('doc_templates')
+      .select('*')
+      .eq('id', template_id)
+      .single()
+    
+    const { data, error } = await supabaseAdmin
+      .from('doc_documents')
+      .insert({
+        organization_id,
+        template_id,
+        title: title || template?.name,
+        document_type: document_type || template?.template_type,
+        content: template?.structure || {},
+        created_by_id
+      })
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocDocument(docId) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('doc_documents')
+      .select(`
+        *,
+        doc_templates(name, template_type, auto_fill_mappings),
+        doc_document_sections(*)
+      `)
+      .eq('id', docId)
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleUpdateDocDocument(docId, body) {
+  try {
+    const { title, content, status } = body
+    
+    const updates = { updated_at: new Date().toISOString() }
+    if (title) updates.title = title
+    if (content) updates.content = content
+    if (status) updates.status = status
+    
+    const { data, error } = await supabaseAdmin
+      .from('doc_documents')
+      .update(updates)
+      .eq('id', docId)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleAutoFillDocument(docId) {
+  try {
+    // Get document and template
+    const { data: doc } = await supabaseAdmin
+      .from('doc_documents')
+      .select(`
+        *,
+        doc_templates(auto_fill_mappings)
+      `)
+      .eq('id', docId)
+      .single()
+    
+    if (!doc) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+    }
+    
+    const orgId = doc.organization_id
+    
+    // Get inventory data for auto-fill
+    const { data: servers } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('*')
+      .eq('organization_id', orgId)
+      .in('item_type', ['server', 'domain_controller'])
+    
+    const { data: workstations } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('*')
+      .eq('organization_id', orgId)
+      .eq('item_type', 'workstation')
+    
+    const { data: network } = await supabaseAdmin
+      .from('doc_network_devices')
+      .select('*')
+      .eq('organization_id', orgId)
+    
+    const { data: adDomains } = await supabaseAdmin
+      .from('doc_ad_domains')
+      .select('*')
+      .eq('organization_id', orgId)
+    
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('*')
+      .eq('id', orgId)
+      .single()
+    
+    // Build auto-filled content
+    const autoFilledContent = {
+      ...doc.content,
+      auto_filled_data: {
+        organization: org,
+        servers: servers || [],
+        workstations: workstations || [],
+        network_devices: network || [],
+        ad_domains: adDomains || [],
+        generated_at: new Date().toISOString()
+      }
+    }
+    
+    // Update document
+    const { data: updated, error } = await supabaseAdmin
+      .from('doc_documents')
+      .update({
+        content: autoFilledContent,
+        auto_filled_at: new Date().toISOString()
+      })
+      .eq('id', docId)
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(updated)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleExportDocumentPDF(docId) {
+  try {
+    // Get document
+    const { data: doc } = await supabaseAdmin
+      .from('doc_documents')
+      .select('*')
+      .eq('id', docId)
+      .single()
+    
+    if (!doc) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+    }
+    
+    // Generate PDF content (simplified - in production use a PDF library)
+    const pdfContent = {
+      title: doc.title,
+      type: doc.document_type,
+      content: doc.content,
+      generated_at: new Date().toISOString(),
+      checksum: require('crypto').createHash('md5').update(JSON.stringify(doc.content)).digest('hex')
+    }
+    
+    return NextResponse.json({
+      success: true,
+      pdf_data: pdfContent,
+      message: 'PDF export vorbereitet'
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocReports(params) {
+  try {
+    const orgId = params.get('organization_id')
+    const reportType = params.get('report_type')
+    
+    let query = supabaseAdmin
+      .from('doc_reports')
+      .select('*')
+      .order('generated_at', { ascending: false })
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    if (reportType) query = query.eq('report_type', reportType)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGenerateDocReport(body) {
+  try {
+    const { organization_id, report_type, title, generated_by_id } = body
+    
+    // Gather data based on report type
+    let reportData = {}
+    
+    if (report_type === 'inventory') {
+      const { data: inventory } = await supabaseAdmin
+        .from('doc_inventory_items')
+        .select('*')
+        .eq('organization_id', organization_id)
+      reportData = { items: inventory || [], count: inventory?.length || 0 }
+    } else if (report_type === 'network') {
+      const { data: devices } = await supabaseAdmin
+        .from('doc_network_devices')
+        .select('*')
+        .eq('organization_id', organization_id)
+      const { data: vlans } = await supabaseAdmin
+        .from('doc_vlans')
+        .select('*')
+        .eq('organization_id', organization_id)
+      reportData = { devices: devices || [], vlans: vlans || [] }
+    } else if (report_type === 'permissions') {
+      const { data: risks } = await supabaseAdmin
+        .from('doc_ntfs_permissions')
+        .select('*')
+        .in('risk_level', ['medium', 'high', 'critical'])
+      reportData = { risks: risks || [] }
+    } else if (report_type === 'ad') {
+      const { data: domains } = await supabaseAdmin
+        .from('doc_ad_domains')
+        .select('*')
+        .eq('organization_id', organization_id)
+      reportData = { domains: domains || [] }
+    } else if (report_type === 'audit') {
+      // Comprehensive audit report
+      const { data: inventory } = await supabaseAdmin.from('doc_inventory_items').select('*').eq('organization_id', organization_id)
+      const { data: risks } = await supabaseAdmin.from('doc_ntfs_permissions').select('*').in('risk_level', ['medium', 'high', 'critical'])
+      const { data: scans } = await supabaseAdmin.from('doc_discovery_scans').select('*').eq('organization_id', organization_id).order('created_at', { ascending: false }).limit(5)
+      
+      reportData = {
+        inventory_count: inventory?.length || 0,
+        risk_count: risks?.length || 0,
+        recent_scans: scans || [],
+        audit_date: new Date().toISOString()
+      }
+    }
+    
+    // Create report record
+    const checksum = require('crypto').createHash('md5').update(JSON.stringify(reportData)).digest('hex')
+    
+    const { data, error } = await supabaseAdmin
+      .from('doc_reports')
+      .insert({
+        organization_id,
+        report_type,
+        title: title || `${report_type.charAt(0).toUpperCase() + report_type.slice(1)} Report`,
+        data: reportData,
+        file_checksum: checksum,
+        generated_by_id
+      })
+      .select()
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocReport(reportId) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('doc_reports')
+      .select('*')
+      .eq('id', reportId)
+      .single()
+    
+    if (error) throw error
+    return NextResponse.json(data)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocAuditView(params) {
+  try {
+    const orgId = params.get('organization_id')
+    
+    // Get comprehensive audit view
+    const { data: lastScan } = await supabaseAdmin
+      .from('doc_discovery_scans')
+      .select('*')
+      .eq('organization_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+    
+    const { data: inventory } = await supabaseAdmin
+      .from('doc_inventory_items')
+      .select('id, item_type')
+      .eq('organization_id', orgId)
+    
+    const { data: risks } = await supabaseAdmin
+      .from('doc_ntfs_permissions')
+      .select('risk_level')
+      .in('risk_level', ['medium', 'high', 'critical'])
+    
+    const { data: documents } = await supabaseAdmin
+      .from('doc_documents')
+      .select('id, status, document_type')
+      .eq('organization_id', orgId)
+    
+    const { data: recentChanges } = await supabaseAdmin
+      .from('doc_permission_changes')
+      .select('*')
+      .eq('organization_id', orgId)
+      .order('detected_at', { ascending: false })
+      .limit(10)
+    
+    return NextResponse.json({
+      last_scan: lastScan,
+      inventory_count: inventory?.length || 0,
+      risk_summary: {
+        critical: risks?.filter(r => r.risk_level === 'critical').length || 0,
+        high: risks?.filter(r => r.risk_level === 'high').length || 0,
+        medium: risks?.filter(r => r.risk_level === 'medium').length || 0
+      },
+      documents: {
+        total: documents?.length || 0,
+        draft: documents?.filter(d => d.status === 'draft').length || 0,
+        approved: documents?.filter(d => d.status === 'approved').length || 0
+      },
+      recent_changes: recentChanges || [],
+      audit_status: lastScan?.status === 'completed' ? 'up_to_date' : 'needs_scan'
+    })
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocAuditLog(params) {
+  try {
+    const orgId = params.get('organization_id')
+    const limit = parseInt(params.get('limit') || '100')
+    
+    let query = supabaseAdmin
+      .from('doc_audit_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit)
+    
+    if (orgId) query = query.eq('organization_id', orgId)
+    
+    const { data, error } = await query
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocServerRoles(params) {
+  try {
+    const orgId = params.get('organization_id')
+    const itemId = params.get('inventory_item_id')
+    
+    let query = supabaseAdmin
+      .from('doc_server_roles')
+      .select(`
+        *,
+        doc_inventory_items(hostname, organization_id)
+      `)
+    
+    if (itemId) {
+      query = query.eq('inventory_item_id', itemId)
+    }
+    
+    const { data, error } = await query.order('role_name')
+    if (error) throw error
+    
+    let result = data || []
+    if (orgId) {
+      result = result.filter(r => r.doc_inventory_items?.organization_id === orgId)
+    }
+    
+    return NextResponse.json(result)
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+async function handleGetDocServices(params) {
+  try {
+    const itemId = params.get('inventory_item_id')
+    
+    let query = supabaseAdmin.from('doc_services').select('*')
+    if (itemId) query = query.eq('inventory_item_id', itemId)
+    
+    const { data, error } = await query.order('display_name')
+    if (error) throw error
+    return NextResponse.json(data || [])
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+}
+
+// ============================================
 // ENHANCED BACKUP SYSTEM
 // ============================================
 

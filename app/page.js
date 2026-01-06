@@ -5743,6 +5743,25 @@ function DocumentationPage({ currentUser, subPage }) {
   
   return (
     <div className="p-6 space-y-6">
+      {/* Schema Missing Warning */}
+      {overview && overview.tables_ready === false && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-yellow-800">Setup erforderlich</h3>
+              <p className="text-sm text-yellow-700 mt-1">
+                Die Dokumentations-Datenbank ist noch nicht eingerichtet. Bitte führen Sie folgende SQL-Skripte in Supabase aus:
+              </p>
+              <ol className="text-sm text-yellow-700 mt-2 list-decimal list-inside space-y-1">
+                <li><code className="bg-yellow-100 px-1 rounded">/app/public/schema-documentation.sql</code> (Schema)</li>
+                <li><code className="bg-yellow-100 px-1 rounded">/app/public/schema-documentation-data.sql</code> (Testdaten)</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -5760,7 +5779,7 @@ function DocumentationPage({ currentUser, subPage }) {
               ))}
             </SelectContent>
           </Select>
-          <Button onClick={runDiscoveryScan} disabled={!selectedOrg}>
+          <Button onClick={runDiscoveryScan} disabled={!selectedOrg || overview?.tables_ready === false}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Discovery starten
           </Button>

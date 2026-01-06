@@ -16,7 +16,7 @@ import {
   Webhook, Cloud, CreditCard, PhoneCall, HelpCircle,
   History, Archive, Repeat, UserPlus, UserMinus, UserCheck,
   Inbox, Send, Brain, Sparkles, FileQuestion, BookOpen,
-  GripVertical, MoreVertical, ArrowRight, CircleDot
+  GripVertical, MoreVertical, ArrowRight, CircleDot, FileDown
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,6 +33,7 @@ import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Switch } from '@/components/ui/switch'
+import dynamic from 'next/dynamic'
 
 // ============================================
 // CONSTANTS
@@ -97,16 +98,24 @@ const ASSET_ICONS = {
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'daily-assistant', label: 'KI-Assistent', icon: Brain, highlight: true },
   { id: 'inbox', label: 'Posteingang', icon: Mail },
+  { id: 'telephony', label: 'Telefonie', icon: PhoneCall },
+  { id: 'chatwoot', label: 'Chatwoot', icon: MessageSquare },
+  { id: 'crm', label: 'CRM', icon: Users, submenu: [
+    { id: 'contacts', label: 'Kontakte' },
+    { id: 'companies', label: 'Unternehmen' },
+    { id: 'deals', label: 'Deals' },
+  ]},
   { id: 'tickets', label: 'Tickets', icon: Ticket },
   { id: 'kanban', label: 'Kanban', icon: KanbanSquare },
-  { id: 'onboarding', label: 'Onboarding', icon: Users },
   { id: 'organizations', label: 'Organisationen', icon: Building2 },
   { id: 'users', label: 'Benutzer', icon: Users },
-  { id: 'assets', label: 'Assets', icon: Package },
+  { id: 'assets', label: 'Assets & Lizenzen', icon: Package },
   { id: 'time', label: 'Zeiterfassung', icon: Clock },
   { id: 'knowledge', label: 'Wissensdatenbank', icon: HelpCircle },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
+  { id: 'diagnostics', label: 'System-Diagnose', icon: Shield },
   { id: 'settings', label: 'Einstellungen', icon: Settings },
 ]
 
@@ -166,6 +175,18 @@ const api = {
   // Contacts
   getContacts: (orgId) => api.fetch(`/contacts${orgId ? `?organization_id=${orgId}` : ''}`),
   createContact: (data) => api.fetch('/contacts', { method: 'POST', body: JSON.stringify(data) }),
+  updateContact: (id, data) => api.fetch(`/contacts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteContact: (id) => api.fetch(`/contacts/${id}`, { method: 'DELETE' }),
+  
+  // Locations
+  createLocation: (data) => api.fetch('/locations', { method: 'POST', body: JSON.stringify(data) }),
+  updateLocation: (id, data) => api.fetch(`/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteLocation: (id) => api.fetch(`/locations/${id}`, { method: 'DELETE' }),
+  
+  // Comments
+  createComment: (data) => api.fetch('/comments', { method: 'POST', body: JSON.stringify(data) }),
+  updateComment: (id, data, userId) => api.fetch(`/comments/${id}?user_id=${userId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteComment: (id, userId) => api.fetch(`/comments/${id}?user_id=${userId}`, { method: 'DELETE' }),
   
   // Tickets
   getTickets: (params = {}) => {
@@ -782,6 +803,20 @@ function LoginPage({ onLogin }) {
               Admin
             </Button>
           </div>
+          
+          <Separator className="my-4" />
+          
+          <div className="text-center">
+            <p className="text-sm text-slate-500 mb-2">Kein Konto? Nutzen Sie unser Self-Service Portal:</p>
+            <Button 
+              variant="secondary" 
+              className="w-full"
+              onClick={() => window.location.href = '/self-service'}
+            >
+              <HelpCircle className="w-4 h-4 mr-2" />
+              Self-Service Portal öffnen
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -794,6 +829,11 @@ function LoginPage({ onLogin }) {
 
 function Sidebar({ currentPage, setCurrentPage, collapsed, setCollapsed, user, isCustomerPortal }) {
   const navItems = isCustomerPortal ? CUSTOMER_NAV_ITEMS : NAV_ITEMS
+  const [expandedMenus, setExpandedMenus] = useState({})
+  
+  const toggleSubmenu = (id) => {
+    setExpandedMenus(prev => ({ ...prev, [id]: !prev[id] }))
+  }
   
   return (
     <div className={`${collapsed ? 'w-16' : 'w-64'} bg-slate-900 text-white flex flex-col transition-all duration-300`}>
@@ -818,21 +858,56 @@ function Sidebar({ currentPage, setCurrentPage, collapsed, setCollapsed, user, i
         </Button>
       </div>
       
-      <nav className="flex-1 p-2">
+      <nav className="flex-1 p-2 overflow-y-auto">
         {navItems.map((item) => (
-          <Button
-            key={item.id}
-            variant={currentPage === item.id ? 'secondary' : 'ghost'}
-            className={`w-full justify-start mb-1 ${collapsed ? 'px-2' : ''} ${
-              currentPage === item.id 
-                ? 'bg-blue-600 text-white hover:bg-blue-700' 
-                : 'text-slate-300 hover:text-white hover:bg-slate-800'
-            }`}
-            onClick={() => setCurrentPage(item.id)}
-          >
-            <item.icon className={`h-5 w-5 ${collapsed ? '' : 'mr-3'}`} />
-            {!collapsed && item.label}
-          </Button>
+          <div key={item.id}>
+            <Button
+              variant={currentPage === item.id || (item.submenu && item.submenu.some(s => currentPage === s.id)) ? 'secondary' : 'ghost'}
+              className={`w-full justify-start mb-1 ${collapsed ? 'px-2' : ''} ${
+                item.highlight 
+                  ? 'bg-orange-500 text-white hover:bg-orange-600 font-semibold'
+                  : currentPage === item.id || (item.submenu && item.submenu.some(s => currentPage === s.id))
+                    ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              onClick={() => {
+                if (item.submenu && !collapsed) {
+                  toggleSubmenu(item.id)
+                } else {
+                  setCurrentPage(item.id)
+                }
+              }}
+            >
+              <item.icon className={`h-5 w-5 ${collapsed ? '' : 'mr-3'}`} />
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">{item.label}</span>
+                  {item.submenu && (
+                    <ChevronDown className={`h-4 w-4 transition-transform ${expandedMenus[item.id] ? 'rotate-180' : ''}`} />
+                  )}
+                </>
+              )}
+            </Button>
+            {/* Submenu */}
+            {!collapsed && item.submenu && expandedMenus[item.id] && (
+              <div className="ml-4 pl-4 border-l border-slate-700 mb-2">
+                {item.submenu.map((subItem) => (
+                  <Button
+                    key={subItem.id}
+                    variant={currentPage === subItem.id ? 'secondary' : 'ghost'}
+                    className={`w-full justify-start mb-1 text-sm ${
+                      currentPage === subItem.id 
+                        ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                    onClick={() => setCurrentPage(subItem.id)}
+                  >
+                    {subItem.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
         ))}
       </nav>
       
@@ -855,14 +930,156 @@ function Sidebar({ currentPage, setCurrentPage, collapsed, setCollapsed, user, i
   )
 }
 
-function Header({ title, user, onLogout }) {
+function Header({ title, user, onLogout, onNavigate, setSelectedTicketId }) {
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [showResults, setShowResults] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const searchRef = useRef(null)
+  
+  const performSearch = async (query) => {
+    if (query.length < 2) {
+      setSearchResults(null)
+      return
+    }
+    setSearching(true)
+    try {
+      const results = await api.fetch(`/search?q=${encodeURIComponent(query)}&limit=10`)
+      setSearchResults(results)
+      setShowResults(true)
+    } catch (e) {
+      console.error('Search error:', e)
+    }
+    setSearching(false)
+  }
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery) performSearch(searchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+  
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setShowResults(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+  
+  const handleResultClick = (result) => {
+    setShowResults(false)
+    setSearchQuery('')
+    
+    // Navigate based on type
+    const typeToPage = {
+      ticket: 'tickets',
+      contact: 'contacts',
+      organization: 'organizations',
+      asset: 'assets',
+      kb_article: 'knowledge',
+      call: 'telephony',
+      deal: 'deals',
+    }
+    
+    const page = typeToPage[result.type] || 'dashboard'
+    if (onNavigate) {
+      onNavigate(page)
+    }
+    
+    // For tickets, also open the detail view
+    if (result.type === 'ticket' && setSelectedTicketId) {
+      setSelectedTicketId(result.id)
+    }
+    
+    toast.success(`Navigiere zu ${result.title}`)
+  }
+  
+  const getTypeIcon = (type) => {
+    switch (type) {
+      case 'ticket': return <Ticket className="h-4 w-4" />
+      case 'contact': return <User className="h-4 w-4" />
+      case 'organization': return <Building2 className="h-4 w-4" />
+      case 'asset': return <Package className="h-4 w-4" />
+      case 'kb_article': return <BookOpen className="h-4 w-4" />
+      case 'call': return <PhoneCall className="h-4 w-4" />
+      case 'deal': return <TrendingUp className="h-4 w-4" />
+      default: return <Search className="h-4 w-4" />
+    }
+  }
+  
+  const getTypeBadge = (type) => {
+    const types = {
+      ticket: { label: 'Ticket', color: 'bg-blue-100 text-blue-700' },
+      contact: { label: 'Kontakt', color: 'bg-green-100 text-green-700' },
+      organization: { label: 'Organisation', color: 'bg-purple-100 text-purple-700' },
+      asset: { label: 'Asset', color: 'bg-orange-100 text-orange-700' },
+      kb_article: { label: 'Artikel', color: 'bg-cyan-100 text-cyan-700' },
+      call: { label: 'Anruf', color: 'bg-yellow-100 text-yellow-700' },
+      deal: { label: 'Deal', color: 'bg-pink-100 text-pink-700' },
+    }
+    return types[type] || { label: type, color: 'bg-slate-100 text-slate-700' }
+  }
+  
   return (
     <header className="h-16 bg-white border-b flex items-center justify-between px-6">
       <h1 className="text-xl font-semibold text-slate-900">{title}</h1>
       <div className="flex items-center gap-4">
-        <div className="relative">
+        <div className="relative" ref={searchRef}>
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input placeholder="Suchen..." className="w-64 pl-10" />
+          {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 animate-spin" />}
+          <Input 
+            placeholder="Globale Suche..." 
+            className="w-80 pl-10 pr-10" 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => searchResults && setShowResults(true)}
+          />
+          {showResults && searchResults && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border z-50 max-h-96 overflow-auto">
+              {searchResults.total === 0 ? (
+                <div className="p-4 text-center text-muted-foreground">
+                  Keine Ergebnisse für "{searchQuery}"
+                </div>
+              ) : (
+                <>
+                  <div className="p-2 border-b bg-slate-50 text-xs text-slate-500">
+                    {searchResults.total} Ergebnisse gefunden
+                  </div>
+                  <div className="divide-y">
+                    {searchResults.results?.slice(0, 10).map((result, idx) => {
+                      const typeBadge = getTypeBadge(result.type)
+                      return (
+                        <button
+                          key={`${result.type}-${result.id}-${idx}`}
+                          className="w-full p-3 hover:bg-slate-50 flex items-start gap-3 text-left cursor-pointer"
+                          onClick={() => handleResultClick(result)}
+                        >
+                          <div className="mt-0.5 text-slate-400">
+                            {getTypeIcon(result.type)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium truncate">{result.title}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${typeBadge.color}`}>
+                                {typeBadge.label}
+                              </span>
+                            </div>
+                            {result.subtitle && (
+                              <p className="text-sm text-muted-foreground truncate">{result.subtitle}</p>
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <Button variant="ghost" size="icon" className="relative">
           <Bell className="h-5 w-5" />
@@ -1736,6 +1953,10 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
   const [newComment, setNewComment] = useState('')
   const [isInternal, setIsInternal] = useState(false)
   const [users, setUsers] = useState([])
+  const [isEditingTicket, setIsEditingTicket] = useState(false)
+  const [editForm, setEditForm] = useState({ subject: '', description: '', priority: '' })
+  const [editingComment, setEditingComment] = useState(null)
+  const [editCommentContent, setEditCommentContent] = useState('')
   
   useEffect(() => {
     if (open && ticketId) {
@@ -1746,6 +1967,11 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
       ]).then(([ticketData, usersData]) => {
         setTicket(ticketData)
         setUsers(usersData)
+        setEditForm({
+          subject: ticketData.subject || '',
+          description: ticketData.description || '',
+          priority: ticketData.priority || 'medium'
+        })
       }).catch(() => toast.error('Fehler beim Laden')).finally(() => setLoading(false))
     }
   }, [open, ticketId])
@@ -1758,6 +1984,14 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
     } catch { toast.error('Fehler beim Aktualisieren') }
   }
   
+  const handlePriorityChange = async (newPriority) => {
+    try {
+      await api.updateTicket(ticket.id, { priority: newPriority }, currentUser.id)
+      setTicket(t => ({ ...t, priority: newPriority }))
+      toast.success('Priorität aktualisiert')
+    } catch { toast.error('Fehler beim Aktualisieren') }
+  }
+  
   const handleAssigneeChange = async (assigneeId) => {
     try {
       const id = assigneeId === 'none' ? null : assigneeId
@@ -1766,6 +2000,19 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
       setTicket(t => ({ ...t, assignee_id: id, assignee }))
       toast.success('Zuweisung aktualisiert')
     } catch { toast.error('Fehler beim Aktualisieren') }
+  }
+  
+  const handleSaveTicketEdit = async () => {
+    try {
+      await api.updateTicket(ticket.id, {
+        subject: editForm.subject,
+        description: editForm.description,
+        priority: editForm.priority,
+      }, currentUser.id)
+      setTicket(t => ({ ...t, ...editForm }))
+      setIsEditingTicket(false)
+      toast.success('Ticket aktualisiert')
+    } catch { toast.error('Fehler beim Speichern') }
   }
   
   const handleAddComment = async () => {
@@ -1781,6 +2028,36 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
       setNewComment('')
       toast.success('Kommentar hinzugefügt')
     } catch { toast.error('Fehler') }
+  }
+  
+  const handleEditComment = (comment) => {
+    setEditingComment(comment)
+    setEditCommentContent(comment.content)
+  }
+  
+  const handleSaveComment = async () => {
+    try {
+      const updated = await api.updateComment(editingComment.id, { content: editCommentContent }, currentUser.id)
+      setTicket(t => ({
+        ...t,
+        ticket_comments: t.ticket_comments.map(c => c.id === editingComment.id ? { ...c, content: editCommentContent } : c)
+      }))
+      setEditingComment(null)
+      setEditCommentContent('')
+      toast.success('Kommentar aktualisiert')
+    } catch { toast.error('Fehler beim Speichern') }
+  }
+  
+  const handleDeleteComment = async (commentId) => {
+    if (!confirm('Kommentar wirklich löschen?')) return
+    try {
+      await api.deleteComment(commentId, currentUser.id)
+      setTicket(t => ({
+        ...t,
+        ticket_comments: t.ticket_comments.filter(c => c.id !== commentId)
+      }))
+      toast.success('Kommentar gelöscht')
+    } catch { toast.error('Fehler beim Löschen') }
   }
   
   const handleAISummary = async () => {
@@ -1813,9 +2090,22 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
               <div className="flex items-center justify-between">
                 <DialogTitle className="flex items-center gap-2">
                   <span className="text-slate-500 font-mono">#{ticket.ticket_number}</span>
-                  {ticket.subject}
+                  {isEditingTicket ? (
+                    <Input 
+                      value={editForm.subject} 
+                      onChange={(e) => setEditForm(f => ({ ...f, subject: e.target.value }))}
+                      className="flex-1"
+                    />
+                  ) : (
+                    <span className="cursor-pointer hover:text-blue-600" onClick={() => setIsEditingTicket(true)}>{ticket.subject}</span>
+                  )}
                 </DialogTitle>
                 <div className="flex items-center gap-2">
+                  {!isEditingTicket && (
+                    <Button variant="outline" size="sm" onClick={() => setIsEditingTicket(true)}>
+                      <Settings className="h-4 w-4 mr-1" />Bearbeiten
+                    </Button>
+                  )}
                   <Badge className={PRIORITY_COLORS[ticket.priority]}>{PRIORITY_LABELS[ticket.priority]}</Badge>
                   <Badge className={STATUS_COLORS[ticket.status]}>{STATUS_LABELS[ticket.status]}</Badge>
                 </div>
@@ -1832,19 +2122,59 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                   </TabsList>
                   
                   <TabsContent value="details" className="flex-1 overflow-auto p-2 space-y-4">
-                    <div>
-                      <Label className="text-slate-500">Beschreibung</Label>
-                      <p className="mt-1 whitespace-pre-wrap">{ticket.description || 'Keine Beschreibung'}</p>
-                    </div>
-                    {ticket.ai_summary && (
-                      <div className="bg-blue-50 rounded-lg p-4">
-                        <Label className="text-blue-700">KI-Zusammenfassung</Label>
-                        <p className="mt-2 text-sm whitespace-pre-wrap">{ticket.ai_summary}</p>
+                    {isEditingTicket ? (
+                      <div className="space-y-4">
+                        <div>
+                          <Label>Betreff</Label>
+                          <Input 
+                            value={editForm.subject} 
+                            onChange={(e) => setEditForm(f => ({ ...f, subject: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label>Beschreibung</Label>
+                          <Textarea 
+                            value={editForm.description} 
+                            onChange={(e) => setEditForm(f => ({ ...f, description: e.target.value }))}
+                            rows={6}
+                          />
+                        </div>
+                        <div>
+                          <Label>Priorität</Label>
+                          <Select value={editForm.priority} onValueChange={(v) => setEditForm(f => ({ ...f, priority: v }))}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
+                                <SelectItem key={key} value={key}>{label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button onClick={handleSaveTicketEdit}><Save className="h-4 w-4 mr-1" />Speichern</Button>
+                          <Button variant="outline" onClick={() => {
+                            setIsEditingTicket(false)
+                            setEditForm({ subject: ticket.subject, description: ticket.description, priority: ticket.priority })
+                          }}>Abbrechen</Button>
+                        </div>
                       </div>
+                    ) : (
+                      <>
+                        <div>
+                          <Label className="text-slate-500">Beschreibung</Label>
+                          <p className="mt-1 whitespace-pre-wrap">{ticket.description || 'Keine Beschreibung'}</p>
+                        </div>
+                        {ticket.ai_summary && (
+                          <div className="bg-blue-50 rounded-lg p-4">
+                            <Label className="text-blue-700">KI-Zusammenfassung</Label>
+                            <p className="mt-2 text-sm whitespace-pre-wrap">{ticket.ai_summary}</p>
+                          </div>
+                        )}
+                        <Button variant="outline" size="sm" onClick={handleAISummary}>
+                          <AlertCircle className="h-4 w-4 mr-2" />KI-Zusammenfassung
+                        </Button>
+                      </>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleAISummary}>
-                      <AlertCircle className="h-4 w-4 mr-2" />KI-Zusammenfassung
-                    </Button>
                   </TabsContent>
                   
                   <TabsContent value="comments" className="flex-1 flex flex-col overflow-hidden">
@@ -1855,15 +2185,43 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                         ) : (
                           ticket.ticket_comments?.map((comment) => (
                             <div key={comment.id} className={`p-4 rounded-lg ${comment.is_internal ? 'bg-yellow-50 border border-yellow-200' : 'bg-slate-50'}`}>
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <Avatar className="h-6 w-6"><AvatarFallback className="text-xs">{comment.users?.first_name?.[0]}{comment.users?.last_name?.[0]}</AvatarFallback></Avatar>
-                                  <span className="font-medium text-sm">{comment.users?.first_name} {comment.users?.last_name}</span>
-                                  {comment.is_internal && <Badge variant="outline" className="text-yellow-700">Intern</Badge>}
+                              {editingComment?.id === comment.id ? (
+                                <div className="space-y-2">
+                                  <Textarea 
+                                    value={editCommentContent} 
+                                    onChange={(e) => setEditCommentContent(e.target.value)}
+                                    rows={3}
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button size="sm" onClick={handleSaveComment}><Save className="h-3 w-3 mr-1" />Speichern</Button>
+                                    <Button size="sm" variant="outline" onClick={() => setEditingComment(null)}>Abbrechen</Button>
+                                  </div>
                                 </div>
-                                <span className="text-xs text-slate-500">{formatDateTime(comment.created_at)}</span>
-                              </div>
-                              <p className="text-sm whitespace-pre-wrap">{comment.content}</p>
+                              ) : (
+                                <>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <Avatar className="h-6 w-6"><AvatarFallback className="text-xs">{comment.users?.first_name?.[0]}{comment.users?.last_name?.[0]}</AvatarFallback></Avatar>
+                                      <span className="font-medium text-sm">{comment.users?.first_name} {comment.users?.last_name}</span>
+                                      {comment.is_internal && <Badge variant="outline" className="text-yellow-700">Intern</Badge>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-slate-500">{formatDateTime(comment.created_at)}</span>
+                                      {comment.user_id === currentUser.id && (
+                                        <div className="flex gap-1">
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleEditComment(comment)}>
+                                            <Settings className="h-3 w-3" />
+                                          </Button>
+                                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteComment(comment.id)}>
+                                            <Trash2 className="h-3 w-3" />
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <p className="text-sm whitespace-pre-wrap">{comment.content}</p>
+                                </>
+                              )}
                             </div>
                           ))
                         )}
@@ -1906,6 +2264,17 @@ function TicketDetailDialog({ ticketId, currentUser, open, onClose }) {
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                        <SelectItem key={key} value={key}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-slate-500">Priorität</Label>
+                  <Select value={ticket.priority} onValueChange={handlePriorityChange}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(PRIORITY_LABELS).map(([key, label]) => (
                         <SelectItem key={key} value={key}>{label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -2128,24 +2497,41 @@ function OrganizationsPage() {
   const [organizations, setOrganizations] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingOrg, setEditingOrg] = useState(null)
+  const [selectedOrg, setSelectedOrg] = useState(null)
+  const [slaProfiles, setSlaProfiles] = useState([])
   
   const loadOrganizations = useCallback(async () => {
-    try { setOrganizations(await api.getOrganizations()) }
-    catch { toast.error('Fehler') }
+    try { 
+      const [orgs, slas] = await Promise.all([api.getOrganizations(), api.getSLAProfiles()])
+      setOrganizations(orgs)
+      setSlaProfiles(slas)
+    }
+    catch { toast.error('Fehler beim Laden') }
     finally { setLoading(false) }
   }, [])
   
   useEffect(() => { loadOrganizations() }, [loadOrganizations])
   
   const handleCreate = async (data) => {
-    try { await api.createOrganization(data); toast.success('Erstellt'); setShowCreateDialog(false); loadOrganizations(); }
-    catch { toast.error('Fehler') }
+    try { await api.createOrganization(data); toast.success('Organisation erstellt'); setShowCreateDialog(false); loadOrganizations(); }
+    catch { toast.error('Fehler beim Erstellen') }
+  }
+  
+  const handleUpdate = async (data) => {
+    try { 
+      await api.updateOrganization(editingOrg.id, data); 
+      toast.success('Organisation aktualisiert'); 
+      setEditingOrg(null); 
+      loadOrganizations(); 
+    }
+    catch { toast.error('Fehler beim Aktualisieren') }
   }
   
   const handleDelete = async (id) => {
-    if (!confirm('Wirklich löschen?')) return
-    try { await api.deleteOrganization(id); toast.success('Gelöscht'); loadOrganizations(); }
-    catch { toast.error('Fehler') }
+    if (!confirm('Organisation wirklich löschen? Alle zugehörigen Daten werden gelöscht!')) return
+    try { await api.deleteOrganization(id); toast.success('Organisation gelöscht'); loadOrganizations(); }
+    catch { toast.error('Fehler beim Löschen') }
   }
   
   return (
@@ -2154,9 +2540,9 @@ function OrganizationsPage() {
         <h2 className="text-lg font-semibold">Organisationen</h2>
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Neue Organisation</Button></DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-lg">
             <DialogHeader><DialogTitle>Neue Organisation</DialogTitle></DialogHeader>
-            <CreateOrganizationForm onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            <OrganizationForm slaProfiles={slaProfiles} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -2164,20 +2550,28 @@ function OrganizationsPage() {
       {loading ? <div className="flex justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-500" /></div> : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {organizations.map((org) => (
-            <Card key={org.id}>
+            <Card key={org.id} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-2">
                 <div className="flex justify-between">
-                  <div>
-                    <CardTitle className="text-lg">{org.name}</CardTitle>
+                  <div className="cursor-pointer" onClick={() => setSelectedOrg(org)}>
+                    <CardTitle className="text-lg hover:text-blue-600">{org.name}</CardTitle>
                     {org.short_name && <CardDescription>{org.short_name}</CardDescription>}
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => handleDelete(org.id)}><Trash2 className="h-4 w-4" /></Button>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="icon" onClick={() => setEditingOrg(org)} title="Bearbeiten">
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={() => handleDelete(org.id)} title="Löschen">
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
-                  {org.email && <p className="text-slate-500">{org.email}</p>}
-                  {org.phone && <p className="text-slate-500">{org.phone}</p>}
+                  {org.email && <p className="text-slate-500 flex items-center gap-2"><Mail className="h-3 w-3" />{org.email}</p>}
+                  {org.phone && <p className="text-slate-500 flex items-center gap-2"><Phone className="h-3 w-3" />{org.phone}</p>}
+                  {org.domain && <p className="text-slate-500 flex items-center gap-2"><Globe className="h-3 w-3" />{org.domain}</p>}
                   <div className="flex gap-4 pt-2">
                     <span className="text-xs bg-slate-100 px-2 py-1 rounded">{org.locations?.length || 0} Standorte</span>
                     <span className="text-xs bg-slate-100 px-2 py-1 rounded">{org.contacts?.length || 0} Kontakte</span>
@@ -2188,23 +2582,339 @@ function OrganizationsPage() {
           ))}
         </div>
       )}
+      
+      {/* Edit Organization Dialog */}
+      <Dialog open={!!editingOrg} onOpenChange={(open) => !open && setEditingOrg(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Organisation bearbeiten</DialogTitle></DialogHeader>
+          {editingOrg && (
+            <OrganizationForm 
+              organization={editingOrg} 
+              slaProfiles={slaProfiles}
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingOrg(null)} 
+              isEdit 
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* Organization Detail Dialog */}
+      <OrganizationDetailDialog 
+        organization={selectedOrg}
+        slaProfiles={slaProfiles}
+        open={!!selectedOrg}
+        onClose={() => setSelectedOrg(null)}
+        onUpdate={loadOrganizations}
+      />
     </div>
   )
 }
 
-function CreateOrganizationForm({ onSubmit, onCancel }) {
-  const [formData, setFormData] = useState({ name: '', short_name: '', email: '', phone: '', website: '' })
+function OrganizationForm({ organization, slaProfiles = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    name: organization?.name || '',
+    short_name: organization?.short_name || '',
+    email: organization?.email || '',
+    phone: organization?.phone || '',
+    website: organization?.website || '',
+    domain: organization?.domain || '',
+    notes: organization?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.name) {
+      toast.error('Name ist erforderlich')
+      return
+    }
+    onSubmit(formData)
+  }
+  
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (formData.name) onSubmit(formData); }} className="space-y-4">
-      <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} /></div>
-      <div><Label>Kurzname</Label><Input value={formData.short_name} onChange={(e) => setFormData(f => ({ ...f, short_name: e.target.value }))} /></div>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} /></div>
+        <div><Label>Kurzname</Label><Input value={formData.short_name} onChange={(e) => setFormData(f => ({ ...f, short_name: e.target.value }))} /></div>
+      </div>
       <div className="grid grid-cols-2 gap-4">
         <div><Label>E-Mail</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
         <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
       </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Website</Label><Input value={formData.website} onChange={(e) => setFormData(f => ({ ...f, website: e.target.value }))} placeholder="https://..." /></div>
+        <div><Label>Domain (für Auto-Zuweisung)</Label><Input value={formData.domain} onChange={(e) => setFormData(f => ({ ...f, domain: e.target.value }))} placeholder="firma.de" /></div>
+      </div>
+      <div>
+        <Label>Notizen</Label>
+        <Textarea value={formData.notes} onChange={(e) => setFormData(f => ({ ...f, notes: e.target.value }))} rows={2} />
+      </div>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
-        <Button type="submit">Erstellen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function OrganizationDetailDialog({ organization, slaProfiles, open, onClose, onUpdate }) {
+  const [activeTab, setActiveTab] = useState('overview')
+  const [contacts, setContacts] = useState([])
+  const [locations, setLocations] = useState([])
+  const [editingContact, setEditingContact] = useState(null)
+  const [showAddContact, setShowAddContact] = useState(false)
+  const [showAddLocation, setShowAddLocation] = useState(false)
+  const [editingLocation, setEditingLocation] = useState(null)
+  
+  useEffect(() => {
+    if (open && organization) {
+      setContacts(organization.contacts || [])
+      setLocations(organization.locations || [])
+    }
+  }, [open, organization])
+  
+  const handleAddContact = async (data) => {
+    try {
+      await api.createContact({ ...data, organization_id: organization.id })
+      toast.success('Kontakt hinzugefügt')
+      setShowAddContact(false)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleUpdateContact = async (data) => {
+    try {
+      await api.updateContact(editingContact.id, data)
+      toast.success('Kontakt aktualisiert')
+      setEditingContact(null)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleDeleteContact = async (id) => {
+    if (!confirm('Kontakt wirklich löschen?')) return
+    try {
+      await api.deleteContact(id)
+      toast.success('Kontakt gelöscht')
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleAddLocation = async (data) => {
+    try {
+      await api.createLocation({ ...data, organization_id: organization.id })
+      toast.success('Standort hinzugefügt')
+      setShowAddLocation(false)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleUpdateLocation = async (data) => {
+    try {
+      await api.updateLocation(editingLocation.id, data)
+      toast.success('Standort aktualisiert')
+      setEditingLocation(null)
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  const handleDeleteLocation = async (id) => {
+    if (!confirm('Standort wirklich löschen?')) return
+    try {
+      await api.deleteLocation(id)
+      toast.success('Standort gelöscht')
+      onUpdate()
+    } catch { toast.error('Fehler') }
+  }
+  
+  if (!organization) return null
+  
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5" />
+            {organization.name}
+          </DialogTitle>
+        </DialogHeader>
+        
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col">
+          <TabsList>
+            <TabsTrigger value="overview">Übersicht</TabsTrigger>
+            <TabsTrigger value="contacts">Kontakte ({contacts.length})</TabsTrigger>
+            <TabsTrigger value="locations">Standorte ({locations.length})</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="overview" className="flex-1 overflow-auto p-2">
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label className="text-slate-500">E-Mail</Label><p>{organization.email || '-'}</p></div>
+              <div><Label className="text-slate-500">Telefon</Label><p>{organization.phone || '-'}</p></div>
+              <div><Label className="text-slate-500">Website</Label><p>{organization.website || '-'}</p></div>
+              <div><Label className="text-slate-500">Domain</Label><p>{organization.domain || '-'}</p></div>
+            </div>
+            {organization.notes && (
+              <div className="mt-4">
+                <Label className="text-slate-500">Notizen</Label>
+                <p className="whitespace-pre-wrap">{organization.notes}</p>
+              </div>
+            )}
+          </TabsContent>
+          
+          <TabsContent value="contacts" className="flex-1 overflow-auto p-2">
+            <div className="flex justify-end mb-4">
+              <Button size="sm" onClick={() => setShowAddContact(true)}><Plus className="h-4 w-4 mr-1" />Kontakt</Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>E-Mail</TableHead>
+                  <TableHead>Telefon</TableHead>
+                  <TableHead>Position</TableHead>
+                  <TableHead className="w-20"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {contacts.map(contact => (
+                  <TableRow key={contact.id}>
+                    <TableCell className="font-medium">{contact.first_name} {contact.last_name}</TableCell>
+                    <TableCell>{contact.email || '-'}</TableCell>
+                    <TableCell>{contact.phone || '-'}</TableCell>
+                    <TableCell>{contact.position || '-'}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setEditingContact(contact)}><Settings className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteContact(contact.id)}><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TabsContent>
+          
+          <TabsContent value="locations" className="flex-1 overflow-auto p-2">
+            <div className="flex justify-end mb-4">
+              <Button size="sm" onClick={() => setShowAddLocation(true)}><Plus className="h-4 w-4 mr-1" />Standort</Button>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Adresse</TableHead>
+                  <TableHead>Stadt</TableHead>
+                  <TableHead className="w-20"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {locations.map(loc => (
+                  <TableRow key={loc.id}>
+                    <TableCell className="font-medium">{loc.name} {loc.is_headquarters && <Badge variant="outline" className="ml-2">HQ</Badge>}</TableCell>
+                    <TableCell>{loc.address || '-'}</TableCell>
+                    <TableCell>{loc.zip_code} {loc.city}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setEditingLocation(loc)}><Settings className="h-4 w-4" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDeleteLocation(loc.id)}><Trash2 className="h-4 w-4" /></Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TabsContent>
+        </Tabs>
+        
+        {/* Add/Edit Contact Dialog */}
+        <Dialog open={showAddContact || !!editingContact} onOpenChange={(open) => { if (!open) { setShowAddContact(false); setEditingContact(null); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{editingContact ? 'Kontakt bearbeiten' : 'Neuer Kontakt'}</DialogTitle></DialogHeader>
+            <ContactForm contact={editingContact} onSubmit={editingContact ? handleUpdateContact : handleAddContact} onCancel={() => { setShowAddContact(false); setEditingContact(null); }} isEdit={!!editingContact} />
+          </DialogContent>
+        </Dialog>
+        
+        {/* Add/Edit Location Dialog */}
+        <Dialog open={showAddLocation || !!editingLocation} onOpenChange={(open) => { if (!open) { setShowAddLocation(false); setEditingLocation(null); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{editingLocation ? 'Standort bearbeiten' : 'Neuer Standort'}</DialogTitle></DialogHeader>
+            <LocationForm location={editingLocation} onSubmit={editingLocation ? handleUpdateLocation : handleAddLocation} onCancel={() => { setShowAddLocation(false); setEditingLocation(null); }} isEdit={!!editingLocation} />
+          </DialogContent>
+        </Dialog>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ContactForm({ contact, onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    first_name: contact?.first_name || '',
+    last_name: contact?.last_name || '',
+    email: contact?.email || '',
+    phone: contact?.phone || '',
+    mobile: contact?.mobile || '',
+    position: contact?.position || '',
+    department: contact?.department || '',
+    is_primary: contact?.is_primary || false,
+  })
+  
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (formData.first_name && formData.last_name) onSubmit(formData); else toast.error('Name ist erforderlich'); }} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Vorname *</Label><Input value={formData.first_name} onChange={(e) => setFormData(f => ({ ...f, first_name: e.target.value }))} /></div>
+        <div><Label>Nachname *</Label><Input value={formData.last_name} onChange={(e) => setFormData(f => ({ ...f, last_name: e.target.value }))} /></div>
+      </div>
+      <div><Label>E-Mail</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
+        <div><Label>Mobil</Label><Input value={formData.mobile} onChange={(e) => setFormData(f => ({ ...f, mobile: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Position</Label><Input value={formData.position} onChange={(e) => setFormData(f => ({ ...f, position: e.target.value }))} /></div>
+        <div><Label>Abteilung</Label><Input value={formData.department} onChange={(e) => setFormData(f => ({ ...f, department: e.target.value }))} /></div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch checked={formData.is_primary} onCheckedChange={(v) => setFormData(f => ({ ...f, is_primary: v }))} />
+        <Label>Hauptkontakt</Label>
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Hinzufügen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function LocationForm({ location, onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    name: location?.name || '',
+    address: location?.address || '',
+    city: location?.city || '',
+    zip_code: location?.zip_code || '',
+    country: location?.country || 'Deutschland',
+    phone: location?.phone || '',
+    is_headquarters: location?.is_headquarters || false,
+  })
+  
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); if (formData.name) onSubmit(formData); else toast.error('Name ist erforderlich'); }} className="space-y-4">
+      <div><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} placeholder="Hauptsitz, Niederlassung Berlin..." /></div>
+      <div><Label>Adresse</Label><Input value={formData.address} onChange={(e) => setFormData(f => ({ ...f, address: e.target.value }))} /></div>
+      <div className="grid grid-cols-3 gap-4">
+        <div><Label>PLZ</Label><Input value={formData.zip_code} onChange={(e) => setFormData(f => ({ ...f, zip_code: e.target.value }))} /></div>
+        <div className="col-span-2"><Label>Stadt</Label><Input value={formData.city} onChange={(e) => setFormData(f => ({ ...f, city: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Land</Label><Input value={formData.country} onChange={(e) => setFormData(f => ({ ...f, country: e.target.value }))} /></div>
+        <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch checked={formData.is_headquarters} onCheckedChange={(v) => setFormData(f => ({ ...f, is_headquarters: v }))} />
+        <Label>Hauptsitz</Label>
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Hinzufügen'}</Button>
       </DialogFooter>
     </form>
   )
@@ -2218,23 +2928,40 @@ function UsersPage() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingUser, setEditingUser] = useState(null)
   const [roles, setRoles] = useState([])
+  const [organizations, setOrganizations] = useState([])
   
   useEffect(() => {
-    Promise.all([api.getUsers(), api.getRoles()])
-      .then(([usersData, rolesData]) => { setUsers(usersData); setRoles(rolesData); })
+    Promise.all([api.getUsers(), api.getRoles(), api.getOrganizations()])
+      .then(([usersData, rolesData, orgsData]) => { setUsers(usersData); setRoles(rolesData); setOrganizations(orgsData); })
       .catch(() => toast.error('Fehler'))
       .finally(() => setLoading(false))
   }, [])
   
+  const loadUsers = async () => {
+    try { setUsers(await api.getUsers()); }
+    catch { toast.error('Fehler beim Laden'); }
+  }
+  
   const handleCreate = async (data) => {
-    try { await api.createUser(data); toast.success('Erstellt'); setShowCreateDialog(false); setUsers(await api.getUsers()); }
-    catch { toast.error('Fehler') }
+    try { await api.createUser(data); toast.success('Benutzer erstellt'); setShowCreateDialog(false); loadUsers(); }
+    catch { toast.error('Fehler beim Erstellen') }
+  }
+  
+  const handleUpdate = async (data) => {
+    try { 
+      await api.updateUser(editingUser.id, data); 
+      toast.success('Benutzer aktualisiert'); 
+      setEditingUser(null); 
+      loadUsers(); 
+    }
+    catch { toast.error('Fehler beim Aktualisieren') }
   }
   
   const handleDelete = async (id) => {
-    if (!confirm('Deaktivieren?')) return
-    try { await api.deleteUser(id); toast.success('Deaktiviert'); setUsers(await api.getUsers()); }
+    if (!confirm('Benutzer wirklich deaktivieren?')) return
+    try { await api.deleteUser(id); toast.success('Benutzer deaktiviert'); loadUsers(); }
     catch { toast.error('Fehler') }
   }
   
@@ -2246,7 +2973,7 @@ function UsersPage() {
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Neuer Benutzer</Button></DialogTrigger>
           <DialogContent>
             <DialogHeader><DialogTitle>Neuer Benutzer</DialogTitle></DialogHeader>
-            <CreateUserForm roles={roles} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            <UserForm roles={roles} organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -2260,8 +2987,9 @@ function UsersPage() {
                 <TableHead>E-Mail</TableHead>
                 <TableHead>Typ</TableHead>
                 <TableHead>Rolle</TableHead>
+                <TableHead>Organisation</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead></TableHead>
+                <TableHead className="w-24">Aktionen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2271,34 +2999,85 @@ function UsersPage() {
                   <TableCell>{user.email}</TableCell>
                   <TableCell><Badge variant="outline">{user.user_type === 'internal' ? 'Intern' : 'Kunde'}</Badge></TableCell>
                   <TableCell>{user.user_roles?.[0]?.roles?.display_name || '-'}</TableCell>
+                  <TableCell>{organizations.find(o => o.id === user.organization_id)?.name || '-'}</TableCell>
                   <TableCell><Badge className={user.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100'}>{user.is_active ? 'Aktiv' : 'Inaktiv'}</Badge></TableCell>
-                  <TableCell><Button variant="ghost" size="icon" onClick={() => handleDelete(user.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => setEditingUser(user)} title="Bearbeiten">
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(user.id)} title="Deaktivieren">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </Card>
       )}
+      
+      {/* Edit User Dialog */}
+      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Benutzer bearbeiten</DialogTitle></DialogHeader>
+          {editingUser && (
+            <UserForm 
+              user={editingUser} 
+              roles={roles} 
+              organizations={organizations}
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingUser(null)} 
+              isEdit 
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function CreateUserForm({ roles, onSubmit, onCancel }) {
-  const [formData, setFormData] = useState({ email: '', first_name: '', last_name: '', phone: '', user_type: 'internal', role_id: '' })
+function UserForm({ user, roles, organizations = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    email: user?.email || '',
+    first_name: user?.first_name || '',
+    last_name: user?.last_name || '',
+    phone: user?.phone || '',
+    user_type: user?.user_type || 'internal',
+    role_id: user?.user_roles?.[0]?.role_id || user?.role_id || '',
+    organization_id: user?.organization_id || '',
+    is_active: user?.is_active !== false,
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.email || !formData.first_name || !formData.last_name) {
+      toast.error('Bitte alle Pflichtfelder ausfüllen')
+      return
+    }
+    onSubmit({
+      ...formData,
+      role_id: formData.role_id || null,
+      organization_id: formData.organization_id || null,
+    })
+  }
+  
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (formData.email && formData.first_name && formData.last_name) onSubmit(formData); }} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div><Label>Vorname *</Label><Input value={formData.first_name} onChange={(e) => setFormData(f => ({ ...f, first_name: e.target.value }))} /></div>
         <div><Label>Nachname *</Label><Input value={formData.last_name} onChange={(e) => setFormData(f => ({ ...f, last_name: e.target.value }))} /></div>
       </div>
-      <div><Label>E-Mail *</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
+      <div><Label>E-Mail *</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} disabled={isEdit} /></div>
+      <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>Benutzertyp</Label>
           <Select value={formData.user_type} onValueChange={(v) => setFormData(f => ({ ...f, user_type: v }))}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="internal">Intern</SelectItem>
+              <SelectItem value="internal">Intern (Agent)</SelectItem>
               <SelectItem value="customer">Kunde</SelectItem>
             </SelectContent>
           </Select>
@@ -2314,9 +3093,25 @@ function CreateUserForm({ roles, onSubmit, onCancel }) {
           </Select>
         </div>
       </div>
+      <div>
+        <Label>Organisation</Label>
+        <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+          <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Keine</SelectItem>
+            {organizations.map((org) => <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {isEdit && (
+        <div className="flex items-center gap-2">
+          <Switch checked={formData.is_active} onCheckedChange={(v) => setFormData(f => ({ ...f, is_active: v }))} />
+          <Label>Benutzer aktiv</Label>
+        </div>
+      )}
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
-        <Button type="submit">Erstellen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
       </DialogFooter>
     </form>
   )
@@ -2330,8 +3125,10 @@ function AssetsPage() {
   const [assets, setAssets] = useState([])
   const [assetTypes, setAssetTypes] = useState([])
   const [organizations, setOrganizations] = useState([])
+  const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingAsset, setEditingAsset] = useState(null)
   const [filter, setFilter] = useState({ type_id: 'all', status: 'all' })
   
   const loadAssets = useCallback(async () => {
@@ -2340,25 +3137,35 @@ function AssetsPage() {
       if (filter.type_id && filter.type_id !== 'all') params.type_id = filter.type_id
       if (filter.status && filter.status !== 'all') params.status = filter.status
       setAssets(await api.getAssets(params))
-    } catch { toast.error('Fehler') }
+    } catch { toast.error('Fehler beim Laden') }
     finally { setLoading(false) }
   }, [filter])
   
   useEffect(() => {
-    Promise.all([api.getAssetTypes(), api.getOrganizations()])
-      .then(([types, orgs]) => { setAssetTypes(types); setOrganizations(orgs); })
+    Promise.all([api.getAssetTypes(), api.getOrganizations(), api.getUsers()])
+      .then(([types, orgs, usersData]) => { setAssetTypes(types); setOrganizations(orgs); setUsers(usersData); })
     loadAssets()
   }, [loadAssets])
   
   const handleCreate = async (data) => {
     try { await api.createAsset(data); toast.success('Asset erstellt'); setShowCreateDialog(false); loadAssets(); }
-    catch { toast.error('Fehler') }
+    catch { toast.error('Fehler beim Erstellen') }
+  }
+  
+  const handleUpdate = async (data) => {
+    try { 
+      await api.updateAsset(editingAsset.id, data); 
+      toast.success('Asset aktualisiert'); 
+      setEditingAsset(null); 
+      loadAssets(); 
+    }
+    catch { toast.error('Fehler beim Aktualisieren') }
   }
   
   const handleDelete = async (id) => {
-    if (!confirm('Wirklich löschen?')) return
-    try { await api.deleteAsset(id); toast.success('Gelöscht'); loadAssets(); }
-    catch { toast.error('Fehler') }
+    if (!confirm('Asset wirklich löschen?')) return
+    try { await api.deleteAsset(id); toast.success('Asset gelöscht'); loadAssets(); }
+    catch { toast.error('Fehler beim Löschen') }
   }
   
   return (
@@ -2379,12 +3186,13 @@ function AssetsPage() {
               {Object.entries(ASSET_STATUS_LABELS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
             </SelectContent>
           </Select>
+          <Button variant="outline" onClick={loadAssets}><RefreshCw className="h-4 w-4 mr-2" />Aktualisieren</Button>
         </div>
         <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Neues Asset</Button></DialogTrigger>
           <DialogContent className="max-w-2xl">
             <DialogHeader><DialogTitle>Neues Asset</DialogTitle></DialogHeader>
-            <CreateAssetForm assetTypes={assetTypes} organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+            <AssetForm assetTypes={assetTypes} organizations={organizations} users={users} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -2397,14 +3205,16 @@ function AssetsPage() {
                 <TableHead>Asset</TableHead>
                 <TableHead>Typ</TableHead>
                 <TableHead>Organisation</TableHead>
+                <TableHead>Zugewiesen an</TableHead>
                 <TableHead>Seriennummer</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead></TableHead>
+                <TableHead className="w-24">Aktionen</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {assets.map((asset) => {
                 const IconComponent = ASSET_ICONS[asset.asset_types?.name] || Box
+                const assignedUser = users.find(u => u.id === asset.assigned_user_id)
                 return (
                   <TableRow key={asset.id}>
                     <TableCell>
@@ -2418,9 +3228,19 @@ function AssetsPage() {
                     </TableCell>
                     <TableCell>{asset.asset_types?.name}</TableCell>
                     <TableCell>{asset.organizations?.name || '-'}</TableCell>
+                    <TableCell>{assignedUser ? `${assignedUser.first_name} ${assignedUser.last_name}` : '-'}</TableCell>
                     <TableCell className="font-mono text-sm">{asset.serial_number || '-'}</TableCell>
                     <TableCell><Badge className={ASSET_STATUS_COLORS[asset.status]}>{ASSET_STATUS_LABELS[asset.status]}</Badge></TableCell>
-                    <TableCell><Button variant="ghost" size="icon" onClick={() => handleDelete(asset.id)}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => setEditingAsset(asset)} title="Bearbeiten">
+                          <Settings className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(asset.id)} title="Löschen">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -2428,14 +3248,87 @@ function AssetsPage() {
           </Table>
         </Card>
       )}
+      
+      {/* Edit Asset Dialog */}
+      <Dialog open={!!editingAsset} onOpenChange={(open) => !open && setEditingAsset(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Asset bearbeiten</DialogTitle></DialogHeader>
+          {editingAsset && (
+            <AssetForm 
+              asset={editingAsset}
+              assetTypes={assetTypes} 
+              organizations={organizations} 
+              users={users}
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingAsset(null)} 
+              isEdit 
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-function CreateAssetForm({ assetTypes, organizations, onSubmit, onCancel }) {
-  const [formData, setFormData] = useState({ asset_type_id: '', name: '', asset_tag: '', serial_number: '', manufacturer: '', model: '', organization_id: '', status: 'active' })
+function AssetForm({ asset, assetTypes, organizations, users = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    asset_type_id: asset?.asset_type_id || '',
+    name: asset?.name || '',
+    asset_tag: asset?.asset_tag || '',
+    serial_number: asset?.serial_number || '',
+    manufacturer: asset?.manufacturer || '',
+    model: asset?.model || '',
+    organization_id: asset?.organization_id || '',
+    assigned_user_id: asset?.assigned_user_id || '',
+    location_id: asset?.location_id || '',
+    status: asset?.status || 'active',
+    purchase_date: asset?.purchase_date?.split('T')[0] || '',
+    purchase_price: asset?.purchase_price || '',
+    warranty_end: asset?.warranty_end?.split('T')[0] || '',
+    notes: asset?.notes || '',
+    // Software License Fields
+    software_name: asset?.software_name || '',
+    vendor: asset?.vendor || '',
+    purchase_source: asset?.purchase_source || '',
+    license_expiry_date: asset?.license_expiry_date?.split('T')[0] || '',
+    sales_price: asset?.sales_price || '',
+    license_key: asset?.license_key || '',
+    license_quantity: asset?.license_quantity || 1,
+    license_type: asset?.license_type || '',
+  })
+  const [showLicenseFields, setShowLicenseFields] = useState(!!asset?.software_name || !!asset?.license_key)
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.asset_type_id || !formData.name) {
+      toast.error('Typ und Name sind erforderlich')
+      return
+    }
+    onSubmit({
+      ...formData,
+      organization_id: formData.organization_id || null,
+      assigned_user_id: formData.assigned_user_id || null,
+      location_id: formData.location_id || null,
+      purchase_price: formData.purchase_price ? parseFloat(formData.purchase_price) : null,
+      sales_price: formData.sales_price ? parseFloat(formData.sales_price) : null,
+      purchase_date: formData.purchase_date || null,
+      warranty_end: formData.warranty_end || null,
+      license_expiry_date: formData.license_expiry_date || null,
+      software_name: formData.software_name || null,
+      vendor: formData.vendor || null,
+      purchase_source: formData.purchase_source || null,
+      license_key: formData.license_key || null,
+      license_quantity: formData.license_quantity || 1,
+      license_type: formData.license_type || null,
+    })
+  }
+  
+  // Get locations for selected organization
+  const selectedOrg = organizations.find(o => o.id === formData.organization_id)
+  const locations = selectedOrg?.locations || []
+  
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (formData.asset_type_id && formData.name) onSubmit(formData); }} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>Typ *</Label>
@@ -2460,11 +3353,33 @@ function CreateAssetForm({ assetTypes, organizations, onSubmit, onCancel }) {
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>Organisation</Label>
-          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v, location_id: '' }))}>
             <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="none">Keine</SelectItem>
               {organizations.map((o) => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Standort</Label>
+          <Select value={formData.location_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, location_id: v === 'none' ? '' : v }))} disabled={!formData.organization_id}>
+            <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Standort</SelectItem>
+              {locations.map((l) => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Zugewiesen an</Label>
+          <Select value={formData.assigned_user_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, assigned_user_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Nicht zugewiesen</SelectItem>
+              {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.first_name} {u.last_name}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -2478,9 +3393,77 @@ function CreateAssetForm({ assetTypes, organizations, onSubmit, onCancel }) {
           </Select>
         </div>
       </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div><Label>Kaufdatum</Label><Input type="date" value={formData.purchase_date} onChange={(e) => setFormData(f => ({ ...f, purchase_date: e.target.value }))} /></div>
+        <div><Label>Kaufpreis (€)</Label><Input type="number" step="0.01" value={formData.purchase_price} onChange={(e) => setFormData(f => ({ ...f, purchase_price: e.target.value }))} /></div>
+        <div><Label>Garantie bis</Label><Input type="date" value={formData.warranty_end} onChange={(e) => setFormData(f => ({ ...f, warranty_end: e.target.value }))} /></div>
+      </div>
+      
+      {/* Software License Section */}
+      <div className="border-t pt-4 mt-4">
+        <div className="flex items-center justify-between mb-3">
+          <Label className="text-sm font-semibold">Software-Lizenz Details</Label>
+          <Button type="button" variant="outline" size="sm" onClick={() => setShowLicenseFields(!showLicenseFields)}>
+            {showLicenseFields ? 'Ausblenden' : 'Einblenden'}
+          </Button>
+        </div>
+        {showLicenseFields && (
+          <div className="space-y-4 bg-slate-50 p-4 rounded-lg">
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label>Software-Name</Label><Input value={formData.software_name} onChange={(e) => setFormData(f => ({ ...f, software_name: e.target.value }))} placeholder="z.B. Microsoft Office 365" /></div>
+              <div><Label>Hersteller/Vendor</Label><Input value={formData.vendor} onChange={(e) => setFormData(f => ({ ...f, vendor: e.target.value }))} placeholder="z.B. Microsoft" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Bezugsquelle</Label>
+                <Select value={formData.purchase_source || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, purchase_source: v === 'none' ? '' : v }))}>
+                  <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nicht angegeben</SelectItem>
+                    <SelectItem value="Microsoft">Microsoft</SelectItem>
+                    <SelectItem value="Amazon">Amazon</SelectItem>
+                    <SelectItem value="Vendor">Direkter Vendor</SelectItem>
+                    <SelectItem value="Reseller">Reseller</SelectItem>
+                    <SelectItem value="OEM">OEM/Vorinstalliert</SelectItem>
+                    <SelectItem value="Other">Sonstiges</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Lizenztyp</Label>
+                <Select value={formData.license_type || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, license_type: v === 'none' ? '' : v }))}>
+                  <SelectTrigger><SelectValue placeholder="Wählen" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nicht angegeben</SelectItem>
+                    <SelectItem value="perpetual">Dauerlizenz (Perpetual)</SelectItem>
+                    <SelectItem value="subscription">Abonnement (Subscription)</SelectItem>
+                    <SelectItem value="trial">Testlizenz (Trial)</SelectItem>
+                    <SelectItem value="volume">Volumenlizenz</SelectItem>
+                    <SelectItem value="oem">OEM-Lizenz</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div><Label>Ablaufdatum</Label><Input type="date" value={formData.license_expiry_date} onChange={(e) => setFormData(f => ({ ...f, license_expiry_date: e.target.value }))} /></div>
+              <div><Label>Verkaufspreis (€)</Label><Input type="number" step="0.01" value={formData.sales_price} onChange={(e) => setFormData(f => ({ ...f, sales_price: e.target.value }))} /></div>
+              <div><Label>Anzahl Lizenzen</Label><Input type="number" min="1" value={formData.license_quantity} onChange={(e) => setFormData(f => ({ ...f, license_quantity: parseInt(e.target.value) || 1 }))} /></div>
+            </div>
+            <div>
+              <Label>Lizenzschlüssel</Label>
+              <Input value={formData.license_key} onChange={(e) => setFormData(f => ({ ...f, license_key: e.target.value }))} placeholder="XXXXX-XXXXX-XXXXX-XXXXX" className="font-mono" />
+            </div>
+          </div>
+        )}
+      </div>
+      
+      <div>
+        <Label>Notizen</Label>
+        <Textarea value={formData.notes} onChange={(e) => setFormData(f => ({ ...f, notes: e.target.value }))} rows={2} />
+      </div>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
-        <Button type="submit">Erstellen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
       </DialogFooter>
     </form>
   )
@@ -2773,6 +3756,2092 @@ function CreateTimeEntryForm({ tickets, organizations, onSubmit, onCancel }) {
 }
 
 // ============================================
+// TELEPHONY / CTI PAGE
+// ============================================
+
+function TelephonyPage({ currentUser }) {
+  const [activeCall, setActiveCall] = useState(null)
+  const [callHistory, setCallHistory] = useState([])
+  const [lookupResult, setLookupResult] = useState(null)
+  const [dialNumber, setDialNumber] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [callNotes, setCallNotes] = useState('')
+  const [showSimulator, setShowSimulator] = useState(false)
+  const [simulateNumber, setSimulateNumber] = useState('+49 176 21911217')
+  const [showCreateContact, setShowCreateContact] = useState(false)
+  const [newContact, setNewContact] = useState({ first_name: '', last_name: '', email: '', organization_id: '' })
+  const [organizations, setOrganizations] = useState([])
+  
+  useEffect(() => {
+    loadCallHistory()
+    loadOrganizations()
+  }, [])
+  
+  const loadOrganizations = async () => {
+    try {
+      const orgs = await api.getOrganizations()
+      setOrganizations(orgs || [])
+    } catch (e) {}
+  }
+  
+  const loadCallHistory = async () => {
+    setLoading(true)
+    try {
+      const calls = await api.fetch('/cti/calls?limit=20')
+      setCallHistory(Array.isArray(calls) ? calls : [])
+    } catch (e) {
+      setCallHistory([])
+    }
+    setLoading(false)
+  }
+  
+  const lookupNumber = async (number) => {
+    if (!number) return
+    try {
+      const result = await api.fetch(`/cti/lookup?phone_number=${encodeURIComponent(number)}`)
+      setLookupResult(result)
+      return result
+    } catch (e) {
+      toast.error('Fehler bei der Suche')
+      return null
+    }
+  }
+  
+  const simulateIncomingCall = async () => {
+    if (!simulateNumber) {
+      toast.error('Bitte Telefonnummer eingeben')
+      return
+    }
+    try {
+      const result = await api.fetch('/cti/simulate-incoming', {
+        method: 'POST',
+        body: JSON.stringify({ phone_number: simulateNumber })
+      })
+      setActiveCall(result)
+      setLookupResult(result.lookup)
+      setShowSimulator(false)
+      toast.success('Eingehender Anruf simuliert!')
+    } catch (e) {
+      toast.error('Fehler bei der Simulation')
+    }
+  }
+  
+  const acceptCall = () => {
+    if (activeCall) {
+      setActiveCall({ ...activeCall, status: 'connected', connectedAt: new Date() })
+      toast.success('Anruf angenommen')
+    }
+  }
+  
+  const endCall = async () => {
+    if (activeCall) {
+      const duration = activeCall.connectedAt 
+        ? Math.round((new Date() - new Date(activeCall.connectedAt)) / 1000)
+        : 0
+      
+      // Save call log
+      try {
+        await api.fetch('/cti/calls', {
+          method: 'POST',
+          body: JSON.stringify({
+            phone_number: activeCall.phone_number,
+            direction: 'inbound',
+            user_id: currentUser?.id,
+            contact_id: lookupResult?.contact?.id,
+            organization_id: lookupResult?.organization?.id,
+            status: 'completed',
+            duration_seconds: duration,
+            notes: callNotes,
+          })
+        })
+        toast.success(`Anruf beendet (${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')})`)
+        loadCallHistory()
+      } catch (e) {
+        toast.error('Fehler beim Speichern')
+      }
+      
+      setActiveCall(null)
+      setLookupResult(null)
+      setCallNotes('')
+    }
+  }
+  
+  const makeOutboundCall = async () => {
+    if (!dialNumber) {
+      toast.error('Bitte Nummer eingeben')
+      return
+    }
+    const lookup = await lookupNumber(dialNumber)
+    setActiveCall({
+      call_id: Date.now().toString(),
+      phone_number: dialNumber,
+      direction: 'outbound',
+      status: 'dialing',
+      lookup
+    })
+    
+    // Simulate connection after 2s
+    setTimeout(() => {
+      setActiveCall(prev => prev ? { ...prev, status: 'connected', connectedAt: new Date() } : null)
+    }, 2000)
+  }
+  
+  const createTicketFromCall = async () => {
+    if (!lookupResult?.organization?.id) {
+      toast.error('Keine Organisation zugeordnet')
+      return
+    }
+    
+    try {
+      const ticket = await api.createTicket({
+        subject: `Telefonanruf von ${activeCall?.phone_number || 'Unbekannt'}`,
+        description: `Anruf am ${new Date().toLocaleString('de-DE')}\n\nNotizen:\n${callNotes || 'Keine Notizen'}`,
+        organization_id: lookupResult.organization.id,
+        created_by_id: currentUser?.id,
+        source: 'phone',
+        priority: 'medium',
+      })
+      toast.success(`Ticket #${ticket.ticket_number} erstellt`)
+    } catch (e) {
+      toast.error('Fehler beim Erstellen')
+    }
+  }
+  
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">Telefonie / CTI</h1>
+          <p className="text-muted-foreground">Anruferkennung und Call-Management</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setShowSimulator(true)}>
+            <Phone className="w-4 h-4 mr-2" />
+            Anruf simulieren
+          </Button>
+          <Button variant="outline" onClick={loadCallHistory}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Aktualisieren
+          </Button>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Active Call / Dialer */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <PhoneCall className="w-5 h-5" />
+              {activeCall ? 'Aktiver Anruf' : 'Wählfeld'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {activeCall ? (
+              <div className="space-y-4">
+                <div className="text-center py-4">
+                  <div className={`inline-flex items-center justify-center w-20 h-20 rounded-full mb-4 ${
+                    activeCall.status === 'ringing' ? 'bg-yellow-100 animate-pulse' :
+                    activeCall.status === 'connected' ? 'bg-green-100' : 'bg-blue-100'
+                  }`}>
+                    <Phone className={`w-10 h-10 ${
+                      activeCall.status === 'ringing' ? 'text-yellow-600' :
+                      activeCall.status === 'connected' ? 'text-green-600' : 'text-blue-600'
+                    }`} />
+                  </div>
+                  <h3 className="text-2xl font-bold">{activeCall.phone_number}</h3>
+                  <p className="text-muted-foreground">
+                    {activeCall.status === 'ringing' && '📞 Eingehender Anruf...'}
+                    {activeCall.status === 'dialing' && '📱 Wähle...'}
+                    {activeCall.status === 'connected' && '🟢 Verbunden'}
+                  </p>
+                  {lookupResult?.found && (
+                    <div className="mt-2">
+                      <Badge className="bg-green-100 text-green-700">
+                        {lookupResult.contact ? 
+                          `${lookupResult.contact.first_name} ${lookupResult.contact.last_name}` :
+                          lookupResult.organization?.name
+                        }
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="flex justify-center gap-4">
+                  {activeCall.status === 'ringing' && (
+                    <>
+                      <Button size="lg" className="bg-green-600 hover:bg-green-700" onClick={acceptCall}>
+                        <Phone className="w-5 h-5 mr-2" />
+                        Annehmen
+                      </Button>
+                      <Button size="lg" variant="destructive" onClick={endCall}>
+                        <X className="w-5 h-5 mr-2" />
+                        Ablehnen
+                      </Button>
+                    </>
+                  )}
+                  {(activeCall.status === 'connected' || activeCall.status === 'dialing') && (
+                    <Button size="lg" variant="destructive" onClick={endCall}>
+                      <Phone className="w-5 h-5 mr-2" />
+                      Auflegen
+                    </Button>
+                  )}
+                </div>
+                
+                {activeCall.status === 'connected' && (
+                  <div className="space-y-4 pt-4 border-t">
+                    <div>
+                      <Label>Notizen zum Anruf</Label>
+                      <Textarea 
+                        value={callNotes}
+                        onChange={(e) => setCallNotes(e.target.value)}
+                        placeholder="Notizen während des Gesprächs..."
+                        rows={3}
+                      />
+                    </div>
+                    <Button onClick={createTicketFromCall} disabled={!lookupResult?.organization?.id}>
+                      <Ticket className="w-4 h-4 mr-2" />
+                      Ticket aus Anruf erstellen
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <Input 
+                    value={dialNumber}
+                    onChange={(e) => setDialNumber(e.target.value)}
+                    placeholder="+49 176 12345678"
+                    className="text-xl h-12"
+                    onKeyDown={(e) => e.key === 'Enter' && makeOutboundCall()}
+                  />
+                  <Button size="lg" onClick={makeOutboundCall} className="bg-green-600 hover:bg-green-700">
+                    <Phone className="w-5 h-5" />
+                  </Button>
+                  <Button size="lg" variant="outline" onClick={() => lookupNumber(dialNumber)}>
+                    <Search className="w-5 h-5" />
+                  </Button>
+                </div>
+                
+                {/* Number Pad */}
+                <div className="grid grid-cols-3 gap-2 max-w-xs mx-auto">
+                  {['1','2','3','4','5','6','7','8','9','*','0','#'].map(key => (
+                    <Button 
+                      key={key}
+                      variant="outline" 
+                      className="h-14 text-xl"
+                      onClick={() => setDialNumber(d => d + key)}
+                    >
+                      {key}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        
+        {/* Caller Info */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <User className="w-5 h-5" />
+              Anrufer-Info
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lookupResult ? (
+              lookupResult.found ? (
+                <div className="space-y-4">
+                  {lookupResult.contact && (
+                    <div>
+                      <h3 className="font-semibold">{lookupResult.contact.first_name} {lookupResult.contact.last_name}</h3>
+                      <p className="text-sm text-muted-foreground">{lookupResult.contact.position}</p>
+                      <p className="text-sm">{lookupResult.contact.email}</p>
+                      <p className="text-sm">{lookupResult.contact.phone}</p>
+                    </div>
+                  )}
+                  {lookupResult.organization && (
+                    <div className="pt-2 border-t">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4" />
+                        <span className="font-medium">{lookupResult.organization.name}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{lookupResult.organization.phone}</p>
+                    </div>
+                  )}
+                  {lookupResult.recent_tickets?.length > 0 && (
+                    <div className="pt-2 border-t">
+                      <h4 className="font-medium mb-2">Letzte Tickets</h4>
+                      {lookupResult.recent_tickets.slice(0,3).map(ticket => (
+                        <div key={ticket.id} className="text-sm py-1 border-b last:border-0">
+                          <span className="font-mono">#{ticket.ticket_number}</span>
+                          <span className="ml-2 truncate">{ticket.subject}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <AlertCircle className="w-12 h-12 mx-auto mb-2 text-yellow-500" />
+                  <p className="font-medium">Unbekannte Nummer</p>
+                  <p className="text-sm text-muted-foreground">{lookupResult.phone_number}</p>
+                  <Button className="mt-4" size="sm" onClick={() => setShowCreateContact(true)}>
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Kontakt anlegen
+                  </Button>
+                </div>
+              )
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Phone className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                <p>Nummer eingeben oder Anruf entgegennehmen</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      
+      {/* Call History */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <History className="w-5 h-5" />
+            Anrufverlauf
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-8 h-8 animate-spin" />
+            </div>
+          ) : callHistory.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <History className="w-12 h-12 mx-auto mb-2 opacity-30" />
+              <p>Noch keine Anrufe protokolliert</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Zeit</TableHead>
+                  <TableHead>Richtung</TableHead>
+                  <TableHead>Nummer</TableHead>
+                  <TableHead>Kontakt</TableHead>
+                  <TableHead>Dauer</TableHead>
+                  <TableHead>Agent</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {callHistory.map(call => (
+                  <TableRow key={call.id}>
+                    <TableCell>{new Date(call.started_at).toLocaleString('de-DE')}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {call.direction === 'inbound' ? '📞 Eingehend' : '📱 Ausgehend'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono">{call.phone_number}</TableCell>
+                    <TableCell>
+                      {call.contact ? `${call.contact.first_name} ${call.contact.last_name}` : 
+                       call.organization?.name || '-'}
+                    </TableCell>
+                    <TableCell>
+                      {call.duration_seconds ? 
+                        `${Math.floor(call.duration_seconds/60)}:${String(call.duration_seconds%60).padStart(2,'0')}` :
+                        '-'
+                      }
+                    </TableCell>
+                    <TableCell>
+                      {call.user ? `${call.user.first_name} ${call.user.last_name}` : '-'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      
+      {/* Simulate Call Dialog */}
+      <Dialog open={showSimulator} onOpenChange={setShowSimulator}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eingehenden Anruf simulieren</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>Telefonnummer des Anrufers</Label>
+              <Input 
+                value={simulateNumber}
+                onChange={(e) => setSimulateNumber(e.target.value)}
+                placeholder="+49 176 21911217"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Tipp: +49 176 21911217 ist Max Mustermann (Testkontakt)
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSimulator(false)}>Abbrechen</Button>
+            <Button onClick={simulateIncomingCall} className="bg-green-600 hover:bg-green-700">
+              <Phone className="w-4 h-4 mr-2" />
+              Anruf simulieren
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Create Contact from Call Dialog */}
+      <Dialog open={showCreateContact} onOpenChange={setShowCreateContact}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Kontakt aus Anruf erstellen</DialogTitle>
+            <DialogDescription>
+              Erstellen Sie einen neuen Kontakt für {lookupResult?.phone_number || activeCall?.phone_number}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Vorname</Label>
+                <Input 
+                  value={newContact.first_name}
+                  onChange={(e) => setNewContact(c => ({ ...c, first_name: e.target.value }))}
+                  placeholder="Max"
+                />
+              </div>
+              <div>
+                <Label>Nachname</Label>
+                <Input 
+                  value={newContact.last_name}
+                  onChange={(e) => setNewContact(c => ({ ...c, last_name: e.target.value }))}
+                  placeholder="Mustermann"
+                />
+              </div>
+            </div>
+            <div>
+              <Label>E-Mail</Label>
+              <Input 
+                type="email"
+                value={newContact.email}
+                onChange={(e) => setNewContact(c => ({ ...c, email: e.target.value }))}
+                placeholder="max@example.de"
+              />
+            </div>
+            <div>
+              <Label>Telefon</Label>
+              <Input 
+                value={lookupResult?.phone_number || activeCall?.phone_number || ''}
+                disabled
+                className="bg-slate-50"
+              />
+            </div>
+            <div>
+              <Label>Organisation (optional)</Label>
+              <Select value={newContact.organization_id || 'none'} onValueChange={(v) => setNewContact(c => ({ ...c, organization_id: v === 'none' ? '' : v }))}>
+                <SelectTrigger><SelectValue placeholder="Keine Organisation" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Keine Organisation</SelectItem>
+                  {organizations.map(org => (
+                    <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateContact(false)}>Abbrechen</Button>
+            <Button onClick={async () => {
+              if (!newContact.first_name) {
+                toast.error('Bitte Vorname eingeben')
+                return
+              }
+              try {
+                const result = await api.fetch('/contacts/from-call', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    call_id: activeCall?.call_id,
+                    phone_number: lookupResult?.phone_number || activeCall?.phone_number,
+                    first_name: newContact.first_name,
+                    last_name: newContact.last_name,
+                    email: newContact.email,
+                    organization_id: newContact.organization_id || null,
+                  })
+                })
+                if (result.contact) {
+                  setLookupResult({
+                    found: true,
+                    contact: result.contact,
+                    organization: result.contact.organization,
+                    phone_number: result.contact.phone,
+                  })
+                  toast.success(`Kontakt ${result.contact.first_name} ${result.contact.last_name} erstellt`)
+                  setShowCreateContact(false)
+                  setNewContact({ first_name: '', last_name: '', email: '', organization_id: '' })
+                }
+              } catch (e) {
+                toast.error('Fehler beim Erstellen des Kontakts')
+              }
+            }}>
+              <UserPlus className="w-4 h-4 mr-2" />
+              Kontakt erstellen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ============================================
+// AI DAILY ASSISTANT PAGE
+// ============================================
+
+function DailyAssistantPage({ currentUser }) {
+  const [loading, setLoading] = useState(true)
+  const [summary, setSummary] = useState(null)
+  const [urgentItems, setUrgentItems] = useState([])
+  const [suggestions, setSuggestions] = useState([])
+  const [draftReplies, setDraftReplies] = useState([])
+  const [stats, setStats] = useState({})
+  const [analysisResult, setAnalysisResult] = useState(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  
+  useEffect(() => {
+    loadDailyBriefing()
+  }, [currentUser])
+  
+  const loadDailyBriefing = async () => {
+    setLoading(true)
+    try {
+      // Load various data for AI analysis
+      const [tickets, timeEntries, statsData] = await Promise.all([
+        api.getTickets({ status: 'open,in_progress', limit: 50 }),
+        api.fetch('/time-entries?limit=10'),
+        api.fetch('/stats'),
+      ])
+      
+      setStats(statsData)
+      
+      // Identify urgent items
+      const urgent = tickets.filter(t => 
+        t.priority === 'critical' || t.priority === 'high' ||
+        (t.sla_response_due && new Date(t.sla_response_due) < new Date(Date.now() + 2*60*60*1000))
+      ).slice(0, 5)
+      setUrgentItems(urgent)
+      
+      // Generate AI suggestions
+      const aiSuggestions = [
+        { type: 'follow_up', text: `${tickets.filter(t => t.status === 'pending').length} Tickets warten auf Kundenrückmeldung`, action: 'Tickets prüfen', link: '/tickets?status=pending' },
+        { type: 'workload', text: `${tickets.filter(t => !t.assignee_id).length} Tickets sind nicht zugewiesen`, action: 'Zuweisung prüfen', link: '/tickets?unassigned=true' },
+        { type: 'sla', text: urgent.filter(t => t.sla_response_due).length > 0 ? `${urgent.filter(t => t.sla_response_due).length} SLA-kritische Tickets` : 'Alle SLAs im grünen Bereich', action: urgent.length > 0 ? 'Priorisieren' : null, link: '/tickets?priority=critical,high' },
+      ]
+      setSuggestions(aiSuggestions)
+      
+      // Generate summary
+      const summaryText = `
+Heute ist ${new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}.
+
+**Ticket-Übersicht:**
+- ${statsData.tickets?.open || 0} offene Tickets
+- ${statsData.tickets?.in_progress || 0} in Bearbeitung
+- ${urgent.length} mit hoher Priorität
+
+**Dringende Aufgaben:**
+${urgent.length > 0 ? urgent.map(t => `- #${t.ticket_number}: ${t.subject}`).join('\n') : '- Keine dringenden Aufgaben'}
+
+**Empfehlung:** ${urgent.length > 0 ? 'Beginne mit den kritischen Tickets' : 'Arbeite die offenen Tickets nach Priorität ab'}
+      `.trim()
+      setSummary(summaryText)
+      
+      // Draft replies for pending tickets
+      const pendingTickets = tickets.filter(t => t.status === 'pending').slice(0, 3)
+      const drafts = pendingTickets.map(t => ({
+        ticket: t,
+        draft: `Guten Tag,\n\nvielen Dank für Ihre Geduld. Bezüglich Ihrer Anfrage "${t.subject}" möchten wir nachfragen, ob Sie noch weitere Informationen benötigen.\n\nMit freundlichen Grüßen,\n${currentUser?.first_name || 'Ihr'} ${currentUser?.last_name || 'IT-Team'}`
+      }))
+      setDraftReplies(drafts)
+      
+    } catch (e) {
+      console.error('Error loading briefing:', e)
+    }
+    setLoading(false)
+  }
+  
+  const runAIAnalysis = async () => {
+    setAnalyzing(true)
+    try {
+      const result = await api.fetch('/ai/analyze', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: currentUser?.id,
+          filters: {}
+        })
+      })
+      setAnalysisResult(result)
+      toast.success('KI-Analyse abgeschlossen')
+    } catch (e) {
+      console.error('AI Analysis error:', e)
+      toast.error('KI-Analyse fehlgeschlagen')
+    }
+    setAnalyzing(false)
+  }
+  
+  const handleQuickAssign = async (ticketId) => {
+    try {
+      const result = await api.fetch(`/tickets/${ticketId}/assign`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          assignee_id: currentUser?.id,
+          user_id: currentUser?.id
+        })
+      })
+      if (result.success) {
+        toast.success(result.message || 'Ticket zugewiesen')
+        runAIAnalysis() // Refresh analysis
+      }
+    } catch (e) {
+      toast.error('Zuweisung fehlgeschlagen')
+    }
+  }
+  
+  const handleQuickStatus = async (ticketId, newStatus) => {
+    try {
+      const result = await api.fetch(`/tickets/${ticketId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: newStatus,
+          user_id: currentUser?.id
+        })
+      })
+      if (result.success) {
+        toast.success(result.message || 'Status geändert')
+        loadDailyBriefing() // Refresh
+        runAIAnalysis()
+      }
+    } catch (e) {
+      toast.error('Status-Änderung fehlgeschlagen')
+    }
+  }
+  
+  const handleAddNote = async (ticketId, note) => {
+    try {
+      const result = await api.fetch(`/tickets/${ticketId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          content: note,
+          user_id: currentUser?.id,
+          is_internal: true
+        })
+      })
+      if (result.success) {
+        toast.success('Notiz hinzugefügt')
+      }
+    } catch (e) {
+      toast.error('Notiz fehlgeschlagen')
+    }
+  }
+  
+  const generateAISummary = async () => {
+    setLoading(true)
+    try {
+      // Try to get AI-generated summary
+      const result = await api.fetch('/ai/summarize', {
+        method: 'POST',
+        body: JSON.stringify({
+          content: `Erstelle eine Zusammenfassung für den Arbeitstag. Offene Tickets: ${stats.tickets?.open || 0}, In Bearbeitung: ${stats.tickets?.in_progress || 0}, Dringende Items: ${urgentItems.length}`,
+          type: 'daily_briefing'
+        })
+      })
+      if (result.content) {
+        setSummary(result.content)
+        toast.success('KI-Zusammenfassung generiert')
+      }
+    } catch (e) {
+      toast.error('KI-Zusammenfassung nicht verfügbar')
+    }
+    setLoading(false)
+  }
+  
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Brain className="w-7 h-7 text-purple-600" />
+            Guten Morgen, {currentUser?.first_name || 'Kollege'}!
+          </h1>
+          <p className="text-muted-foreground">
+            Dein KI-Assistent für den Tag - {new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={runAIAnalysis} disabled={analyzing} variant="default">
+            {analyzing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Brain className="w-4 h-4 mr-2" />}
+            Analyse starten
+          </Button>
+          <Button onClick={generateAISummary} disabled={loading} variant="outline">
+            <Sparkles className="w-4 h-4 mr-2" />
+            KI-Zusammenfassung
+          </Button>
+          <Button onClick={loadDailyBriefing} variant="ghost">
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+      
+      {/* AI Analysis Result Panel */}
+      {analysisResult && (
+        <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-purple-700">
+              <Brain className="w-5 h-5" />
+              KI-Analyse Ergebnis
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="bg-white p-3 rounded-lg">
+                <p className="text-sm text-muted-foreground">Offene Tickets</p>
+                <p className="text-2xl font-bold">{analysisResult.summary?.total_open || 0}</p>
+              </div>
+              <div className="bg-white p-3 rounded-lg">
+                <p className="text-sm text-muted-foreground">Kritisch</p>
+                <p className="text-2xl font-bold text-red-600">{analysisResult.summary?.critical || 0}</p>
+              </div>
+              <div className="bg-white p-3 rounded-lg">
+                <p className="text-sm text-muted-foreground">SLA-gefährdet</p>
+                <p className="text-2xl font-bold text-orange-600">{analysisResult.summary?.sla_at_risk || 0}</p>
+              </div>
+            </div>
+            
+            {analysisResult.ai_recommendation && (
+              <div className="bg-white p-4 rounded-lg mb-4 border-l-4 border-purple-500">
+                <p className="text-sm font-medium text-purple-700 mb-1">KI-Empfehlung:</p>
+                <p className="text-sm">{analysisResult.ai_recommendation}</p>
+              </div>
+            )}
+            
+            {analysisResult.priorities?.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Prioritäten:</p>
+                {analysisResult.priorities.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 p-2 bg-white rounded">
+                    <Badge className="bg-red-100 text-red-700">P{p.priority}</Badge>
+                    <span className="flex-1 text-sm">{p.message}</span>
+                    <Button size="sm" variant="outline" onClick={() => toast.info(`Aktion: ${p.action}`)}>{p.action}</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {/* Clickable Critical Tickets */}
+            {analysisResult.ticket_details?.critical?.length > 0 && (
+              <div className="mt-4">
+                <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-500" />
+                  Kritische Tickets (klickbar)
+                </p>
+                <div className="space-y-2">
+                  {analysisResult.ticket_details.critical.map((ticket) => (
+                    <div key={ticket.id} className="bg-white p-3 rounded-lg border-l-4 border-red-500 hover:bg-red-50 cursor-pointer transition-colors" onClick={() => {
+                      // Navigate to ticket
+                      window.dispatchEvent(new CustomEvent('navigate-ticket', { detail: ticket.id }))
+                      toast.success(`Öffne Ticket #${ticket.number}`)
+                    }}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-sm font-medium">#{ticket.number}: {ticket.subject}</span>
+                          {ticket.organization && <span className="text-xs text-muted-foreground ml-2">({ticket.organization})</span>}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="ghost" onClick={(e) => {
+                            e.stopPropagation()
+                            handleQuickAssign(ticket.id)
+                          }}>
+                            <UserPlus className="w-4 h-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={(e) => {
+                            e.stopPropagation()
+                            handleQuickStatus(ticket.id, 'in_progress')
+                          }}>
+                            <Play className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {analysisResult.recommended_actions?.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-sm font-medium">Empfohlene Aktionen:</p>
+                {analysisResult.recommended_actions.map((action, i) => (
+                  <Button key={i} variant="outline" size="sm" className="mr-2">
+                    {action.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+      
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-purple-600" />
+            <p className="text-muted-foreground">Analysiere deinen Arbeitstag...</p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Quick Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-blue-600">Offene Tickets</p>
+                    <p className="text-3xl font-bold text-blue-700">{stats.tickets?.open || 0}</p>
+                  </div>
+                  <Ticket className="w-10 h-10 text-blue-400" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-yellow-600">In Bearbeitung</p>
+                    <p className="text-3xl font-bold text-yellow-700">{stats.tickets?.in_progress || 0}</p>
+                  </div>
+                  <Clock className="w-10 h-10 text-yellow-400" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-gradient-to-br from-red-50 to-red-100 border-red-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-red-600">Dringend</p>
+                    <p className="text-3xl font-bold text-red-700">{urgentItems.length}</p>
+                  </div>
+                  <AlertTriangle className="w-10 h-10 text-red-400" />
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-green-600">Gelöst (heute)</p>
+                    <p className="text-3xl font-bold text-green-700">{stats.tickets?.closed || 0}</p>
+                  </div>
+                  <CheckCircle2 className="w-10 h-10 text-green-400" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Daily Summary */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="w-5 h-5 text-purple-600" />
+                  Tagesbriefing
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="prose prose-sm max-w-none">
+                  <pre className="whitespace-pre-wrap bg-slate-50 p-4 rounded-lg text-sm font-sans">
+                    {summary}
+                  </pre>
+                </div>
+              </CardContent>
+            </Card>
+            
+            {/* Urgent Items */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                  Dringende Aufgaben
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {urgentItems.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-green-500" />
+                    <p>Keine dringenden Aufgaben!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {urgentItems.map(ticket => (
+                      <div key={ticket.id} className="flex items-center gap-3 p-3 bg-red-50 rounded-lg border border-red-200">
+                        <Badge className={PRIORITY_COLORS[ticket.priority]}>{PRIORITY_LABELS[ticket.priority]}</Badge>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">#{ticket.ticket_number} - {ticket.subject}</p>
+                          <p className="text-xs text-muted-foreground">{ticket.organizations?.name}</p>
+                        </div>
+                        <Button size="sm" variant="outline">Öffnen</Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            
+            {/* AI Suggestions */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-yellow-600" />
+                  KI-Empfehlungen
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {suggestions.map((s, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <p className="text-sm">{s.text}</p>
+                      {s.action && <Button size="sm" variant="outline">{s.action}</Button>}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+            
+            {/* Draft Replies */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Send className="w-5 h-5 text-blue-600" />
+                  Vorgeschlagene Antworten
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {draftReplies.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Mail className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                    <p>Keine ausstehenden Antworten</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {draftReplies.map((item, i) => (
+                      <div key={i} className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="flex justify-between items-start mb-2">
+                          <p className="font-medium">#{item.ticket.ticket_number} - {item.ticket.subject}</p>
+                          <Badge variant="outline">Entwurf</Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground whitespace-pre-line line-clamp-3">{item.draft}</p>
+                        <div className="flex gap-2 mt-3">
+                          <Button size="sm">Senden</Button>
+                          <Button size="sm" variant="outline">Bearbeiten</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ============================================
+// CHATWOOT PAGE (Embedded Omnichannel)
+// ============================================
+
+function ChatwootPage({ currentUser }) {
+  const [chatwootUrl, setChatwootUrl] = useState('')
+  const [ssoUrl, setSsoUrl] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [configured, setConfigured] = useState(false)
+  
+  useEffect(() => {
+    loadChatwootSettings()
+  }, [currentUser])
+  
+  const loadChatwootSettings = async () => {
+    setLoading(true)
+    try {
+      // Get Chatwoot settings
+      const settings = await api.getSettings()
+      const url = settings.find(s => s.key === 'chatwoot_api_url')?.value
+      const enabled = settings.find(s => s.key === 'chatwoot_enabled')?.value
+      
+      if (url && enabled === 'true') {
+        setChatwootUrl(url)
+        setConfigured(true)
+        
+        // Get SSO URL if user is logged in
+        if (currentUser?.id) {
+          try {
+            const ssoResult = await api.fetch(`/chatwoot/sso?user_id=${currentUser.id}`)
+            if (ssoResult.embed_url) {
+              setSsoUrl(ssoResult.embed_url)
+            }
+          } catch (e) {
+            // SSO not configured, use direct URL
+            setSsoUrl(`${url}/app/accounts/1/dashboard`)
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Chatwoot settings error:', error)
+    }
+    setLoading(false)
+  }
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+      </div>
+    )
+  }
+  
+  if (!configured) {
+    return (
+      <div className="p-6">
+        <Card className="max-w-2xl mx-auto">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-orange-100 rounded-lg">
+                <MessageSquare className="h-8 w-8 text-orange-600" />
+              </div>
+              <div>
+                <CardTitle>Chatwoot Integration</CardTitle>
+                <CardDescription>Omnichannel-Kommunikation (WhatsApp, Chat, E-Mail)</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                <div>
+                  <h4 className="font-medium text-amber-800">Nicht konfiguriert</h4>
+                  <p className="text-sm text-amber-700 mt-1">
+                    Chatwoot ist noch nicht eingerichtet. Bitte konfigurieren Sie die Verbindung in den Einstellungen.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <h4 className="font-medium">So richten Sie Chatwoot ein:</h4>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-slate-600">
+                <li>Gehen Sie zu <strong>Einstellungen → Integrationen</strong></li>
+                <li>Aktivieren Sie <strong>Chatwoot</strong></li>
+                <li>Tragen Sie Ihre Chatwoot-URL, Account-ID und API-Token ein</li>
+                <li>Speichern Sie die Einstellungen</li>
+              </ol>
+            </div>
+            <Button onClick={() => window.location.hash = '#settings'} className="w-full">
+              <Settings className="h-4 w-4 mr-2" />
+              Zu den Einstellungen
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+  
+  return (
+    <div className="h-full flex flex-col">
+      <div className="bg-orange-500 text-white px-4 py-2 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-5 w-5" />
+          <span className="font-medium">Chatwoot - Omnichannel Inbox</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" className="text-white hover:bg-orange-600" onClick={() => window.open(chatwootUrl, '_blank')}>
+            <ExternalLink className="h-4 w-4 mr-1" />
+            In neuem Tab öffnen
+          </Button>
+          <Button variant="ghost" size="sm" className="text-white hover:bg-orange-600" onClick={loadChatwootSettings}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1">
+        <iframe
+          src={ssoUrl || `${chatwootUrl}/app/accounts/1/dashboard`}
+          className="w-full h-full border-0"
+          title="Chatwoot"
+          allow="microphone; camera; clipboard-write"
+        />
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// CRM - CONTACTS PAGE
+// ============================================
+
+function ContactsPage({ currentUser }) {
+  const [contacts, setContacts] = useState([])
+  const [organizations, setOrganizations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [editingContact, setEditingContact] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedContact, setSelectedContact] = useState(null)
+  
+  useEffect(() => {
+    loadData()
+  }, [])
+  
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [contactsData, orgsData] = await Promise.all([
+        api.getContacts(),
+        api.getOrganizations()
+      ])
+      setContacts(contactsData || [])
+      setOrganizations(orgsData || [])
+    } catch (error) {
+      toast.error('Fehler beim Laden')
+    }
+    setLoading(false)
+  }
+  
+  const handleCreate = async (data) => {
+    try {
+      await api.createContact(data)
+      toast.success('Kontakt erstellt')
+      setShowCreateDialog(false)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen')
+    }
+  }
+  
+  const handleUpdate = async (data) => {
+    try {
+      await api.updateContact(editingContact.id, data)
+      toast.success('Kontakt aktualisiert')
+      setEditingContact(null)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren')
+    }
+  }
+  
+  const handleDelete = async (id) => {
+    if (!confirm('Kontakt wirklich löschen?')) return
+    try {
+      await api.deleteContact(id)
+      toast.success('Kontakt gelöscht')
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const filteredContacts = contacts.filter(c => 
+    `${c.first_name} ${c.last_name} ${c.email} ${c.phone}`.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+  
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">Kontakte</h1>
+          <p className="text-muted-foreground">CRM-Kontaktverwaltung</p>
+        </div>
+        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+          <DialogTrigger asChild>
+            <Button><Plus className="h-4 w-4 mr-2" />Neuer Kontakt</Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-lg">
+            <DialogHeader><DialogTitle>Neuer Kontakt</DialogTitle></DialogHeader>
+            <CRMContactForm organizations={organizations} onSubmit={handleCreate} onCancel={() => setShowCreateDialog(false)} />
+          </DialogContent>
+        </Dialog>
+      </div>
+      
+      <div className="flex gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="Suchen..." 
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </div>
+      
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin" /></div>
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>E-Mail</TableHead>
+                <TableHead>Telefon</TableHead>
+                <TableHead>Unternehmen</TableHead>
+                <TableHead>Position</TableHead>
+                <TableHead>Lead-Status</TableHead>
+                <TableHead className="w-24">Aktionen</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredContacts.map((contact) => (
+                <TableRow key={contact.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedContact(contact)}>
+                  <TableCell className="font-medium">{contact.first_name} {contact.last_name}</TableCell>
+                  <TableCell>{contact.email || '-'}</TableCell>
+                  <TableCell>{contact.phone || '-'}</TableCell>
+                  <TableCell>{organizations.find(o => o.id === contact.organization_id)?.name || '-'}</TableCell>
+                  <TableCell>{contact.position || '-'}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={
+                      contact.lead_status === 'qualified' ? 'bg-green-100 text-green-700' :
+                      contact.lead_status === 'prospect' ? 'bg-blue-100 text-blue-700' :
+                      contact.lead_status === 'customer' ? 'bg-purple-100 text-purple-700' :
+                      'bg-slate-100'
+                    }>
+                      {contact.lead_status || 'Neu'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => setEditingContact(contact)}>
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(contact.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+      
+      {/* Edit Contact Dialog */}
+      <Dialog open={!!editingContact} onOpenChange={(open) => !open && setEditingContact(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Kontakt bearbeiten</DialogTitle></DialogHeader>
+          {editingContact && (
+            <CRMContactForm 
+              contact={editingContact}
+              organizations={organizations} 
+              onSubmit={handleUpdate} 
+              onCancel={() => setEditingContact(null)}
+              isEdit
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* Contact Detail Sidebar */}
+      {selectedContact && (
+        <ContactDetailPanel 
+          contact={selectedContact}
+          organizations={organizations}
+          onClose={() => setSelectedContact(null)}
+          onUpdate={loadData}
+        />
+      )}
+    </div>
+  )
+}
+
+function CRMContactForm({ contact, organizations = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    first_name: contact?.first_name || '',
+    last_name: contact?.last_name || '',
+    email: contact?.email || '',
+    phone: contact?.phone || '',
+    mobile: contact?.mobile || '',
+    organization_id: contact?.organization_id || '',
+    position: contact?.position || '',
+    department: contact?.department || '',
+    lead_status: contact?.lead_status || 'new',
+    source: contact?.source || '',
+    notes: contact?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.first_name || !formData.last_name) {
+      toast.error('Vor- und Nachname sind erforderlich')
+      return
+    }
+    onSubmit({ ...formData, organization_id: formData.organization_id || null })
+  }
+  
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Vorname *</Label><Input value={formData.first_name} onChange={(e) => setFormData(f => ({ ...f, first_name: e.target.value }))} /></div>
+        <div><Label>Nachname *</Label><Input value={formData.last_name} onChange={(e) => setFormData(f => ({ ...f, last_name: e.target.value }))} /></div>
+      </div>
+      <div><Label>E-Mail</Label><Input type="email" value={formData.email} onChange={(e) => setFormData(f => ({ ...f, email: e.target.value }))} /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Telefon</Label><Input value={formData.phone} onChange={(e) => setFormData(f => ({ ...f, phone: e.target.value }))} /></div>
+        <div><Label>Mobil</Label><Input value={formData.mobile} onChange={(e) => setFormData(f => ({ ...f, mobile: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Unternehmen</Label>
+          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Unternehmen</SelectItem>
+              {organizations.map(org => <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div><Label>Position</Label><Input value={formData.position} onChange={(e) => setFormData(f => ({ ...f, position: e.target.value }))} /></div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Lead-Status</Label>
+          <Select value={formData.lead_status} onValueChange={(v) => setFormData(f => ({ ...f, lead_status: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="new">Neu</SelectItem>
+              <SelectItem value="prospect">Interessent</SelectItem>
+              <SelectItem value="qualified">Qualifiziert</SelectItem>
+              <SelectItem value="customer">Kunde</SelectItem>
+              <SelectItem value="inactive">Inaktiv</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Quelle</Label>
+          <Select value={formData.source || 'other'} onValueChange={(v) => setFormData(f => ({ ...f, source: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="website">Website</SelectItem>
+              <SelectItem value="referral">Empfehlung</SelectItem>
+              <SelectItem value="event">Veranstaltung</SelectItem>
+              <SelectItem value="cold_call">Kaltakquise</SelectItem>
+              <SelectItem value="social">Social Media</SelectItem>
+              <SelectItem value="other">Sonstige</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div><Label>Notizen</Label><Textarea value={formData.notes} onChange={(e) => setFormData(f => ({ ...f, notes: e.target.value }))} rows={2} /></div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+function ContactDetailPanel({ contact, organizations, onClose, onUpdate }) {
+  return (
+    <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-xl border-l z-50 flex flex-col">
+      <div className="p-4 border-b flex items-center justify-between">
+        <h3 className="font-semibold">{contact.first_name} {contact.last_name}</h3>
+        <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
+      </div>
+      <div className="flex-1 overflow-auto p-4 space-y-4">
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div><Label className="text-slate-500">E-Mail</Label><p>{contact.email || '-'}</p></div>
+          <div><Label className="text-slate-500">Telefon</Label><p>{contact.phone || '-'}</p></div>
+          <div><Label className="text-slate-500">Mobil</Label><p>{contact.mobile || '-'}</p></div>
+          <div><Label className="text-slate-500">Position</Label><p>{contact.position || '-'}</p></div>
+        </div>
+        <div>
+          <Label className="text-slate-500">Unternehmen</Label>
+          <p>{organizations.find(o => o.id === contact.organization_id)?.name || '-'}</p>
+        </div>
+        {contact.notes && (
+          <div>
+            <Label className="text-slate-500">Notizen</Label>
+            <p className="whitespace-pre-wrap text-sm">{contact.notes}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// CRM - COMPANIES PAGE (Uses Organizations)
+// ============================================
+
+function CompaniesPage({ currentUser }) {
+  // Reuse OrganizationsPage but with CRM-focused UI
+  return <OrganizationsPage />
+}
+
+// ============================================
+// CRM - DEALS/PIPELINE PAGE
+// ============================================
+
+function DealsPage({ currentUser }) {
+  const [deals, setDeals] = useState([])
+  const [pipelines, setPipelines] = useState([
+    { id: 'default', name: 'Vertrieb', stages: [
+      { id: 'lead', name: 'Lead', color: 'bg-slate-100', probability: 10 },
+      { id: 'qualified', name: 'Qualifiziert', color: 'bg-blue-100', probability: 25 },
+      { id: 'proposal', name: 'Angebot', color: 'bg-yellow-100', probability: 50 },
+      { id: 'negotiation', name: 'Verhandlung', color: 'bg-orange-100', probability: 75 },
+      { id: 'won', name: 'Gewonnen', color: 'bg-green-100', probability: 100 },
+      { id: 'lost', name: 'Verloren', color: 'bg-red-100', probability: 0 },
+    ]},
+    { id: 'services', name: 'IT-Services', stages: [
+      { id: 'inquiry', name: 'Anfrage', color: 'bg-slate-100', probability: 10 },
+      { id: 'assessment', name: 'Analyse', color: 'bg-blue-100', probability: 30 },
+      { id: 'proposal', name: 'Angebot', color: 'bg-yellow-100', probability: 60 },
+      { id: 'contract', name: 'Vertrag', color: 'bg-purple-100', probability: 90 },
+      { id: 'won', name: 'Gewonnen', color: 'bg-green-100', probability: 100 },
+      { id: 'lost', name: 'Verloren', color: 'bg-red-100', probability: 0 },
+    ]}
+  ])
+  const [loading, setLoading] = useState(true)
+  const [contacts, setContacts] = useState([])
+  const [organizations, setOrganizations] = useState([])
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [selectedPipeline, setSelectedPipeline] = useState('default')
+  const [selectedDeal, setSelectedDeal] = useState(null)
+  const [editingDeal, setEditingDeal] = useState(null)
+  const [viewMode, setViewMode] = useState('kanban') // 'kanban' | 'list' | 'forecast'
+  const [filter, setFilter] = useState({ search: '', owner: 'all' })
+  
+  useEffect(() => {
+    loadData()
+  }, [])
+  
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [dealsData, contactsData, orgsData] = await Promise.all([
+        api.fetch('/deals').catch(() => []),
+        api.getContacts(),
+        api.getOrganizations()
+      ])
+      setDeals(Array.isArray(dealsData) ? dealsData : [])
+      setContacts(contactsData || [])
+      setOrganizations(orgsData || [])
+    } catch (error) {
+      console.error('Load error:', error)
+    }
+    setLoading(false)
+  }
+  
+  const handleCreateDeal = async (data) => {
+    try {
+      await api.fetch('/deals', { method: 'POST', body: JSON.stringify({ ...data, owner_id: currentUser?.id }) })
+      toast.success('Deal erstellt')
+      setShowCreateDialog(false)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Erstellen')
+    }
+  }
+  
+  const handleUpdateDeal = async (data) => {
+    try {
+      await api.fetch(`/deals/${editingDeal.id}`, { method: 'PUT', body: JSON.stringify(data) })
+      toast.success('Deal aktualisiert')
+      setEditingDeal(null)
+      setSelectedDeal(null)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren')
+    }
+  }
+  
+  const handleMoveDeal = async (dealId, newStage) => {
+    const stage = currentPipeline?.stages.find(s => s.id === newStage)
+    try {
+      await api.fetch(`/deals/${dealId}`, { 
+        method: 'PUT', 
+        body: JSON.stringify({ 
+          stage: newStage,
+          probability: stage?.probability || 50,
+          won_at: newStage === 'won' ? new Date().toISOString() : null,
+          lost_at: newStage === 'lost' ? new Date().toISOString() : null,
+        }) 
+      })
+      setDeals(prev => prev.map(d => d.id === dealId ? { ...d, stage: newStage } : d))
+      if (newStage === 'won') toast.success('🎉 Deal gewonnen!')
+      else if (newStage === 'lost') toast.info('Deal als verloren markiert')
+      else toast.success('Deal verschoben')
+    } catch (error) {
+      toast.error('Fehler beim Verschieben')
+    }
+  }
+  
+  const handleDeleteDeal = async (dealId) => {
+    if (!confirm('Deal wirklich löschen?')) return
+    try {
+      await api.fetch(`/deals/${dealId}`, { method: 'DELETE' })
+      toast.success('Deal gelöscht')
+      setSelectedDeal(null)
+      loadData()
+    } catch (error) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const currentPipeline = pipelines.find(p => p.id === selectedPipeline)
+  
+  // Filter deals
+  const filteredDeals = deals.filter(d => {
+    if (filter.search && !d.name?.toLowerCase().includes(filter.search.toLowerCase())) return false
+    if (filter.owner !== 'all' && d.owner_id !== filter.owner) return false
+    return true
+  })
+  
+  // Calculate totals per stage
+  const stageTotals = currentPipeline?.stages.reduce((acc, stage) => {
+    const stageDeals = filteredDeals.filter(d => d.stage === stage.id)
+    acc[stage.id] = {
+      count: stageDeals.length,
+      value: stageDeals.reduce((sum, d) => sum + (d.value || 0), 0),
+      weighted: stageDeals.reduce((sum, d) => sum + ((d.value || 0) * (d.probability || stage.probability) / 100), 0)
+    }
+    return acc
+  }, {}) || {}
+  
+  // Overall statistics
+  const totalStats = {
+    openDeals: filteredDeals.filter(d => !['won', 'lost'].includes(d.stage)).length,
+    openValue: filteredDeals.filter(d => !['won', 'lost'].includes(d.stage)).reduce((sum, d) => sum + (d.value || 0), 0),
+    wonDeals: filteredDeals.filter(d => d.stage === 'won').length,
+    wonValue: filteredDeals.filter(d => d.stage === 'won').reduce((sum, d) => sum + (d.value || 0), 0),
+    lostDeals: filteredDeals.filter(d => d.stage === 'lost').length,
+    lostValue: filteredDeals.filter(d => d.stage === 'lost').reduce((sum, d) => sum + (d.value || 0), 0),
+    weightedPipeline: Object.values(stageTotals).reduce((sum, s) => sum + (s.weighted || 0), 0),
+  }
+  
+  const winRate = totalStats.wonDeals + totalStats.lostDeals > 0 
+    ? Math.round((totalStats.wonDeals / (totalStats.wonDeals + totalStats.lostDeals)) * 100) 
+    : 0
+  
+  if (loading) {
+    return <div className="flex justify-center items-center h-full"><Loader2 className="h-8 w-8 animate-spin" /></div>
+  }
+  
+  return (
+    <div className="h-full flex flex-col p-6">
+      {/* Header with Stats */}
+      <div className="flex justify-between items-start mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Deals & Pipeline</h1>
+          <p className="text-muted-foreground">HubSpot-ähnliches CRM mit Vertriebspipeline</p>
+        </div>
+        <div className="flex gap-2">
+          <div className="flex bg-slate-100 rounded-lg p-1">
+            <Button variant={viewMode === 'kanban' ? 'default' : 'ghost'} size="sm" onClick={() => setViewMode('kanban')}>
+              <KanbanSquare className="h-4 w-4" />
+            </Button>
+            <Button variant={viewMode === 'list' ? 'default' : 'ghost'} size="sm" onClick={() => setViewMode('list')}>
+              <LayoutDashboard className="h-4 w-4" />
+            </Button>
+            <Button variant={viewMode === 'forecast' ? 'default' : 'ghost'} size="sm" onClick={() => setViewMode('forecast')}>
+              <BarChart3 className="h-4 w-4" />
+            </Button>
+          </div>
+          <Select value={selectedPipeline} onValueChange={setSelectedPipeline}>
+            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {pipelines.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button><Plus className="h-4 w-4 mr-2" />Neuer Deal</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader><DialogTitle>Neuer Deal</DialogTitle></DialogHeader>
+              <DealForm 
+                contacts={contacts}
+                organizations={organizations}
+                stages={currentPipeline?.stages || []}
+                onSubmit={handleCreateDeal}
+                onCancel={() => setShowCreateDialog(false)}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+      
+      {/* Quick Stats Cards */}
+      <div className="grid grid-cols-5 gap-4 mb-6">
+        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+          <CardContent className="p-4">
+            <p className="text-sm text-blue-600">Offene Deals</p>
+            <p className="text-2xl font-bold text-blue-700">{totalStats.openDeals}</p>
+            <p className="text-sm text-blue-600">{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.openValue)}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+          <CardContent className="p-4">
+            <p className="text-sm text-purple-600">Gewichtete Pipeline</p>
+            <p className="text-2xl font-bold text-purple-700">{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.weightedPipeline)}</p>
+            <p className="text-sm text-purple-600">Erwarteter Umsatz</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+          <CardContent className="p-4">
+            <p className="text-sm text-green-600">Gewonnen</p>
+            <p className="text-2xl font-bold text-green-700">{totalStats.wonDeals}</p>
+            <p className="text-sm text-green-600">{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.wonValue)}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-red-50 to-red-100 border-red-200">
+          <CardContent className="p-4">
+            <p className="text-sm text-red-600">Verloren</p>
+            <p className="text-2xl font-bold text-red-700">{totalStats.lostDeals}</p>
+            <p className="text-sm text-red-600">{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.lostValue)}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-yellow-50 to-yellow-100 border-yellow-200">
+          <CardContent className="p-4">
+            <p className="text-sm text-yellow-600">Win-Rate</p>
+            <p className="text-2xl font-bold text-yellow-700">{winRate}%</p>
+            <p className="text-sm text-yellow-600">Abschlussquote</p>
+          </CardContent>
+        </Card>
+      </div>
+      
+      {/* Filter Bar */}
+      <div className="flex gap-4 mb-4">
+        <div className="relative flex-1 max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input 
+            className="pl-10"
+            placeholder="Deal suchen..."
+            value={filter.search}
+            onChange={(e) => setFilter(f => ({ ...f, search: e.target.value }))}
+          />
+        </div>
+        <Button variant="outline" onClick={loadData}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Aktualisieren
+        </Button>
+      </div>
+      
+      {/* Kanban View */}
+      {viewMode === 'kanban' && (
+        <div className="flex-1 overflow-x-auto">
+          <div className="flex gap-4 h-full min-w-max pb-4">
+            {currentPipeline?.stages.map((stage) => (
+              <div 
+                key={stage.id}
+                className={`w-72 flex flex-col rounded-lg ${stage.color} border`}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  const dealId = e.dataTransfer.getData('dealId')
+                  if (dealId) handleMoveDeal(dealId, stage.id)
+                }}
+              >
+                <div className="p-3 border-b bg-white/50 rounded-t-lg">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold">{stage.name}</h3>
+                    <Badge variant="secondary">{stageTotals[stage.id]?.count || 0}</Badge>
+                  </div>
+                  <p className="text-sm font-medium text-slate-700 mt-1">
+                    {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(stageTotals[stage.id]?.value || 0)}
+                  </p>
+                </div>
+                <div className="flex-1 p-2 space-y-2 overflow-y-auto max-h-[calc(100vh-400px)]">
+                  {filteredDeals.filter(d => d.stage === stage.id).map((deal) => {
+                    const contact = contacts.find(c => c.id === deal.contact_id)
+                    const org = organizations.find(o => o.id === deal.organization_id)
+                    return (
+                      <Card 
+                        key={deal.id}
+                        className="cursor-grab active:cursor-grabbing hover:shadow-lg transition-all bg-white"
+                        draggable
+                        onDragStart={(e) => e.dataTransfer.setData('dealId', deal.id)}
+                        onClick={() => setSelectedDeal(deal)}
+                      >
+                        <CardContent className="p-3">
+                          <h4 className="font-medium text-sm line-clamp-1">{deal.name}</h4>
+                          {org && (
+                            <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                              <Building2 className="w-3 h-3" />
+                              {org.name}
+                            </p>
+                          )}
+                          {contact && (
+                            <p className="text-xs text-slate-500 flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              {contact.first_name} {contact.last_name}
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between mt-3 pt-2 border-t">
+                            <span className="text-sm font-bold text-green-600">
+                              {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(deal.value || 0)}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{deal.probability || stage.probability}%</span>
+                              {deal.expected_close_date && (
+                                <span className="text-xs text-slate-500">
+                                  {new Date(deal.expected_close_date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                  {filteredDeals.filter(d => d.stage === stage.id).length === 0 && (
+                    <div className="text-center py-8 text-slate-400 text-sm">
+                      Keine Deals
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* List View */}
+      {viewMode === 'list' && (
+        <Card className="flex-1 overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Deal</TableHead>
+                <TableHead>Unternehmen</TableHead>
+                <TableHead>Kontakt</TableHead>
+                <TableHead>Wert</TableHead>
+                <TableHead>Phase</TableHead>
+                <TableHead>Wahrsch.</TableHead>
+                <TableHead>Abschluss</TableHead>
+                <TableHead className="w-20"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredDeals.filter(d => !['won', 'lost'].includes(d.stage)).map(deal => {
+                const contact = contacts.find(c => c.id === deal.contact_id)
+                const org = organizations.find(o => o.id === deal.organization_id)
+                const stage = currentPipeline?.stages.find(s => s.id === deal.stage)
+                return (
+                  <TableRow key={deal.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setSelectedDeal(deal)}>
+                    <TableCell className="font-medium">{deal.name}</TableCell>
+                    <TableCell>{org?.name || '-'}</TableCell>
+                    <TableCell>{contact ? `${contact.first_name} ${contact.last_name}` : '-'}</TableCell>
+                    <TableCell className="font-semibold text-green-600">
+                      {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(deal.value || 0)}
+                    </TableCell>
+                    <TableCell><Badge className={stage?.color}>{stage?.name}</Badge></TableCell>
+                    <TableCell>{deal.probability || stage?.probability}%</TableCell>
+                    <TableCell>
+                      {deal.expected_close_date ? new Date(deal.expected_close_date).toLocaleDateString('de-DE') : '-'}
+                    </TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setEditingDeal(deal); }}>
+                        <Settings className="w-4 h-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+      
+      {/* Forecast View */}
+      {viewMode === 'forecast' && (
+        <div className="flex-1 grid grid-cols-2 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Pipeline nach Phase</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {currentPipeline?.stages.filter(s => !['won', 'lost'].includes(s.id)).map(stage => {
+                  const total = stageTotals[stage.id]?.value || 0
+                  const maxValue = Math.max(...Object.values(stageTotals).map(s => s.value || 0)) || 1
+                  const width = (total / maxValue) * 100
+                  return (
+                    <div key={stage.id}>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span>{stage.name}</span>
+                        <span className="font-medium">{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(total)}</span>
+                      </div>
+                      <div className="h-6 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full ${stage.color} rounded-full transition-all`} style={{ width: `${width}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle>Umsatzprognose</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                <div className="text-center p-6 bg-purple-50 rounded-lg">
+                  <p className="text-sm text-purple-600 mb-2">Gewichtete Pipeline</p>
+                  <p className="text-4xl font-bold text-purple-700">
+                    {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.weightedPipeline)}
+                  </p>
+                  <p className="text-sm text-purple-600 mt-2">Erwarteter Umsatz basierend auf Wahrscheinlichkeiten</p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="text-center p-4 bg-green-50 rounded-lg">
+                    <p className="text-sm text-green-600">Beste-Fall</p>
+                    <p className="text-2xl font-bold text-green-700">
+                      {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.openValue)}
+                    </p>
+                  </div>
+                  <div className="text-center p-4 bg-yellow-50 rounded-lg">
+                    <p className="text-sm text-yellow-600">Konservativ</p>
+                    <p className="text-2xl font-bold text-yellow-700">
+                      {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(totalStats.weightedPipeline * 0.7)}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="pt-4 border-t">
+                  <h4 className="font-medium mb-3">Deals mit nahem Abschluss</h4>
+                  {filteredDeals
+                    .filter(d => d.expected_close_date && new Date(d.expected_close_date) <= new Date(Date.now() + 30*24*60*60*1000) && !['won', 'lost'].includes(d.stage))
+                    .slice(0, 5)
+                    .map(deal => (
+                      <div key={deal.id} className="flex justify-between items-center py-2 border-b last:border-0">
+                        <span className="text-sm">{deal.name}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-green-600">
+                            {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(deal.value || 0)}
+                          </span>
+                          <Badge variant="outline" className="text-xs">
+                            {new Date(deal.expected_close_date).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))
+                  }
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+      
+      {/* Deal Detail Dialog */}
+      <Dialog open={!!selectedDeal} onOpenChange={(open) => !open && setSelectedDeal(null)}>
+        <DialogContent className="max-w-2xl">
+          {selectedDeal && (
+            <>
+              <DialogHeader>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <DialogTitle className="text-xl">{selectedDeal.name}</DialogTitle>
+                    <p className="text-2xl font-bold text-green-600 mt-1">
+                      {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(selectedDeal.value || 0)}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setEditingDeal(selectedDeal)}>
+                      <Settings className="w-4 h-4 mr-1" />
+                      Bearbeiten
+                    </Button>
+                    <Button variant="outline" size="sm" className="text-red-600" onClick={() => handleDeleteDeal(selectedDeal.id)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </DialogHeader>
+              
+              <div className="grid grid-cols-2 gap-6 py-4">
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-slate-500">Phase</Label>
+                    <Select value={selectedDeal.stage} onValueChange={(v) => handleMoveDeal(selectedDeal.id, v)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {currentPipeline?.stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-slate-500">Wahrscheinlichkeit</Label>
+                    <p className="font-medium">{selectedDeal.probability || currentPipeline?.stages.find(s => s.id === selectedDeal.stage)?.probability}%</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-500">Erwarteter Abschluss</Label>
+                    <p className="font-medium">
+                      {selectedDeal.expected_close_date ? new Date(selectedDeal.expected_close_date).toLocaleDateString('de-DE') : 'Nicht festgelegt'}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-slate-500">Unternehmen</Label>
+                    <p className="font-medium flex items-center gap-2">
+                      <Building2 className="w-4 h-4" />
+                      {organizations.find(o => o.id === selectedDeal.organization_id)?.name || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-500">Kontakt</Label>
+                    <p className="font-medium flex items-center gap-2">
+                      <User className="w-4 h-4" />
+                      {(() => { const c = contacts.find(c => c.id === selectedDeal.contact_id); return c ? `${c.first_name} ${c.last_name}` : '-' })()}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-500">Quelle</Label>
+                    <p className="font-medium">{selectedDeal.source || '-'}</p>
+                  </div>
+                </div>
+              </div>
+              
+              {selectedDeal.notes && (
+                <div className="border-t pt-4">
+                  <Label className="text-slate-500">Notizen</Label>
+                  <p className="mt-1 whitespace-pre-wrap">{selectedDeal.notes}</p>
+                </div>
+              )}
+              
+              <div className="border-t pt-4">
+                <div className="flex gap-2">
+                  <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={() => handleMoveDeal(selectedDeal.id, 'won')}>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Als gewonnen markieren
+                  </Button>
+                  <Button variant="outline" className="flex-1" onClick={() => handleMoveDeal(selectedDeal.id, 'lost')}>
+                    <X className="w-4 h-4 mr-2" />
+                    Als verloren markieren
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* Edit Deal Dialog */}
+      <Dialog open={!!editingDeal} onOpenChange={(open) => !open && setEditingDeal(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Deal bearbeiten</DialogTitle></DialogHeader>
+          {editingDeal && (
+            <DealForm 
+              deal={editingDeal}
+              contacts={contacts}
+              organizations={organizations}
+              stages={currentPipeline?.stages || []}
+              onSubmit={handleUpdateDeal}
+              onCancel={() => setEditingDeal(null)}
+              isEdit
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function DealForm({ contacts, organizations, stages, deal, onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    name: deal?.name || '',
+    value: deal?.value || '',
+    stage: deal?.stage || stages[0]?.id || 'lead',
+    contact_id: deal?.contact_id || '',
+    organization_id: deal?.organization_id || '',
+    expected_close_date: deal?.expected_close_date?.split('T')[0] || '',
+    probability: deal?.probability || 50,
+    source: deal?.source || '',
+    notes: deal?.notes || '',
+  })
+  
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (!formData.name) {
+      toast.error('Name ist erforderlich')
+      return
+    }
+    onSubmit({
+      ...formData,
+      value: parseFloat(formData.value) || 0,
+      probability: parseInt(formData.probability) || 50,
+      contact_id: formData.contact_id || null,
+      organization_id: formData.organization_id || null,
+    })
+  }
+  
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div><Label>Deal-Name *</Label><Input value={formData.name} onChange={(e) => setFormData(f => ({ ...f, name: e.target.value }))} placeholder="z.B. IT-Infrastruktur Musterfirma" /></div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Wert (€)</Label><Input type="number" value={formData.value} onChange={(e) => setFormData(f => ({ ...f, value: e.target.value }))} /></div>
+        <div>
+          <Label>Phase</Label>
+          <Select value={formData.stage} onValueChange={(v) => setFormData(f => ({ ...f, stage: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Kontakt</Label>
+          <Select value={formData.contact_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, contact_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Kontakt</SelectItem>
+              {contacts.map(c => <SelectItem key={c.id} value={c.id}>{c.first_name} {c.last_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Unternehmen</Label>
+          <Select value={formData.organization_id || 'none'} onValueChange={(v) => setFormData(f => ({ ...f, organization_id: v === 'none' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Kein Unternehmen</SelectItem>
+              {organizations.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div><Label>Erwarteter Abschluss</Label><Input type="date" value={formData.expected_close_date} onChange={(e) => setFormData(f => ({ ...f, expected_close_date: e.target.value }))} /></div>
+        <div>
+          <Label>Wahrscheinlichkeit ({formData.probability}%)</Label>
+          <Input type="range" min="0" max="100" value={formData.probability} onChange={(e) => setFormData(f => ({ ...f, probability: e.target.value }))} />
+        </div>
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button type="submit">{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </form>
+  )
+}
+
+// ============================================
 // REPORTS PAGE
 // ============================================
 
@@ -2781,6 +5850,7 @@ function ReportsPage() {
   const [reportData, setReportData] = useState(null)
   const [onboardingReport, setOnboardingReport] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [dateRange, setDateRange] = useState({ from: '', to: '' })
   
   const loadReport = useCallback(async () => {
@@ -2806,6 +5876,164 @@ function ReportsPage() {
   
   useEffect(() => { loadReport() }, [loadReport])
   
+  const exportToPDF = async () => {
+    setExporting(true)
+    try {
+      const { jsPDF } = await import('jspdf')
+      await import('jspdf-autotable')
+      
+      const doc = new jsPDF()
+      const pageWidth = doc.internal.pageSize.getWidth()
+      
+      // Header
+      doc.setFontSize(20)
+      doc.setTextColor(40, 40, 40)
+      doc.text('IT REX Solutions - Report', pageWidth / 2, 20, { align: 'center' })
+      
+      doc.setFontSize(12)
+      doc.setTextColor(100)
+      const reportTitle = reportType === 'tickets' ? 'Ticket-Report' : 
+                          reportType === 'time' ? 'Zeiterfassungs-Report' :
+                          reportType === 'sla' ? 'SLA-Report' : 'Asset-Report'
+      doc.text(reportTitle, pageWidth / 2, 28, { align: 'center' })
+      
+      // Date range
+      doc.setFontSize(10)
+      const dateStr = dateRange.from && dateRange.to 
+        ? `Zeitraum: ${new Date(dateRange.from).toLocaleDateString('de-DE')} - ${new Date(dateRange.to).toLocaleDateString('de-DE')}`
+        : `Erstellt am: ${new Date().toLocaleDateString('de-DE')}`
+      doc.text(dateStr, pageWidth / 2, 35, { align: 'center' })
+      
+      let yPos = 50
+      
+      // Summary section
+      doc.setFontSize(14)
+      doc.setTextColor(40)
+      doc.text('Zusammenfassung', 14, yPos)
+      yPos += 10
+      
+      if (reportData) {
+        doc.setFontSize(10)
+        doc.setTextColor(60)
+        
+        if (reportType === 'tickets') {
+          doc.text(`Gesamt Tickets: ${reportData.total || 0}`, 14, yPos)
+          doc.text(`Offene Tickets: ${reportData.open || 0}`, 80, yPos)
+          doc.text(`Gelöste Tickets: ${reportData.resolved || 0}`, 140, yPos)
+          yPos += 8
+          doc.text(`Durchschnittliche Lösungszeit: ${reportData.avg_resolution_time?.toFixed(1) || 0} Stunden`, 14, yPos)
+          yPos += 15
+          
+          // Status distribution table
+          if (reportData.by_status) {
+            doc.setFontSize(12)
+            doc.text('Verteilung nach Status', 14, yPos)
+            yPos += 5
+            
+            const statusData = Object.entries(reportData.by_status).map(([status, count]) => [
+              status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' '),
+              count.toString()
+            ])
+            
+            doc.autoTable({
+              startY: yPos,
+              head: [['Status', 'Anzahl']],
+              body: statusData,
+              theme: 'striped',
+              headStyles: { fillColor: [59, 130, 246] }
+            })
+            yPos = doc.lastAutoTable.finalY + 15
+          }
+          
+          // Priority distribution
+          if (reportData.by_priority) {
+            doc.setFontSize(12)
+            doc.text('Verteilung nach Priorität', 14, yPos)
+            yPos += 5
+            
+            const priorityData = Object.entries(reportData.by_priority).map(([priority, count]) => [
+              priority.charAt(0).toUpperCase() + priority.slice(1),
+              count.toString()
+            ])
+            
+            doc.autoTable({
+              startY: yPos,
+              head: [['Priorität', 'Anzahl']],
+              body: priorityData,
+              theme: 'striped',
+              headStyles: { fillColor: [59, 130, 246] }
+            })
+          }
+        } else if (reportType === 'time') {
+          doc.text(`Gesamt Stunden: ${((reportData.total_minutes || 0) / 60).toFixed(1)}h`, 14, yPos)
+          doc.text(`Abrechenbar: ${((reportData.billable_minutes || 0) / 60).toFixed(1)}h`, 80, yPos)
+          yPos += 8
+          doc.text(`Einträge: ${reportData.entry_count || 0}`, 14, yPos)
+          yPos += 15
+          
+          if (reportData.by_organization?.length > 0) {
+            doc.setFontSize(12)
+            doc.text('Zeit nach Organisation', 14, yPos)
+            yPos += 5
+            
+            const orgData = reportData.by_organization.map(org => [
+              org.organization_name || 'Unbekannt',
+              ((org.total_minutes || 0) / 60).toFixed(1) + 'h',
+              ((org.billable_minutes || 0) / 60).toFixed(1) + 'h'
+            ])
+            
+            doc.autoTable({
+              startY: yPos,
+              head: [['Organisation', 'Gesamt', 'Abrechenbar']],
+              body: orgData,
+              theme: 'striped',
+              headStyles: { fillColor: [59, 130, 246] }
+            })
+          }
+        } else if (reportType === 'assets') {
+          doc.text(`Gesamt Assets: ${reportData.total || 0}`, 14, yPos)
+          doc.text(`Aktiv: ${reportData.active || 0}`, 80, yPos)
+          doc.text(`Gesamt Wert: ${(reportData.total_value || 0).toFixed(2)} €`, 140, yPos)
+          yPos += 15
+          
+          if (reportData.by_type) {
+            doc.setFontSize(12)
+            doc.text('Assets nach Typ', 14, yPos)
+            yPos += 5
+            
+            const typeData = Object.entries(reportData.by_type).map(([type, count]) => [type, count.toString()])
+            
+            doc.autoTable({
+              startY: yPos,
+              head: [['Typ', 'Anzahl']],
+              body: typeData,
+              theme: 'striped',
+              headStyles: { fillColor: [59, 130, 246] }
+            })
+          }
+        }
+      }
+      
+      // Footer
+      const pageCount = doc.internal.getNumberOfPages()
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+        doc.setFontSize(8)
+        doc.setTextColor(150)
+        doc.text(`Seite ${i} von ${pageCount}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: 'center' })
+        doc.text('IT REX Solutions ServiceDesk', 14, doc.internal.pageSize.getHeight() - 10)
+      }
+      
+      doc.save(`report-${reportType}-${new Date().toISOString().split('T')[0]}.pdf`)
+      toast.success('PDF erfolgreich erstellt')
+    } catch (err) {
+      console.error('PDF export error:', err)
+      toast.error('Fehler beim PDF-Export')
+    } finally {
+      setExporting(false)
+    }
+  }
+  
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -2814,7 +6042,11 @@ function ReportsPage() {
           <Input type="date" value={dateRange.from} onChange={(e) => setDateRange(d => ({ ...d, from: e.target.value }))} className="w-40" />
           <span>bis</span>
           <Input type="date" value={dateRange.to} onChange={(e) => setDateRange(d => ({ ...d, to: e.target.value }))} className="w-40" />
-          <Button onClick={loadReport}><RefreshCw className="h-4 w-4 mr-2" />Aktualisieren</Button>
+          <Button onClick={loadReport} variant="outline"><RefreshCw className="h-4 w-4 mr-2" />Aktualisieren</Button>
+          <Button onClick={exportToPDF} disabled={exporting || !reportData}>
+            {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileDown className="h-4 w-4 mr-2" />}
+            PDF Export
+          </Button>
         </div>
       </div>
       
@@ -2822,7 +6054,6 @@ function ReportsPage() {
         <TabsList>
           <TabsTrigger value="tickets"><Ticket className="h-4 w-4 mr-2" />Tickets</TabsTrigger>
           <TabsTrigger value="time"><Clock className="h-4 w-4 mr-2" />Zeiterfassung</TabsTrigger>
-          <TabsTrigger value="onboarding"><UserPlus className="h-4 w-4 mr-2" />On-/Offboarding</TabsTrigger>
           <TabsTrigger value="sla"><TrendingUp className="h-4 w-4 mr-2" />SLA</TabsTrigger>
           <TabsTrigger value="assets"><Package className="h-4 w-4 mr-2" />Assets</TabsTrigger>
         </TabsList>
@@ -2878,133 +6109,6 @@ function ReportsPage() {
                     </div>
                   </CardContent>
                 </Card>
-              )}
-            </TabsContent>
-            
-            <TabsContent value="onboarding">
-              {onboardingReport && (
-                <>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
-                    <StatsCard title="Onboardings" value={onboardingReport.total_onboardings} icon={UserPlus} color="green" />
-                    <StatsCard title="Offboardings" value={onboardingReport.total_offboardings} icon={UserMinus} color="orange" />
-                    <StatsCard title="Ø Bearbeitungszeit" value={`${onboardingReport.avg_onboarding_completion_days} Tage`} icon={Clock} color="blue" />
-                    <StatsCard title="Anstehend (30 Tage)" value={(onboardingReport.upcoming_starts?.length || 0) + (onboardingReport.upcoming_exits?.length || 0)} icon={Calendar} color="purple" />
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                    {/* Upcoming Starts */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <UserPlus className="h-5 w-5 text-green-500" />
-                          Anstehende Eintritte
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {onboardingReport.upcoming_starts?.length > 0 ? (
-                          <div className="space-y-3">
-                            {onboardingReport.upcoming_starts.slice(0, 5).map((item) => (
-                              <div key={item.id} className="flex items-center justify-between p-2 bg-green-50 rounded">
-                                <div>
-                                  <p className="font-medium">{item.name}</p>
-                                  <p className="text-sm text-muted-foreground">{item.organization} • {item.department || '-'}</p>
-                                </div>
-                                <Badge className="bg-green-100 text-green-700">
-                                  {new Date(item.start_date).toLocaleDateString('de-DE')}
-                                </Badge>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-muted-foreground text-center py-4">Keine anstehenden Eintritte</p>
-                        )}
-                      </CardContent>
-                    </Card>
-                    
-                    {/* Upcoming Exits */}
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <UserMinus className="h-5 w-5 text-orange-500" />
-                          Anstehende Austritte
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {onboardingReport.upcoming_exits?.length > 0 ? (
-                          <div className="space-y-3">
-                            {onboardingReport.upcoming_exits.slice(0, 5).map((item) => (
-                              <div key={item.id} className="flex items-center justify-between p-2 bg-orange-50 rounded">
-                                <div>
-                                  <p className="font-medium">{item.name}</p>
-                                  <p className="text-sm text-muted-foreground">{item.organization}</p>
-                                </div>
-                                <Badge className="bg-orange-100 text-orange-700">
-                                  {new Date(item.last_day).toLocaleDateString('de-DE')}
-                                </Badge>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-muted-foreground text-center py-4">Keine anstehenden Austritte</p>
-                        )}
-                      </CardContent>
-                    </Card>
-                    
-                    {/* By Status */}
-                    <Card>
-                      <CardHeader><CardTitle>Onboarding nach Status</CardTitle></CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          {Object.entries(onboardingReport.onboarding_by_status || {}).map(([status, count]) => (
-                            <div key={status} className="flex items-center justify-between">
-                              <span className="capitalize">{status.replace('_', ' ')}</span>
-                              <span className="font-medium">{count}</span>
-                            </div>
-                          ))}
-                          {Object.keys(onboardingReport.onboarding_by_status || {}).length === 0 && (
-                            <p className="text-muted-foreground text-center">Keine Daten</p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                    
-                    {/* License Distribution */}
-                    <Card>
-                      <CardHeader><CardTitle>M365 Lizenzen</CardTitle></CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          {Object.entries(onboardingReport.license_distribution || {}).map(([license, count]) => (
-                            <div key={license} className="flex items-center justify-between">
-                              <Badge variant="outline">{license}</Badge>
-                              <span className="font-medium">{count}</span>
-                            </div>
-                          ))}
-                          {Object.keys(onboardingReport.license_distribution || {}).length === 0 && (
-                            <p className="text-muted-foreground text-center">Keine Daten</p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                    
-                    {/* By Department */}
-                    <Card className="md:col-span-2">
-                      <CardHeader><CardTitle>Onboardings nach Abteilung</CardTitle></CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          {Object.entries(onboardingReport.onboarding_by_department || {}).map(([dept, count]) => (
-                            <div key={dept} className="p-3 bg-slate-50 rounded text-center">
-                              <p className="font-medium text-lg">{count}</p>
-                              <p className="text-sm text-muted-foreground">{dept}</p>
-                            </div>
-                          ))}
-                          {Object.keys(onboardingReport.onboarding_by_department || {}).length === 0 && (
-                            <p className="text-muted-foreground col-span-4 text-center py-4">Keine Daten</p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </>
               )}
             </TabsContent>
             
@@ -4194,50 +7298,93 @@ function KnowledgeBasePage({ currentUser }) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedArticle, setSelectedArticle] = useState(null)
   const [showNewDialog, setShowNewDialog] = useState(false)
-  const [newArticle, setNewArticle] = useState({
-    title: '', content: '', category: '', tags: '', is_internal: true
-  })
+  const [editingArticle, setEditingArticle] = useState(null)
+  const [organizations, setOrganizations] = useState([])
+  const [filterOrg, setFilterOrg] = useState('all')
+  const [filterVisibility, setFilterVisibility] = useState('all')
   
   useEffect(() => {
     loadArticles()
+    api.getOrganizations().then(setOrganizations).catch(() => {})
   }, [])
   
   const loadArticles = async () => {
     setLoading(true)
-    const data = await api.fetch('/kb-articles')
-    setArticles(Array.isArray(data) ? data : [])
+    try {
+      const data = await api.fetch('/kb-articles')
+      // Filter out archived articles
+      setArticles(Array.isArray(data) ? data.filter(a => !a.is_archived) : [])
+    } catch {
+      setArticles([])
+    }
     setLoading(false)
   }
   
-  const handleCreateArticle = async () => {
-    if (!newArticle.title || !newArticle.content) {
-      toast.error('Titel und Inhalt sind erforderlich')
-      return
-    }
-    
+  const handleCreateArticle = async (articleData) => {
     try {
       await api.fetch('/kb-articles', {
         method: 'POST',
         body: JSON.stringify({
-          ...newArticle,
-          tags: newArticle.tags ? newArticle.tags.split(',').map(t => t.trim()) : [],
+          ...articleData,
           created_by_id: currentUser?.id
         })
       })
       toast.success('Artikel erstellt')
       setShowNewDialog(false)
-      setNewArticle({ title: '', content: '', category: '', tags: '', is_internal: true })
       loadArticles()
     } catch (error) {
       toast.error('Fehler beim Erstellen')
     }
   }
   
-  const filteredArticles = articles.filter(a => 
-    a.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.category?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const handleUpdateArticle = async (articleData) => {
+    try {
+      await api.fetch(`/kb-articles/${editingArticle.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...articleData,
+          updated_by_id: currentUser?.id
+        })
+      })
+      toast.success('Artikel aktualisiert')
+      setEditingArticle(null)
+      setSelectedArticle(null)
+      loadArticles()
+    } catch (error) {
+      toast.error('Fehler beim Aktualisieren')
+    }
+  }
+  
+  const handleDeleteArticle = async (id) => {
+    if (!confirm('Artikel wirklich löschen?')) return
+    try {
+      await api.fetch(`/kb-articles/${id}?user_id=${currentUser?.id}`, { method: 'DELETE' })
+      toast.success('Artikel gelöscht')
+      setSelectedArticle(null)
+      loadArticles()
+    } catch (error) {
+      toast.error('Fehler beim Löschen')
+    }
+  }
+  
+  const filteredArticles = articles.filter(a => {
+    const matchesSearch = 
+      a.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.category?.toLowerCase().includes(searchQuery.toLowerCase())
+    
+    const matchesOrg = filterOrg === 'all' || 
+      (filterOrg === 'global' && !a.organization_id) ||
+      a.organization_id === filterOrg
+    
+    const matchesVisibility = filterVisibility === 'all' ||
+      (filterVisibility === 'internal' && a.is_internal) ||
+      (filterVisibility === 'public' && !a.is_internal)
+    
+    return matchesSearch && matchesOrg && matchesVisibility
+  })
+  
+  const isAdmin = currentUser?.user_type === 'internal'
   
   return (
     <div className="p-6">
@@ -4246,14 +7393,16 @@ function KnowledgeBasePage({ currentUser }) {
           <h1 className="text-2xl font-bold">Wissensdatenbank</h1>
           <p className="text-muted-foreground">Lösungen, Anleitungen und Best Practices</p>
         </div>
-        <Button onClick={() => setShowNewDialog(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Neuer Artikel
-        </Button>
+        {isAdmin && (
+          <Button onClick={() => setShowNewDialog(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Neuer Artikel
+          </Button>
+        )}
       </div>
       
-      <div className="mb-6">
-        <div className="relative max-w-md">
+      <div className="flex flex-wrap gap-4 mb-6">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input 
             placeholder="Suchen..."
@@ -4262,6 +7411,32 @@ function KnowledgeBasePage({ currentUser }) {
             className="pl-10"
           />
         </div>
+        {isAdmin && (
+          <>
+            <Select value={filterOrg} onValueChange={setFilterOrg}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Organisation" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle Organisationen</SelectItem>
+                <SelectItem value="global">Global (Alle)</SelectItem>
+                {organizations.map(org => (
+                  <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filterVisibility} onValueChange={setFilterVisibility}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Sichtbarkeit" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle</SelectItem>
+                <SelectItem value="public">Öffentlich</SelectItem>
+                <SelectItem value="internal">Nur intern</SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        )}
       </div>
       
       {loading ? (
@@ -4272,11 +7447,15 @@ function KnowledgeBasePage({ currentUser }) {
         <Card className="p-12 text-center">
           <BookOpen className="w-16 h-16 mx-auto mb-4 text-muted-foreground opacity-50" />
           <h3 className="text-lg font-medium mb-2">Keine Artikel gefunden</h3>
-          <p className="text-muted-foreground mb-4">Erstellen Sie den ersten Wissensartikel</p>
-          <Button onClick={() => setShowNewDialog(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Artikel erstellen
-          </Button>
+          <p className="text-muted-foreground mb-4">
+            {searchQuery ? 'Keine Ergebnisse für Ihre Suche' : 'Erstellen Sie den ersten Wissensartikel'}
+          </p>
+          {isAdmin && !searchQuery && (
+            <Button onClick={() => setShowNewDialog(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Artikel erstellen
+            </Button>
+          )}
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -4289,9 +7468,17 @@ function KnowledgeBasePage({ currentUser }) {
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <CardTitle className="text-lg">{article.title}</CardTitle>
-                  {article.is_internal && (
-                    <Badge variant="outline" className="text-xs">Intern</Badge>
-                  )}
+                  <div className="flex gap-1">
+                    {article.is_internal && (
+                      <Badge variant="outline" className="text-xs bg-yellow-50">Intern</Badge>
+                    )}
+                    {article.organization_id && (
+                      <Badge variant="outline" className="text-xs bg-blue-50">
+                        <Building2 className="w-3 h-3 mr-1" />
+                        {article.organization?.name || 'Org'}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 {article.category && (
                   <Badge className="w-fit bg-blue-100 text-blue-700">{article.category}</Badge>
@@ -4302,9 +7489,13 @@ function KnowledgeBasePage({ currentUser }) {
                   {article.content?.substring(0, 150)}...
                 </p>
                 <div className="flex items-center justify-between mt-4 text-xs text-muted-foreground">
-                  <span>{new Date(article.created_at).toLocaleDateString('de-DE')}</span>
+                  <span>
+                    {article.created_by ? `${article.created_by.first_name} ${article.created_by.last_name}` : ''} · 
+                    {new Date(article.created_at).toLocaleDateString('de-DE')}
+                  </span>
                   <div className="flex items-center gap-2">
                     <Eye className="w-3 h-3" /> {article.views || 0}
+                    {article.version > 1 && <Badge variant="outline" className="text-xs">v{article.version}</Badge>}
                   </div>
                 </div>
               </CardContent>
@@ -4319,54 +7510,29 @@ function KnowledgeBasePage({ currentUser }) {
           <DialogHeader>
             <DialogTitle>Neuer Wissensartikel</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div>
-              <Label>Titel *</Label>
-              <Input 
-                value={newArticle.title}
-                onChange={(e) => setNewArticle({...newArticle, title: e.target.value})}
-                placeholder="Wie man..."
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Kategorie</Label>
-                <Input 
-                  value={newArticle.category}
-                  onChange={(e) => setNewArticle({...newArticle, category: e.target.value})}
-                  placeholder="Z.B. Netzwerk, Office 365"
-                />
-              </div>
-              <div>
-                <Label>Tags (kommagetrennt)</Label>
-                <Input 
-                  value={newArticle.tags}
-                  onChange={(e) => setNewArticle({...newArticle, tags: e.target.value})}
-                  placeholder="vpn, remote, zugang"
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Inhalt *</Label>
-              <Textarea 
-                value={newArticle.content}
-                onChange={(e) => setNewArticle({...newArticle, content: e.target.value})}
-                placeholder="Beschreiben Sie die Lösung..."
-                rows={10}
-              />
-            </div>
-            <div className="flex items-center space-x-2">
-              <Switch 
-                checked={newArticle.is_internal}
-                onCheckedChange={(v) => setNewArticle({...newArticle, is_internal: v})}
-              />
-              <Label>Nur für interne Nutzung</Label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewDialog(false)}>Abbrechen</Button>
-            <Button onClick={handleCreateArticle}>Erstellen</Button>
-          </DialogFooter>
+          <KBArticleForm 
+            organizations={organizations}
+            onSubmit={handleCreateArticle}
+            onCancel={() => setShowNewDialog(false)}
+          />
+        </DialogContent>
+      </Dialog>
+      
+      {/* Edit Article Dialog */}
+      <Dialog open={!!editingArticle} onOpenChange={(open) => !open && setEditingArticle(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Artikel bearbeiten</DialogTitle>
+          </DialogHeader>
+          {editingArticle && (
+            <KBArticleForm 
+              article={editingArticle}
+              organizations={organizations}
+              onSubmit={handleUpdateArticle}
+              onCancel={() => setEditingArticle(null)}
+              isEdit
+            />
+          )}
         </DialogContent>
       </Dialog>
       
@@ -4375,13 +7541,42 @@ function KnowledgeBasePage({ currentUser }) {
         <Dialog open={!!selectedArticle} onOpenChange={() => setSelectedArticle(null)}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{selectedArticle.title}</DialogTitle>
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex items-start justify-between">
+                <DialogTitle>{selectedArticle.title}</DialogTitle>
+                {isAdmin && (
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => { setEditingArticle(selectedArticle); }}>
+                      <Settings className="w-4 h-4 mr-1" />
+                      Bearbeiten
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => handleDeleteArticle(selectedArticle.id)}>
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      Löschen
+                    </Button>
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
                 {selectedArticle.category && (
                   <Badge className="bg-blue-100 text-blue-700">{selectedArticle.category}</Badge>
                 )}
                 {selectedArticle.is_internal && (
-                  <Badge variant="outline">Intern</Badge>
+                  <Badge variant="outline" className="bg-yellow-50">Nur intern</Badge>
+                )}
+                {selectedArticle.organization_id && (
+                  <Badge variant="outline" className="bg-blue-50">
+                    <Building2 className="w-3 h-3 mr-1" />
+                    {selectedArticle.organization?.name || 'Organisation'}
+                  </Badge>
+                )}
+                {!selectedArticle.organization_id && (
+                  <Badge variant="outline" className="bg-green-50">
+                    <Globe className="w-3 h-3 mr-1" />
+                    Global
+                  </Badge>
+                )}
+                {selectedArticle.version > 1 && (
+                  <Badge variant="outline">Version {selectedArticle.version}</Badge>
                 )}
               </div>
             </DialogHeader>
@@ -4400,6 +7595,14 @@ function KnowledgeBasePage({ currentUser }) {
                   </div>
                 </div>
               )}
+              
+              <div className="mt-6 pt-4 border-t text-sm text-muted-foreground">
+                <p>Erstellt von: {selectedArticle.created_by?.first_name} {selectedArticle.created_by?.last_name}</p>
+                <p>Erstellt am: {new Date(selectedArticle.created_at).toLocaleString('de-DE')}</p>
+                {selectedArticle.updated_at && selectedArticle.updated_at !== selectedArticle.created_at && (
+                  <p>Zuletzt aktualisiert: {new Date(selectedArticle.updated_at).toLocaleString('de-DE')}</p>
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setSelectedArticle(null)}>Schließen</Button>
@@ -4407,6 +7610,375 @@ function KnowledgeBasePage({ currentUser }) {
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  )
+}
+
+function KBArticleForm({ article, organizations = [], onSubmit, onCancel, isEdit }) {
+  const [formData, setFormData] = useState({
+    title: article?.title || '',
+    content: article?.content || '',
+    category: article?.category || '',
+    tags: article?.tags ? article.tags.join(', ') : '',
+    is_internal: article?.is_internal || false,
+    organization_id: article?.organization_id || '',
+    visibility: article?.visibility || 'all'
+  })
+  
+  const handleSubmit = () => {
+    if (!formData.title || !formData.content) {
+      toast.error('Titel und Inhalt sind erforderlich')
+      return
+    }
+    onSubmit({
+      ...formData,
+      tags: formData.tags ? formData.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+      organization_id: formData.organization_id || null
+    })
+  }
+  
+  return (
+    <div className="grid gap-4 py-4">
+      <div>
+        <Label>Titel *</Label>
+        <Input 
+          value={formData.title}
+          onChange={(e) => setFormData({...formData, title: e.target.value})}
+          placeholder="Wie man..."
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Kategorie</Label>
+          <Input 
+            value={formData.category}
+            onChange={(e) => setFormData({...formData, category: e.target.value})}
+            placeholder="Z.B. Netzwerk, Office 365"
+          />
+        </div>
+        <div>
+          <Label>Tags (kommagetrennt)</Label>
+          <Input 
+            value={formData.tags}
+            onChange={(e) => setFormData({...formData, tags: e.target.value})}
+            placeholder="vpn, remote, zugang"
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Organisation (optional)</Label>
+          <Select value={formData.organization_id || 'global'} onValueChange={(v) => setFormData({...formData, organization_id: v === 'global' ? '' : v})}>
+            <SelectTrigger>
+              <SelectValue placeholder="Global (alle)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="global">Global (alle Organisationen)</SelectItem>
+              {organizations.map(org => (
+                <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            Artikel nur für bestimmte Organisation sichtbar machen
+          </p>
+        </div>
+        <div className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <Switch 
+              checked={formData.is_internal}
+              onCheckedChange={(v) => setFormData({...formData, is_internal: v})}
+            />
+            <Label>Nur für Mitarbeiter sichtbar</Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Interne Artikel sind für Kunden nicht sichtbar
+          </p>
+        </div>
+      </div>
+      <div>
+        <Label>Inhalt *</Label>
+        <Textarea 
+          value={formData.content}
+          onChange={(e) => setFormData({...formData, content: e.target.value})}
+          placeholder="Beschreiben Sie die Lösung..."
+          rows={12}
+        />
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onCancel}>Abbrechen</Button>
+        <Button onClick={handleSubmit}>{isEdit ? 'Speichern' : 'Erstellen'}</Button>
+      </DialogFooter>
+    </div>
+  )
+}
+
+// ============================================
+// SYSTEM DIAGNOSTICS PAGE
+// ============================================
+
+function SystemDiagnosticsPage() {
+  const [health, setHealth] = useState(null)
+  const [logs, setLogs] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  
+  const loadHealth = async () => {
+    try {
+      const data = await api.fetch('/system/health')
+      setHealth(data)
+    } catch (e) {
+      console.error('Health check error:', e)
+    }
+  }
+  
+  const loadLogs = async () => {
+    try {
+      const data = await api.fetch('/system/logs?limit=50')
+      setLogs(data.logs || [])
+    } catch (e) {
+      console.error('Logs error:', e)
+    }
+  }
+  
+  useEffect(() => {
+    Promise.all([loadHealth(), loadLogs()]).finally(() => setLoading(false))
+  }, [])
+  
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await Promise.all([loadHealth(), loadLogs()])
+    setRefreshing(false)
+    toast.success('System-Status aktualisiert')
+  }
+  
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'healthy': case 'active': case 'configured': case 'ready': return 'bg-green-100 text-green-700'
+      case 'degraded': case 'partial': return 'bg-yellow-100 text-yellow-700'
+      case 'error': case 'offline': return 'bg-red-100 text-red-700'
+      default: return 'bg-slate-100 text-slate-700'
+    }
+  }
+  
+  const getStatusIcon = (status) => {
+    switch (status) {
+      case 'healthy': case 'active': case 'configured': case 'ready': return <CheckCircle2 className="h-5 w-5 text-green-500" />
+      case 'degraded': case 'partial': return <AlertCircle className="h-5 w-5 text-yellow-500" />
+      case 'error': case 'offline': return <AlertTriangle className="h-5 w-5 text-red-500" />
+      default: return <CircleDot className="h-5 w-5 text-slate-400" />
+    }
+  }
+  
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+      </div>
+    )
+  }
+  
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Shield className="h-5 w-5 text-blue-500" />
+            System-Diagnose & Health
+          </h2>
+          <p className="text-sm text-muted-foreground">Überwachung aller Systemkomponenten</p>
+        </div>
+        <Button onClick={handleRefresh} disabled={refreshing}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+          Aktualisieren
+        </Button>
+      </div>
+      
+      {/* Overall Status */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle>Gesamtstatus</CardTitle>
+            <Badge className={getStatusColor(health?.status)}>
+              {health?.status === 'healthy' ? 'Alle Systeme OK' : health?.status?.toUpperCase()}
+            </Badge>
+          </div>
+          <CardDescription>Letzte Prüfung: {health?.timestamp ? new Date(health.timestamp).toLocaleString('de-DE') : '-'}</CardDescription>
+        </CardHeader>
+      </Card>
+      
+      {/* Module Status Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Database */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Database className="h-8 w-8 text-blue-500" />
+                <div>
+                  <p className="font-medium">Datenbank</p>
+                  <p className="text-sm text-muted-foreground">Supabase PostgreSQL</p>
+                </div>
+              </div>
+              {getStatusIcon(health?.database?.status)}
+            </div>
+            {health?.database?.ticket_count !== undefined && (
+              <p className="text-xs text-muted-foreground mt-2">
+                {health.database.ticket_count} Tickets in DB
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        
+        {/* AI */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Brain className="h-8 w-8 text-purple-500" />
+                <div>
+                  <p className="font-medium">KI-Assistent</p>
+                  <p className="text-sm text-muted-foreground">{health?.ai?.model || 'OpenAI GPT'}</p>
+                </div>
+              </div>
+              {getStatusIcon(health?.ai?.status)}
+            </div>
+            <Badge className={`mt-2 ${getStatusColor(health?.ai?.status)}`}>
+              {health?.ai?.status === 'configured' ? 'Konfiguriert' : health?.ai?.status === 'not_configured' ? 'Nicht konfiguriert' : health?.ai?.status}
+            </Badge>
+          </CardContent>
+        </Card>
+        
+        {/* CTI */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <PhoneCall className="h-8 w-8 text-green-500" />
+                <div>
+                  <p className="font-medium">Telefonie / CTI</p>
+                  <p className="text-sm text-muted-foreground">{health?.cti?.provider || 'Simulation'}</p>
+                </div>
+              </div>
+              {getStatusIcon(health?.cti?.status)}
+            </div>
+            <Badge className={`mt-2 ${getStatusColor(health?.cti?.status)}`}>
+              {health?.cti?.status === 'configured' ? 'Aktiv' : 'Simulation'}
+            </Badge>
+          </CardContent>
+        </Card>
+        
+        {/* Search */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Search className="h-8 w-8 text-orange-500" />
+                <div>
+                  <p className="font-medium">Suche & Index</p>
+                  <p className="text-sm text-muted-foreground">Globale Suche</p>
+                </div>
+              </div>
+              {getStatusIcon(health?.search?.status)}
+            </div>
+            {health?.search?.indexed_count && (
+              <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                <p>Tickets: {health.search.indexed_count.tickets}</p>
+                <p>Kontakte: {health.search.indexed_count.contacts}</p>
+                <p>KB-Artikel: {health.search.indexed_count.kb_articles}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        
+        {/* Storage */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Cloud className="h-8 w-8 text-cyan-500" />
+                <div>
+                  <p className="font-medium">Speicher</p>
+                  <p className="text-sm text-muted-foreground">Datei-Uploads</p>
+                </div>
+              </div>
+              {getStatusIcon(health?.storage?.status || 'ready')}
+            </div>
+            <Badge className="mt-2 bg-green-100 text-green-700">Bereit</Badge>
+          </CardContent>
+        </Card>
+        
+        {/* Email */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Mail className="h-8 w-8 text-red-500" />
+                <div>
+                  <p className="font-medium">E-Mail</p>
+                  <p className="text-sm text-muted-foreground">SMTP / M365</p>
+                </div>
+              </div>
+              <CheckCircle2 className="h-5 w-5 text-green-500" />
+            </div>
+            <Badge className="mt-2 bg-green-100 text-green-700">Konfiguriert</Badge>
+          </CardContent>
+        </Card>
+      </div>
+      
+      {/* Modules Status */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Modul-Status</CardTitle>
+          <CardDescription>Aktive Features und Funktionen</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            {health?.modules && Object.entries(health.modules).map(([module, info]) => (
+              <div key={module} className="p-3 border rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium capitalize">{module.replace('_', ' ')}</span>
+                  <Badge className={getStatusColor(info.status)} variant="outline">
+                    {info.status}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {info.features?.map(f => (
+                    <span key={f} className="text-xs bg-slate-100 px-1.5 py-0.5 rounded">{f}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+      
+      {/* Recent Activity Log */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Aktivitätsprotokoll</CardTitle>
+          <CardDescription>Letzte System-Aktivitäten</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="max-h-64 overflow-auto">
+            {logs.length === 0 ? (
+              <p className="text-muted-foreground text-center py-4">Keine Aktivitäten</p>
+            ) : (
+              <div className="space-y-2">
+                {logs.slice(0, 20).map((log, idx) => (
+                  <div key={log.id || idx} className="flex items-center gap-3 text-sm p-2 hover:bg-slate-50 rounded">
+                    <span className="text-xs text-muted-foreground w-32">
+                      {new Date(log.timestamp).toLocaleString('de-DE')}
+                    </span>
+                    <Badge variant="outline" className="text-xs">{log.entity_type}</Badge>
+                    <span className="flex-1">{log.action}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -5022,7 +8594,7 @@ function SettingsPage() {
                       </div>
                       <div>
                         <CardTitle className="text-base">Placetel</CardTitle>
-                        <CardDescription>Telefonie-Integration (Anrufe, Webhooks)</CardDescription>
+                        <CardDescription>Telefonie-Integration (Anrufe, Webhooks, CTI)</CardDescription>
                       </div>
                     </div>
                     <Switch
@@ -5036,14 +8608,17 @@ function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label>API-Schlüssel</Label>
+                    <Label>API-Token</Label>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
                         <Input
                           type={showPassword.placetel ? 'text' : 'password'}
-                          value={settings.placetel_api_key || ''}
-                          onChange={(e) => updateSetting('placetel_api_key', e.target.value)}
-                          placeholder="Placetel API Key..."
+                          value={settings.placetel_api_token || settings.placetel_api_key || ''}
+                          onChange={(e) => {
+                            updateSetting('placetel_api_token', e.target.value)
+                            updateSetting('placetel_api_key', e.target.value)
+                          }}
+                          placeholder="Placetel API Token..."
                         />
                         <button
                           type="button"
@@ -5061,26 +8636,45 @@ function SettingsPage() {
                         {testingConnection === 'placetel' ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Testen'}
                       </Button>
                     </div>
+                    <p className="text-xs text-slate-500">API-Token aus dem Placetel Kundencenter → API-Zugang</p>
                   </div>
                   <div className="space-y-2">
-                    <Label>Webhook-URL</Label>
+                    <Label>SIP-Benutzer / Nebenstelle</Label>
+                    <Input
+                      value={settings.placetel_sip_user || ''}
+                      onChange={(e) => updateSetting('placetel_sip_user', e.target.value)}
+                      placeholder="z.B. 123456789"
+                    />
+                    <p className="text-xs text-slate-500">Ihre Placetel SIP-Nummer für ausgehende Anrufe</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Webhook-URL für Placetel</Label>
                     <div className="flex gap-2">
                       <Input
                         readOnly
-                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/placetel`}
-                        className="bg-slate-50"
+                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/api/cti/placetel/webhook`}
+                        className="bg-slate-50 font-mono text-xs"
                       />
                       <Button 
                         variant="outline" 
                         size="icon"
-                        onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/placetel`)}
+                        onClick={() => copyToClipboard(`${window.location.origin}/api/cti/placetel/webhook`)}
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
                     </div>
                     <p className="text-xs text-slate-500">
-                      Diese URL in Placetel als Webhook-Empfänger eintragen
+                      Im Placetel Kundencenter unter "Einstellungen → Webhooks" eintragen
                     </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Webhook-Secret (optional)</Label>
+                    <Input
+                      type="password"
+                      value={settings.placetel_webhook_secret || ''}
+                      onChange={(e) => updateSetting('placetel_webhook_secret', e.target.value)}
+                      placeholder="Optionales Secret zur Webhook-Verifizierung"
+                    />
                   </div>
                   <div className="flex justify-end pt-2">
                     <Button onClick={() => saveSetting('placetel_api_key', settings.placetel_api_key)} size="sm">
@@ -5150,6 +8744,184 @@ function SettingsPage() {
                       API-Key speichern
                     </Button>
                   </div>
+                </CardContent>
+              </Card>
+              
+              {/* Chatwoot Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-orange-100 rounded-lg">
+                        <MessageSquare className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">Chatwoot</CardTitle>
+                        <CardDescription>Omnichannel-Chat (WhatsApp, Web, E-Mail)</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.chatwoot_enabled === true || settings.chatwoot_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('chatwoot_enabled', v)
+                        saveSetting('chatwoot_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Chatwoot URL</Label>
+                      <Input
+                        value={settings.chatwoot_api_url || ''}
+                        onChange={(e) => updateSetting('chatwoot_api_url', e.target.value)}
+                        placeholder="https://app.chatwoot.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Account ID</Label>
+                      <Input
+                        value={settings.chatwoot_account_id || ''}
+                        onChange={(e) => updateSetting('chatwoot_account_id', e.target.value)}
+                        placeholder="1"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>API Token</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          type={showPassword.chatwoot ? 'text' : 'password'}
+                          value={settings.chatwoot_api_token || ''}
+                          onChange={(e) => updateSetting('chatwoot_api_token', e.target.value)}
+                          placeholder="Chatwoot API Token..."
+                        />
+                        <button
+                          type="button"
+                          onClick={() => togglePasswordVisibility('chatwoot')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        >
+                          {showPassword.chatwoot ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>SSO Secret</Label>
+                    <Input
+                      type="password"
+                      value={settings.chatwoot_sso_secret || ''}
+                      onChange={(e) => updateSetting('chatwoot_sso_secret', e.target.value)}
+                      placeholder="Für Single Sign-On..."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Webhook-URL (in Chatwoot eintragen)</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        readOnly
+                        value={`${typeof window !== 'undefined' ? window.location.origin : ''}/api/webhooks/chatwoot`}
+                        className="bg-slate-50"
+                      />
+                      <Button 
+                        variant="outline" 
+                        size="icon"
+                        onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/chatwoot`)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={settings.chatwoot_auto_create_ticket === true || settings.chatwoot_auto_create_ticket === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('chatwoot_auto_create_ticket', v)
+                        saveSetting('chatwoot_auto_create_ticket', v)
+                      }}
+                    />
+                    <Label>Automatisch Ticket bei neuer Konversation erstellen</Label>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={async () => {
+                      await saveSetting('chatwoot_api_url', settings.chatwoot_api_url)
+                      await saveSetting('chatwoot_api_token', settings.chatwoot_api_token)
+                      await saveSetting('chatwoot_account_id', settings.chatwoot_account_id)
+                      await saveSetting('chatwoot_sso_secret', settings.chatwoot_sso_secret)
+                      toast.success('Chatwoot-Einstellungen gespeichert')
+                    }} size="sm">
+                      <Save className="h-4 w-4 mr-2" />
+                      Speichern
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              {/* n8n Automation Integration */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-red-100 rounded-lg">
+                        <Webhook className="h-5 w-5 text-red-600" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">n8n Automation</CardTitle>
+                        <CardDescription>Workflow-Automatisierung & Webhooks</CardDescription>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={settings.n8n_enabled === true || settings.n8n_enabled === 'true'}
+                      onCheckedChange={(v) => {
+                        updateSetting('n8n_enabled', v)
+                        saveSetting('n8n_enabled', v)
+                      }}
+                    />
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>n8n URL (optional)</Label>
+                    <Input
+                      value={settings.n8n_url || ''}
+                      onChange={(e) => updateSetting('n8n_url', e.target.value)}
+                      placeholder="https://n8n.example.com"
+                    />
+                  </div>
+                  <div className="bg-slate-50 p-4 rounded-lg space-y-3">
+                    <Label className="font-medium">Verfügbare Webhook-Endpoints:</Label>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/ticket-created</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/ticket-created`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/ticket-updated</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/ticket-updated`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/message-received</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/message-received`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <code className="text-xs bg-slate-200 px-2 py-1 rounded">/api/webhooks/n8n/contact-updated</code>
+                        <Button variant="ghost" size="sm" onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/n8n/contact-updated`)}>
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Diese Endpoints können in n8n als HTTP-Trigger verwendet werden, um Automatisierungen auszulösen.
+                  </p>
                 </CardContent>
               </Card>
               
@@ -6084,26 +9856,38 @@ export default function App() {
     assets: 'Assets / CMDB',
     time: 'Zeiterfassung',
     reports: 'Reports',
+    diagnostics: 'System-Diagnose',
     settings: 'Einstellungen',
     inbox: 'Posteingang',
-    onboarding: 'Mitarbeiter On-/Offboarding',
     knowledge: 'Wissensdatenbank',
+    telephony: 'Telefonie',
+    contacts: 'Kontakte',
+    companies: 'Unternehmen',
+    deals: 'Deals & Pipeline',
+    chatwoot: 'Chatwoot',
+    'daily-assistant': 'KI-Assistent',
   }
   
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />
       case 'inbox': return <InboxPage currentUser={currentUser} />
+      case 'chatwoot': return <ChatwootPage currentUser={currentUser} />
+      case 'telephony': return <TelephonyPage currentUser={currentUser} />
+      case 'contacts': return <ContactsPage currentUser={currentUser} />
+      case 'companies': return <CompaniesPage currentUser={currentUser} />
+      case 'deals': return <DealsPage currentUser={currentUser} />
       case 'tickets': return <TicketsPage currentUser={currentUser} onOpenTicket={setSelectedTicketId} />
       case 'kanban': return <KanbanPage currentUser={currentUser} />
-      case 'onboarding': return <OnboardingPage currentUser={currentUser} />
       case 'organizations': return <OrganizationsPage />
       case 'users': return <UsersPage />
       case 'assets': return <AssetsPage />
       case 'time': return <TimePage currentUser={currentUser} />
       case 'knowledge': return <KnowledgeBasePage currentUser={currentUser} />
       case 'reports': return <ReportsPage />
+      case 'diagnostics': return <SystemDiagnosticsPage />
       case 'settings': return <SettingsPage />
+      case 'daily-assistant': return <DailyAssistantPage currentUser={currentUser} />
       default: return <DashboardPage />
     }
   }
@@ -6112,7 +9896,7 @@ export default function App() {
     <div className="h-screen flex bg-slate-50">
       <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} user={currentUser} />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title={PAGE_TITLES[currentPage]} user={currentUser} onLogout={handleLogout} />
+        <Header title={PAGE_TITLES[currentPage]} user={currentUser} onLogout={handleLogout} onNavigate={setCurrentPage} setSelectedTicketId={setSelectedTicketId} />
         <main className="flex-1 overflow-auto">{renderPage()}</main>
       </div>
       <TicketDetailDialog ticketId={selectedTicketId} currentUser={currentUser} open={!!selectedTicketId} onClose={() => setSelectedTicketId(null)} />

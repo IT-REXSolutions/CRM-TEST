@@ -5544,6 +5544,908 @@ function CompaniesPage({ currentUser }) {
 }
 
 // ============================================
+// DOCUMENTATION MODULE PAGE (DocuSnap Feature Parity)
+// ============================================
+
+function DocumentationPage({ currentUser, subPage }) {
+  const [activeTab, setActiveTab] = useState(subPage || 'doc-overview')
+  const [selectedOrg, setSelectedOrg] = useState(null)
+  const [organizations, setOrganizations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [overview, setOverview] = useState(null)
+  const [inventory, setInventory] = useState([])
+  const [networkDevices, setNetworkDevices] = useState([])
+  const [vlans, setVlans] = useState([])
+  const [topology, setTopology] = useState({ nodes: [], edges: [] })
+  const [adUsers, setAdUsers] = useState([])
+  const [adGroups, setAdGroups] = useState([])
+  const [adDomains, setAdDomains] = useState([])
+  const [permissionRisks, setPermissionRisks] = useState([])
+  const [shares, setShares] = useState([])
+  const [templates, setTemplates] = useState([])
+  const [documents, setDocuments] = useState([])
+  const [reports, setReports] = useState([])
+  const [auditView, setAuditView] = useState(null)
+  const [scans, setScans] = useState([])
+  const [snapshots, setSnapshots] = useState([])
+  
+  useEffect(() => {
+    if (subPage) setActiveTab(subPage)
+  }, [subPage])
+  
+  useEffect(() => {
+    loadOrganizations()
+    loadTemplates()
+  }, [])
+  
+  useEffect(() => {
+    if (selectedOrg) {
+      loadDataForOrg(selectedOrg)
+    }
+  }, [selectedOrg, activeTab])
+  
+  const loadOrganizations = async () => {
+    try {
+      const data = await api.fetch('/organizations')
+      setOrganizations(data)
+      // Auto-select first org or example org
+      const exampleOrg = data.find(o => o.name?.includes('Beispiel SMB') || o.name?.includes('Enterprise AG'))
+      if (exampleOrg) setSelectedOrg(exampleOrg.id)
+      else if (data.length > 0) setSelectedOrg(data[0].id)
+    } catch (error) {
+      console.error('Error loading organizations:', error)
+    }
+  }
+  
+  const loadTemplates = async () => {
+    try {
+      const data = await api.fetch('/documentation/templates')
+      setTemplates(data)
+    } catch (error) {
+      console.error('Error loading templates:', error)
+    }
+  }
+  
+  const loadDataForOrg = async (orgId) => {
+    setLoading(true)
+    try {
+      // Load overview
+      const overviewData = await api.fetch(`/documentation/organizations/${orgId}/overview`)
+      setOverview(overviewData)
+      
+      // Load based on active tab
+      if (activeTab === 'doc-inventory' || activeTab === 'doc-overview') {
+        const inv = await api.fetch(`/documentation/inventory?organization_id=${orgId}`)
+        setInventory(inv)
+      }
+      
+      if (activeTab === 'doc-topology' || activeTab === 'doc-overview') {
+        const devices = await api.fetch(`/documentation/network/devices?organization_id=${orgId}`)
+        setNetworkDevices(devices)
+        const vlanData = await api.fetch(`/documentation/network/vlans?organization_id=${orgId}`)
+        setVlans(vlanData)
+        const topoData = await api.fetch(`/documentation/network/topology?organization_id=${orgId}`)
+        setTopology(topoData)
+      }
+      
+      if (activeTab === 'doc-ad' || activeTab === 'doc-overview') {
+        const domains = await api.fetch(`/documentation/ad/domains?organization_id=${orgId}`)
+        setAdDomains(domains)
+        const users = await api.fetch(`/documentation/ad/users?organization_id=${orgId}`)
+        setAdUsers(users)
+        const groups = await api.fetch(`/documentation/ad/groups?organization_id=${orgId}`)
+        setAdGroups(groups)
+      }
+      
+      if (activeTab === 'doc-permissions' || activeTab === 'doc-overview') {
+        const risks = await api.fetch(`/documentation/permissions/risks?organization_id=${orgId}`)
+        setPermissionRisks(risks)
+        const shareData = await api.fetch(`/documentation/permissions/shares?organization_id=${orgId}`)
+        setShares(shareData)
+      }
+      
+      if (activeTab === 'doc-concepts') {
+        const docs = await api.fetch(`/documentation/documents?organization_id=${orgId}`)
+        setDocuments(docs)
+      }
+      
+      if (activeTab === 'doc-reports') {
+        const reps = await api.fetch(`/documentation/reports?organization_id=${orgId}`)
+        setReports(reps)
+      }
+      
+      if (activeTab === 'doc-audit' || activeTab === 'doc-overview') {
+        const audit = await api.fetch(`/documentation/audit?organization_id=${orgId}`)
+        setAuditView(audit)
+        const scanData = await api.fetch(`/documentation/scans?organization_id=${orgId}`)
+        setScans(scanData)
+        const snapData = await api.fetch(`/documentation/snapshots?organization_id=${orgId}`)
+        setSnapshots(snapData)
+      }
+    } catch (error) {
+      console.error('Error loading documentation data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+  
+  const runDiscoveryScan = async () => {
+    try {
+      // Create and run scan
+      const scan = await api.fetch('/documentation/scans', {
+        method: 'POST',
+        body: JSON.stringify({ organization_id: selectedOrg, scan_type: 'full', created_by_id: currentUser?.id })
+      })
+      toast.success('Discovery-Scan gestartet')
+      
+      // Run the scan
+      const result = await api.fetch(`/documentation/scans/${scan.id}/run`, { method: 'POST' })
+      toast.success(`Scan abgeschlossen: ${result.statistics?.servers_found || 0} Server, ${result.statistics?.workstations_found || 0} Workstations gefunden`)
+      
+      // Reload data
+      loadDataForOrg(selectedOrg)
+    } catch (error) {
+      toast.error('Fehler beim Scan: ' + error.message)
+    }
+  }
+  
+  const createDocument = async (templateId) => {
+    try {
+      const doc = await api.fetch('/documentation/documents', {
+        method: 'POST',
+        body: JSON.stringify({
+          organization_id: selectedOrg,
+          template_id: templateId,
+          created_by_id: currentUser?.id
+        })
+      })
+      toast.success('Dokument erstellt')
+      
+      // Auto-fill
+      await api.fetch(`/documentation/documents/${doc.id}/auto-fill`, { method: 'POST' })
+      toast.success('Dokument mit Inventardaten befüllt')
+      
+      loadDataForOrg(selectedOrg)
+    } catch (error) {
+      toast.error('Fehler: ' + error.message)
+    }
+  }
+  
+  const generateReport = async (reportType) => {
+    try {
+      const report = await api.fetch('/documentation/reports', {
+        method: 'POST',
+        body: JSON.stringify({
+          organization_id: selectedOrg,
+          report_type: reportType,
+          generated_by_id: currentUser?.id
+        })
+      })
+      toast.success(`${reportType}-Report erstellt`)
+      loadDataForOrg(selectedOrg)
+    } catch (error) {
+      toast.error('Fehler: ' + error.message)
+    }
+  }
+  
+  const DOC_TABS = [
+    { id: 'doc-overview', label: 'Übersicht', icon: LayoutDashboard },
+    { id: 'doc-inventory', label: 'Inventar', icon: Server },
+    { id: 'doc-topology', label: 'Netzwerk', icon: Globe },
+    { id: 'doc-ad', label: 'Active Directory', icon: Users },
+    { id: 'doc-permissions', label: 'Berechtigungen', icon: Shield },
+    { id: 'doc-concepts', label: 'Handbücher', icon: BookOpen },
+    { id: 'doc-reports', label: 'Reports', icon: FileText },
+    { id: 'doc-audit', label: 'Audit', icon: Eye },
+  ]
+  
+  const selectedOrgData = organizations.find(o => o.id === selectedOrg)
+  
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">IT-Dokumentation</h1>
+          <p className="text-muted-foreground">DocuSnap-Funktionalität - Discovery, Inventar, Netzwerk, Berechtigungen</p>
+        </div>
+        <div className="flex gap-3">
+          <Select value={selectedOrg || ''} onValueChange={setSelectedOrg}>
+            <SelectTrigger className="w-[280px]">
+              <SelectValue placeholder="Organisation wählen" />
+            </SelectTrigger>
+            <SelectContent>
+              {organizations.map(org => (
+                <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button onClick={runDiscoveryScan} disabled={!selectedOrg}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Discovery starten
+          </Button>
+        </div>
+      </div>
+      
+      {/* Tabs */}
+      <div className="flex gap-1 border-b">
+        {DOC_TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === tab.id
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <tab.icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      
+      {loading && !overview ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <>
+          {/* Overview Tab */}
+          {activeTab === 'doc-overview' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Summary Cards */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Systeme gesamt</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{overview?.inventory_summary?.total || 0}</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {overview?.inventory_summary?.servers || 0} Server, {overview?.inventory_summary?.workstations || 0} Workstations
+                  </p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Netzwerkgeräte</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold">{overview?.inventory_summary?.network_devices || 0}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Switches, Router, Firewalls</p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Risiken</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-orange-600">{overview?.risk_summary?.total || 0}</div>
+                  <div className="flex gap-2 mt-1">
+                    {overview?.risk_summary?.critical > 0 && (
+                      <Badge variant="destructive">{overview.risk_summary.critical} kritisch</Badge>
+                    )}
+                    {overview?.risk_summary?.high > 0 && (
+                      <Badge className="bg-orange-100 text-orange-700">{overview.risk_summary.high} hoch</Badge>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Letzter Scan</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg font-semibold">
+                    {overview?.last_scan?.completed_at 
+                      ? new Date(overview.last_scan.completed_at).toLocaleDateString('de-DE')
+                      : 'Kein Scan'}
+                  </div>
+                  <Badge className={overview?.last_scan?.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}>
+                    {overview?.last_scan?.status || 'Ausstehend'}
+                  </Badge>
+                </CardContent>
+              </Card>
+              
+              {/* Quick Info Tables */}
+              <Card className="md:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Server & Domain Controller</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Hostname</TableHead>
+                        <TableHead>Typ</TableHead>
+                        <TableHead>OS</TableHead>
+                        <TableHead>IP</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {inventory.filter(i => ['server', 'domain_controller'].includes(i.item_type)).slice(0, 5).map(item => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.hostname}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{item.item_type === 'domain_controller' ? 'DC' : 'Server'}</Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">{item.os_name}</TableCell>
+                          <TableCell className="text-sm">{item.ip_addresses?.[0]}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+              
+              <Card className="md:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Berechtigungsrisiken</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {permissionRisks.length === 0 ? (
+                    <p className="text-muted-foreground text-sm">Keine Risiken erkannt</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {permissionRisks.slice(0, 5).map(risk => (
+                        <div key={risk.id} className="flex items-center justify-between p-2 border rounded">
+                          <div>
+                            <p className="font-medium text-sm">{risk.path}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {risk.has_everyone_access && 'Everyone-Zugriff '}
+                              {risk.has_full_control_risk && 'Full Control Risiko'}
+                            </p>
+                          </div>
+                          <Badge className={
+                            risk.risk_level === 'critical' ? 'bg-red-100 text-red-700' :
+                            risk.risk_level === 'high' ? 'bg-orange-100 text-orange-700' :
+                            'bg-yellow-100 text-yellow-700'
+                          }>
+                            {risk.risk_level}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Inventory Tab */}
+          {activeTab === 'doc-inventory' && (
+            <div className="space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                <Badge variant="outline" className="cursor-pointer">Alle ({inventory.length})</Badge>
+                <Badge variant="outline" className="cursor-pointer">Server ({inventory.filter(i => i.item_type === 'server').length})</Badge>
+                <Badge variant="outline" className="cursor-pointer">DC ({inventory.filter(i => i.item_type === 'domain_controller').length})</Badge>
+                <Badge variant="outline" className="cursor-pointer">Workstations ({inventory.filter(i => i.item_type === 'workstation').length})</Badge>
+              </div>
+              
+              <Card>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Hostname</TableHead>
+                        <TableHead>Typ</TableHead>
+                        <TableHead>Betriebssystem</TableHead>
+                        <TableHead>IP-Adresse</TableHead>
+                        <TableHead>Hersteller</TableHead>
+                        <TableHead>RAM</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {inventory.map(item => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.hostname}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">
+                              {item.item_type === 'domain_controller' ? 'Domain Controller' : 
+                               item.item_type === 'server' ? 'Server' : 
+                               item.item_type === 'workstation' ? 'Workstation' : item.item_type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{item.os_name} {item.os_version}</TableCell>
+                          <TableCell className="font-mono text-sm">{item.ip_addresses?.[0]}</TableCell>
+                          <TableCell>{item.manufacturer} {item.model}</TableCell>
+                          <TableCell>{item.ram_gb} GB</TableCell>
+                          <TableCell>
+                            <Badge className={item.is_online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
+                              {item.is_online ? 'Online' : 'Offline'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Network Topology Tab */}
+          {activeTab === 'doc-topology' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Netzwerk-Topologie</CardTitle>
+                  <CardDescription>Interaktive Darstellung der Netzwerkinfrastruktur</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="border rounded-lg bg-slate-50 p-4 min-h-[400px]">
+                    {/* Simplified topology visualization */}
+                    <div className="flex flex-col items-center gap-8">
+                      {/* Network Devices Row */}
+                      <div className="flex gap-4 flex-wrap justify-center">
+                        {networkDevices.map(device => (
+                          <div key={device.id} className="flex flex-col items-center p-4 bg-white rounded-lg border shadow-sm">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                              device.device_type === 'switch' ? 'bg-blue-100' :
+                              device.device_type === 'router' ? 'bg-green-100' :
+                              device.device_type === 'firewall' ? 'bg-red-100' : 'bg-gray-100'
+                            }`}>
+                              {device.device_type === 'switch' ? <Server className="w-6 h-6 text-blue-600" /> :
+                               device.device_type === 'router' ? <Globe className="w-6 h-6 text-green-600" /> :
+                               device.device_type === 'firewall' ? <Shield className="w-6 h-6 text-red-600" /> :
+                               <Box className="w-6 h-6" />}
+                            </div>
+                            <p className="mt-2 font-medium text-sm">{device.hostname}</p>
+                            <p className="text-xs text-muted-foreground">{device.ip_address}</p>
+                            <Badge variant="outline" className="mt-1 text-xs">{device.device_type}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Connection Lines */}
+                      <div className="w-full border-t-2 border-dashed border-blue-300" />
+                      
+                      {/* Servers Row */}
+                      <div className="flex gap-4 flex-wrap justify-center">
+                        {inventory.filter(i => ['server', 'domain_controller'].includes(i.item_type)).map(server => (
+                          <div key={server.id} className="flex flex-col items-center p-3 bg-white rounded-lg border">
+                            <Server className="w-8 h-8 text-slate-600" />
+                            <p className="mt-1 font-medium text-xs">{server.hostname}</p>
+                            <p className="text-xs text-muted-foreground">{server.ip_addresses?.[0]}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">VLANs</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {vlans.map(vlan => (
+                        <div key={vlan.id} className="flex justify-between items-center p-2 border rounded">
+                          <div>
+                            <p className="font-medium">VLAN {vlan.vlan_id}</p>
+                            <p className="text-xs text-muted-foreground">{vlan.vlan_name}</p>
+                          </div>
+                          <p className="text-xs font-mono">{vlan.subnet}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Netzwerkgeräte</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {networkDevices.map(device => (
+                        <div key={device.id} className="p-2 border rounded">
+                          <div className="flex justify-between">
+                            <p className="font-medium">{device.hostname}</p>
+                            <Badge variant="outline">{device.device_type}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{device.manufacturer} {device.model}</p>
+                          <p className="text-xs font-mono">{device.ip_address}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
+          
+          {/* Active Directory Tab */}
+          {activeTab === 'doc-ad' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Domänen</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {adDomains.map(domain => (
+                    <div key={domain.id} className="p-3 border rounded mb-2">
+                      <p className="font-bold">{domain.domain_name}</p>
+                      <p className="text-sm text-muted-foreground">NetBIOS: {domain.netbios_name}</p>
+                      <p className="text-sm">Functional Level: {domain.domain_functional_level}</p>
+                      <p className="text-sm">Domain Controller: {domain.domain_controllers?.join(', ')}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Gruppen ({adGroups.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="max-h-[300px] overflow-auto">
+                  <div className="space-y-2">
+                    {adGroups.map(group => (
+                      <div key={group.id} className="p-2 border rounded">
+                        <div className="flex justify-between">
+                          <p className="font-medium">{group.display_name || group.sam_account_name}</p>
+                          <Badge variant="outline">{group.group_type}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{group.description}</p>
+                        <p className="text-xs">Mitglieder: {group.members?.length || 0}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Benutzer ({adUsers.length})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Benutzername</TableHead>
+                        <TableHead>Anzeigename</TableHead>
+                        <TableHead>E-Mail</TableHead>
+                        <TableHead>OU</TableHead>
+                        <TableHead>Gruppen</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {adUsers.slice(0, 20).map(user => (
+                        <TableRow key={user.id}>
+                          <TableCell className="font-mono">{user.sam_account_name}</TableCell>
+                          <TableCell>{user.display_name}</TableCell>
+                          <TableCell>{user.email}</TableCell>
+                          <TableCell className="text-xs">{user.ou_path?.split(',')[0]?.replace('OU=', '')}</TableCell>
+                          <TableCell className="text-xs">{user.member_of?.slice(0, 2).join(', ')}</TableCell>
+                          <TableCell>
+                            <Badge className={user.is_enabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}>
+                              {user.is_enabled ? 'Aktiv' : 'Deaktiviert'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Permissions Tab */}
+          {activeTab === 'doc-permissions' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Berechtigungsrisiken</CardTitle>
+                  <CardDescription>Erkannte Sicherheitsrisiken in Dateifreigaben</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {permissionRisks.length === 0 ? (
+                    <p className="text-muted-foreground">Keine Risiken gefunden</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Pfad</TableHead>
+                          <TableHead>Risiko</TableHead>
+                          <TableHead>Probleme</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {permissionRisks.map(risk => (
+                          <TableRow key={risk.id}>
+                            <TableCell className="font-mono text-sm">{risk.path}</TableCell>
+                            <TableCell>
+                              <Badge className={
+                                risk.risk_level === 'critical' ? 'bg-red-100 text-red-700' :
+                                risk.risk_level === 'high' ? 'bg-orange-100 text-orange-700' :
+                                'bg-yellow-100 text-yellow-700'
+                              }>
+                                {risk.risk_level}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {risk.has_everyone_access && <Badge variant="outline" className="mr-1">Everyone</Badge>}
+                              {risk.has_domain_users_access && <Badge variant="outline" className="mr-1">Domain Users</Badge>}
+                              {risk.has_full_control_risk && <Badge variant="outline">Full Control</Badge>}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Freigaben</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {shares.map(share => (
+                      <div key={share.id} className="p-2 border rounded">
+                        <p className="font-medium">{share.share_name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">{share.share_path}</p>
+                        <p className="text-xs mt-1">{share.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Concepts/Handbooks Tab */}
+          {activeTab === 'doc-concepts' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Vorlagen</CardTitle>
+                  <CardDescription>Dokument aus Vorlage erstellen</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {templates.map(template => (
+                      <div key={template.id} className="p-3 border rounded">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-medium">{template.name}</p>
+                            <p className="text-xs text-muted-foreground">{template.description}</p>
+                          </div>
+                          <Button size="sm" onClick={() => createDocument(template.id)}>
+                            <Plus className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Erstellte Dokumente</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {documents.length === 0 ? (
+                    <p className="text-muted-foreground">Noch keine Dokumente erstellt</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Titel</TableHead>
+                          <TableHead>Typ</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Auto-Fill</TableHead>
+                          <TableHead>Aktionen</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {documents.map(doc => (
+                          <TableRow key={doc.id}>
+                            <TableCell className="font-medium">{doc.title}</TableCell>
+                            <TableCell><Badge variant="outline">{doc.document_type}</Badge></TableCell>
+                            <TableCell>
+                              <Badge className={doc.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}>
+                                {doc.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {doc.auto_filled_at ? (
+                                <Check className="w-4 h-4 text-green-600" />
+                              ) : (
+                                <X className="w-4 h-4 text-muted-foreground" />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Button size="sm" variant="outline">
+                                <Download className="w-4 h-4 mr-1" /> PDF
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Reports Tab */}
+          {activeTab === 'doc-reports' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Report generieren</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {['inventory', 'network', 'permissions', 'ad', 'audit'].map(type => (
+                      <Button 
+                        key={type} 
+                        variant="outline" 
+                        className="w-full justify-start"
+                        onClick={() => generateReport(type)}
+                      >
+                        <FileText className="w-4 h-4 mr-2" />
+                        {type.charAt(0).toUpperCase() + type.slice(1)} Report
+                      </Button>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Generierte Reports</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {reports.length === 0 ? (
+                    <p className="text-muted-foreground">Noch keine Reports generiert</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Titel</TableHead>
+                          <TableHead>Typ</TableHead>
+                          <TableHead>Erstellt</TableHead>
+                          <TableHead>Prüfsumme</TableHead>
+                          <TableHead>Aktionen</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {reports.map(report => (
+                          <TableRow key={report.id}>
+                            <TableCell className="font-medium">{report.title}</TableCell>
+                            <TableCell><Badge variant="outline">{report.report_type}</Badge></TableCell>
+                            <TableCell>{new Date(report.generated_at).toLocaleString('de-DE')}</TableCell>
+                            <TableCell className="font-mono text-xs">{report.file_checksum?.substring(0, 8)}...</TableCell>
+                            <TableCell>
+                              <Button size="sm" variant="outline">
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+          
+          {/* Audit Tab */}
+          {activeTab === 'doc-audit' && (
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Dokumentationsstatus</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Badge className={auditView?.audit_status === 'up_to_date' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}>
+                    {auditView?.audit_status === 'up_to_date' ? 'Aktuell' : 'Scan erforderlich'}
+                  </Badge>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Inventar</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{auditView?.inventory_count || 0}</div>
+                  <p className="text-xs text-muted-foreground">Systeme dokumentiert</p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Risiken</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-2">
+                    <Badge variant="destructive">{auditView?.risk_summary?.critical || 0}</Badge>
+                    <Badge className="bg-orange-100 text-orange-700">{auditView?.risk_summary?.high || 0}</Badge>
+                    <Badge className="bg-yellow-100 text-yellow-700">{auditView?.risk_summary?.medium || 0}</Badge>
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Dokumente</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{auditView?.documents?.total || 0}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {auditView?.documents?.approved || 0} freigegeben, {auditView?.documents?.draft || 0} Entwurf
+                  </p>
+                </CardContent>
+              </Card>
+              
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Letzte Scans</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {scans.slice(0, 5).map(scan => (
+                      <div key={scan.id} className="flex justify-between items-center p-2 border rounded">
+                        <div>
+                          <p className="font-medium">{scan.scan_type}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {scan.completed_at ? new Date(scan.completed_at).toLocaleString('de-DE') : 'In Bearbeitung'}
+                          </p>
+                        </div>
+                        <Badge className={scan.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}>
+                          {scan.status}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="text-base">Snapshots (Versionierung)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {snapshots.slice(0, 5).map(snapshot => (
+                      <div key={snapshot.id} className="p-2 border rounded">
+                        <div className="flex justify-between">
+                          <p className="font-medium">{new Date(snapshot.snapshot_date).toLocaleDateString('de-DE')}</p>
+                          <Badge variant="outline">{snapshot.summary?.total_systems || 0} Systeme</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {snapshot.summary?.servers || 0} Server, {snapshot.summary?.workstations || 0} Workstations
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ============================================
 // CRM - DEALS/PIPELINE PAGE
 // ============================================
 

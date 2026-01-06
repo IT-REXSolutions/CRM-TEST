@@ -13678,7 +13678,7 @@ async function handleGetDocumentationOverview(orgId) {
 
 async function handleGetDocScans(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     let query = supabaseAdmin
       .from('doc_discovery_scans')
       .select('*')
@@ -13797,9 +13797,9 @@ async function handleRunDocScan(scanId) {
 
 async function handleGetDocInventory(params) {
   try {
-    const orgId = params.get('organization_id')
-    const itemType = params.get('item_type')
-    const snapshotId = params.get('snapshot_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
+    const itemType = params.item_type || params?.get?.('item_type')
+    const snapshotId = params.snapshot_id || params?.get?.('snapshot_id')
     
     let query = supabaseAdmin
       .from('doc_inventory_items')
@@ -13844,7 +13844,7 @@ async function handleGetDocInventoryItem(itemId) {
 
 async function handleGetDocSnapshots(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     let query = supabaseAdmin
       .from('doc_inventory_snapshots')
@@ -13863,7 +13863,7 @@ async function handleGetDocSnapshots(params) {
 
 async function handleCompareSnapshots(snapshotId, params) {
   try {
-    const compareToId = params.get('compare_to')
+    const compareToId = params.compare_to || params?.get?.('compare_to')
     
     // Get both snapshots
     const { data: snapshot1 } = await supabaseAdmin
@@ -13912,7 +13912,7 @@ async function handleCompareSnapshots(snapshotId, params) {
 
 async function handleGetDocADDomains(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     let query = supabaseAdmin
       .from('doc_ad_domains')
@@ -13930,8 +13930,8 @@ async function handleGetDocADDomains(params) {
 
 async function handleGetDocADUsers(params) {
   try {
-    const domainId = params.get('domain_id')
-    const orgId = params.get('organization_id')
+    const domainId = params.domain_id || params?.get?.('domain_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     let query = supabaseAdmin.from('doc_ad_users').select('*')
     
@@ -13959,8 +13959,8 @@ async function handleGetDocADUsers(params) {
 
 async function handleGetDocADGroups(params) {
   try {
-    const domainId = params.get('domain_id')
-    const orgId = params.get('organization_id')
+    const domainId = params.domain_id || params?.get?.('domain_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     let query = supabaseAdmin.from('doc_ad_groups').select('*')
     
@@ -13987,7 +13987,7 @@ async function handleGetDocADGroups(params) {
 
 async function handleGetDocADComputers(params) {
   try {
-    const domainId = params.get('domain_id')
+    const domainId = params.domain_id || params?.get?.('domain_id')
     
     let query = supabaseAdmin.from('doc_ad_computers').select('*')
     if (domainId) query = query.eq('domain_id', domainId)
@@ -14002,7 +14002,7 @@ async function handleGetDocADComputers(params) {
 
 async function handleGetDocADGPOs(params) {
   try {
-    const domainId = params.get('domain_id')
+    const domainId = params.domain_id || params?.get?.('domain_id')
     
     let query = supabaseAdmin.from('doc_ad_gpos').select('*')
     if (domainId) query = query.eq('domain_id', domainId)
@@ -14017,8 +14017,8 @@ async function handleGetDocADGPOs(params) {
 
 async function handleGetDocNetworkDevices(params) {
   try {
-    const orgId = params.get('organization_id')
-    const deviceType = params.get('device_type')
+    const orgId = params.organization_id || params?.get?.('organization_id')
+    const deviceType = params.device_type || params?.get?.('device_type')
     
     let query = supabaseAdmin
       .from('doc_network_devices')
@@ -14040,7 +14040,7 @@ async function handleGetDocNetworkDevices(params) {
 
 async function handleGetDocVLANs(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     let query = supabaseAdmin.from('doc_vlans').select('*')
     if (orgId) query = query.eq('organization_id', orgId)
@@ -14055,7 +14055,7 @@ async function handleGetDocVLANs(params) {
 
 async function handleGetDocTopology(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     // Get all network devices
     const { data: devices } = await supabaseAdmin
@@ -14137,7 +14137,7 @@ async function handleGetDocTopology(params) {
 
 async function handleGetDocShares(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     // Get shares via inventory items
     let query = supabaseAdmin
@@ -14164,7 +14164,7 @@ async function handleGetDocShares(params) {
 
 async function handleGetDocNTFSPermissions(params) {
   try {
-    const shareId = params.get('share_id')
+    const shareId = params.share_id || params?.get?.('share_id')
     
     let query = supabaseAdmin.from('doc_ntfs_permissions').select('*')
     if (shareId) query = query.eq('file_share_id', shareId)
@@ -14179,7 +14179,7 @@ async function handleGetDocNTFSPermissions(params) {
 
 async function handleGetDocPermissionRisks(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     // Get all permissions with risks
     const { data, error } = await supabaseAdmin
@@ -14213,9 +14213,9 @@ async function handleGetDocPermissionRisks(params) {
 
 async function handleGetDocUserAccess(params) {
   try {
-    const userId = params.get('user_id')
-    const userName = params.get('user_name')
-    const orgId = params.get('organization_id')
+    const userId = params.user_id || params?.get?.('user_id')
+    const userName = params.user_name || params?.get?.('user_name')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     // Get user's group memberships
     const { data: user } = await supabaseAdmin
@@ -14273,8 +14273,8 @@ async function handleGetDocTemplates() {
 
 async function handleGetDocDocuments(params) {
   try {
-    const orgId = params.get('organization_id')
-    const docType = params.get('document_type')
+    const orgId = params.organization_id || params?.get?.('organization_id')
+    const docType = params.document_type || params?.get?.('document_type')
     
     let query = supabaseAdmin
       .from('doc_documents')
@@ -14480,8 +14480,8 @@ async function handleExportDocumentPDF(docId) {
 
 async function handleGetDocReports(params) {
   try {
-    const orgId = params.get('organization_id')
-    const reportType = params.get('report_type')
+    const orgId = params.organization_id || params?.get?.('organization_id')
+    const reportType = params.report_type || params?.get?.('report_type')
     
     let query = supabaseAdmin
       .from('doc_reports')
@@ -14588,7 +14588,7 @@ async function handleGetDocReport(reportId) {
 
 async function handleGetDocAuditView(params) {
   try {
-    const orgId = params.get('organization_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
     
     // Get comprehensive audit view
     const { data: lastScan } = await supabaseAdmin
@@ -14644,8 +14644,8 @@ async function handleGetDocAuditView(params) {
 
 async function handleGetDocAuditLog(params) {
   try {
-    const orgId = params.get('organization_id')
-    const limit = parseInt(params.get('limit') || '100')
+    const orgId = params.organization_id || params?.get?.('organization_id')
+    const limit = parseInt(params.limit || params?.get?.('limit') || '100')
     
     let query = supabaseAdmin
       .from('doc_audit_log')
@@ -14665,8 +14665,8 @@ async function handleGetDocAuditLog(params) {
 
 async function handleGetDocServerRoles(params) {
   try {
-    const orgId = params.get('organization_id')
-    const itemId = params.get('inventory_item_id')
+    const orgId = params.organization_id || params?.get?.('organization_id')
+    const itemId = params.inventory_item_id || params?.get?.('inventory_item_id')
     
     let query = supabaseAdmin
       .from('doc_server_roles')
@@ -14695,7 +14695,7 @@ async function handleGetDocServerRoles(params) {
 
 async function handleGetDocServices(params) {
   try {
-    const itemId = params.get('inventory_item_id')
+    const itemId = params.inventory_item_id || params?.get?.('inventory_item_id')
     
     let query = supabaseAdmin.from('doc_services').select('*')
     if (itemId) query = query.eq('inventory_item_id', itemId)

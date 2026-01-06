@@ -14071,20 +14071,17 @@ async function handleGetDocNetworkDevices(params) {
     const orgId = params.organization_id || params?.get?.('organization_id')
     const deviceType = params.device_type || params?.get?.('device_type')
     
-    let query = supabaseAdmin
-      .from('doc_network_devices')
-      .select(`
-        *,
-        doc_network_interfaces(*)
-      `)
+    const { data, error } = await safeDocQuery('doc_network_devices', () => {
+      let query = supabaseAdmin.from('doc_network_devices').select('*')
+      if (orgId) query = query.eq('organization_id', orgId)
+      if (deviceType) query = query.eq('device_type', deviceType)
+      return query.order('hostname')
+    })
     
-    if (orgId) query = query.eq('organization_id', orgId)
-    if (deviceType) query = query.eq('device_type', deviceType)
-    
-    const { data, error } = await query.order('hostname')
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -14093,11 +14090,13 @@ async function handleGetDocVLANs(params) {
   try {
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    let query = supabaseAdmin.from('doc_vlans').select('*')
-    if (orgId) query = query.eq('organization_id', orgId)
+    const { data, error } = await safeDocQuery('doc_vlans', () => {
+      let query = supabaseAdmin.from('doc_vlans').select('*')
+      if (orgId) query = query.eq('organization_id', orgId)
+      return query.order('vlan_id')
+    })
     
-    const { data, error } = await query.order('vlan_id')
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

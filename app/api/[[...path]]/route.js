@@ -13801,12 +13801,10 @@ async function handleGetDocInventory(params) {
     const itemType = params.item_type || params?.get?.('item_type')
     const snapshotId = params.snapshot_id || params?.get?.('snapshot_id')
     
+    // First check if table exists
     let query = supabaseAdmin
       .from('doc_inventory_items')
-      .select(`
-        *,
-        doc_server_roles(*)
-      `)
+      .select('*')
       .order('hostname')
     
     if (orgId) query = query.eq('organization_id', orgId)
@@ -13814,9 +13812,18 @@ async function handleGetDocInventory(params) {
     if (snapshotId) query = query.eq('snapshot_id', snapshotId)
     
     const { data, error } = await query
+    
+    // If table doesn't exist, return empty array
+    if (error?.code === '42P01' || error?.message?.includes('does not exist')) {
+      return NextResponse.json([])
+    }
     if (error) throw error
     return NextResponse.json(data || [])
   } catch (error) {
+    // Gracefully handle missing tables
+    if (error.message?.includes('does not exist') || error.message?.includes('42P01')) {
+      return NextResponse.json([])
+    }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

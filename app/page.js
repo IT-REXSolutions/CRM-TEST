@@ -11403,6 +11403,15 @@ export default function App() {
       case 'rmm-remote':
       case 'rmm-deployment':
       case 'rmm': return <RMMPage currentUser={currentUser} subPage={currentPage} />
+      case 'doc-overview':
+      case 'doc-inventory':
+      case 'doc-topology':
+      case 'doc-ad':
+      case 'doc-permissions':
+      case 'doc-concepts':
+      case 'doc-reports':
+      case 'doc-audit':
+      case 'documentation': return <DocumentationPage currentUser={currentUser} subPage={currentPage} />
       default: return <DashboardPage />
     }
   }

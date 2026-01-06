@@ -9574,6 +9574,7 @@ function SettingsPage() {
                   { id: 'tickets', label: 'Ticket-Standards', icon: Ticket },
                   { id: 'integrations', label: 'Integrationen', icon: Cloud },
                   { id: 'email', label: 'E-Mail', icon: Mail },
+                  { id: 'rmm', label: 'RMM & Remote', icon: Monitor },
                   { id: 'automations', label: 'Automationen', icon: Zap },
                   { id: 'recurring', label: 'Wiederkehrende Tickets', icon: Repeat },
                   { id: 'audit', label: 'Audit & Backup', icon: Shield },

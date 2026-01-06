@@ -6385,6 +6385,21 @@ function DocumentationPage({ currentUser, subPage }) {
                         {type.charAt(0).toUpperCase() + type.slice(1)} Report
                       </Button>
                     ))}
+                    <div className="border-t pt-2 mt-2">
+                      <p className="text-xs text-muted-foreground mb-2">PDF Export</p>
+                      {['full', 'inventory', 'network', 'ad'].map(type => (
+                        <Button 
+                          key={`export-${type}`}
+                          variant="ghost" 
+                          size="sm"
+                          className="w-full justify-start"
+                          onClick={() => exportPDF(type)}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          {type === 'full' ? 'Komplett-Export' : `${type.charAt(0).toUpperCase() + type.slice(1)} Export`}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -6415,7 +6430,7 @@ function DocumentationPage({ currentUser, subPage }) {
                             <TableCell>{new Date(report.generated_at).toLocaleString('de-DE')}</TableCell>
                             <TableCell className="font-mono text-xs">{report.file_checksum?.substring(0, 8)}...</TableCell>
                             <TableCell>
-                              <Button size="sm" variant="outline">
+                              <Button size="sm" variant="outline" onClick={() => exportPDF(report.report_type)}>
                                 <Download className="w-4 h-4" />
                               </Button>
                             </TableCell>

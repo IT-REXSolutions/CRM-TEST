@@ -1,85 +1,126 @@
 #!/bin/bash
 #
-# IT REX RMM Agent for Linux
-# Remote Monitoring & Management Agent
-# Sends heartbeat, metrics, and inventory to IT REX ServiceDesk
-#
-# Version: 1.0.0
+# IT REX RMM Agent - Linux Installation Script
+# Version: 1.0
 # Author: IT REX Solutions
+#
+# Usage: sudo ./itrex-rmm-agent.sh -t "ENROLLMENT_TOKEN" -u "API_URL"
 #
 
 set -e
 
-# Configuration
-AGENT_VERSION="1.0.0"
-CONFIG_DIR="/etc/itrex-rmm"
-CONFIG_FILE="$CONFIG_DIR/agent.json"
-LOG_FILE="/var/log/itrex-rmm-agent.log"
-PID_FILE="/var/run/itrex-rmm-agent.pid"
+# Default values
+HEARTBEAT_INTERVAL=60
+AGENT_PATH="/opt/itrex-rmm"
+LOG_FILE="$AGENT_PATH/agent.log"
+CONFIG_FILE="$AGENT_PATH/config.json"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Banner
+show_banner() {
+    echo -e "${CYAN}"
+    echo '  ██╗████████╗    ██████╗ ███████╗██╗  ██╗'
+    echo '  ██║╚══██╔══╝    ██╔══██╗██╔════╝╚██╗██╔╝'
+    echo '  ██║   ██║       ██████╔╝█████╗   ╚███╔╝ '
+    echo '  ██║   ██║       ██╔══██╗██╔══╝   ██╔██╗ '
+    echo '  ██║   ██║       ██║  ██║███████╗██╔╝ ██╗'
+    echo '  ╚═╝   ╚═╝       ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝'
+    echo ''
+    echo '  RMM Agent Installer v1.0 (Linux)'
+    echo -e "${NC}"
+}
+
+# Logging
+log() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE" 2>/dev/null || true
+    
+    case $level in
+        ERROR)   echo -e "${RED}[$timestamp] [$level] $message${NC}" ;;
+        WARNING) echo -e "${YELLOW}[$timestamp] [$level] $message${NC}" ;;
+        SUCCESS) echo -e "${GREEN}[$timestamp] [$level] $message${NC}" ;;
+        *)       echo "[$timestamp] [$level] $message" ;;
+    esac
+}
 
 # Parse arguments
-ENROLLMENT_TOKEN=""
-SERVER_URL="https://your-servicedesk.domain.de"
-HEARTBEAT_INTERVAL=60
+parse_args() {
+    while getopts "t:u:h:s" opt; do
+        case $opt in
+            t) ENROLLMENT_TOKEN="$OPTARG" ;;
+            u) API_URL="$OPTARG" ;;
+            h) HEARTBEAT_INTERVAL="$OPTARG" ;;
+            s) SERVICE_MODE=true ;;
+            \?) echo "Invalid option: -$OPTARG" >&2; exit 1 ;;
+        esac
+    done
+}
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -t|--token)
-            ENROLLMENT_TOKEN="$2"
-            shift 2
-            ;;
-        -s|--server)
-            SERVER_URL="$2"
-            shift 2
-            ;;
-        -i|--interval)
-            HEARTBEAT_INTERVAL="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
-done
+# Check if running as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo -e "${RED}Please run as root (sudo)${NC}"
+        exit 1
+    fi
+}
 
-# Ensure running as root
-if [[ $EUID -ne 0 ]]; then
-    echo "This script must be run as root"
-    exit 1
-fi
-
-# Create config directory
-mkdir -p "$CONFIG_DIR"
-
-# Logging function
-log() {
-    local level="$1"
-    local message="$2"
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
+# Install dependencies
+install_dependencies() {
+    log "INFO" "Installing dependencies..."
+    
+    if command -v apt-get &> /dev/null; then
+        apt-get update -qq
+        apt-get install -y -qq curl jq bc dmidecode
+    elif command -v yum &> /dev/null; then
+        yum install -y -q curl jq bc dmidecode
+    elif command -v dnf &> /dev/null; then
+        dnf install -y -q curl jq bc dmidecode
+    else
+        log "WARNING" "Could not detect package manager. Ensure curl, jq, and bc are installed."
+    fi
 }
 
 # Get system information
 get_system_info() {
     local hostname=$(hostname)
-    local domain=$(hostname -d 2>/dev/null || echo "")
-    local os_type="linux"
-    local os_version=$(cat /etc/os-release 2>/dev/null | grep "PRETTY_NAME" | cut -d'"' -f2 || uname -r)
+    local os_type=$(uname -s)
+    local os_version=""
     local os_build=$(uname -r)
-    local cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
+    
+    # Get OS version
+    if [ -f /etc/os-release ]; then
+        os_version=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+    elif [ -f /etc/redhat-release ]; then
+        os_version=$(cat /etc/redhat-release)
+    else
+        os_version="$os_type $os_build"
+    fi
+    
+    local cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2 | xargs)
     local cpu_cores=$(nproc)
-    local ram_total_gb=$(free -g | awk '/Mem:/ {print $2}')
-    local disk_info=$(df -BG / | awk 'NR==2 {print $2, $4}')
-    local disk_total_gb=$(echo "$disk_info" | awk '{print $1}' | tr -d 'G')
-    local disk_free_gb=$(echo "$disk_info" | awk '{print $2}' | tr -d 'G')
-    local mac_address=$(ip link show | grep -A1 "state UP" | grep "ether" | head -1 | awk '{print $2}')
-    local ip_address=$(hostname -I | awk '{print $1}')
+    local ram_total_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local ram_total_gb=$(echo "scale=2; $ram_total_kb / 1024 / 1024" | bc)
+    
+    # Get disk info
+    local disk_total_kb=$(df / | tail -1 | awk '{print $2}')
+    local disk_total_gb=$(echo "scale=2; $disk_total_kb / 1024 / 1024" | bc)
+    
+    # Get network info
+    local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+    local mac_address=$(ip link show $primary_interface 2>/dev/null | grep ether | awk '{print $2}')
+    local ip_address=$(ip addr show $primary_interface 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1)
     
     cat << EOF
 {
     "hostname": "$hostname",
-    "domain": "$domain",
     "os_type": "$os_type",
     "os_version": "$os_version",
     "os_build": "$os_build",
@@ -87,42 +128,51 @@ get_system_info() {
     "cpu_cores": $cpu_cores,
     "ram_total_gb": $ram_total_gb,
     "disk_total_gb": $disk_total_gb,
-    "disk_free_gb": $disk_free_gb,
     "mac_address": "$mac_address",
     "ip_address": "$ip_address"
 }
 EOF
 }
 
-# Get current metrics
+# Get metrics
 get_metrics() {
     # CPU usage (average over 1 second)
-    local cpu_usage=$(top -bn2 -d0.5 | grep "Cpu(s)" | tail -1 | awk '{print $2}' | cut -d'%' -f1)
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1)
+    if [ -z "$cpu_usage" ]; then
+        cpu_usage=$(vmstat 1 2 | tail -1 | awk '{print 100-$15}')
+    fi
     
     # RAM usage
-    local mem_info=$(free | awk '/Mem:/ {print $2, $3}')
-    local mem_total=$(echo "$mem_info" | awk '{print $1}')
-    local mem_used=$(echo "$mem_info" | awk '{print $2}')
-    local ram_usage=$(echo "scale=2; $mem_used / $mem_total * 100" | bc)
-    local ram_used_gb=$(echo "scale=2; $mem_used / 1024 / 1024" | bc)
+    local mem_info=$(free -m | grep Mem)
+    local ram_total=$(echo $mem_info | awk '{print $2}')
+    local ram_used=$(echo $mem_info | awk '{print $3}')
+    local ram_usage=$(echo "scale=2; $ram_used * 100 / $ram_total" | bc)
+    local ram_used_gb=$(echo "scale=2; $ram_used / 1024" | bc)
     
     # Disk usage
-    local disk_info=$(df / | awk 'NR==2 {print $5, $3, $4}')
-    local disk_usage=$(echo "$disk_info" | awk '{print $1}' | tr -d '%')
-    local disk_used_gb=$(echo "$disk_info" | awk '{printf "%.2f", $2/1024/1024}')
-    local disk_free_gb=$(echo "$disk_info" | awk '{printf "%.2f", $3/1024/1024}')
+    local disk_info=$(df / | tail -1)
+    local disk_used=$(echo $disk_info | awk '{print $3}')
+    local disk_total=$(echo $disk_info | awk '{print $2}')
+    local disk_usage=$(echo $disk_info | awk '{print $5}' | tr -d '%')
+    local disk_used_gb=$(echo "scale=2; $disk_used / 1024 / 1024" | bc)
+    local disk_free=$(echo $disk_info | awk '{print $4}')
+    local disk_free_gb=$(echo "scale=2; $disk_free / 1024 / 1024" | bc)
     
     # Uptime
-    local uptime_seconds=$(awk '{print int($1)}' /proc/uptime)
+    local uptime_seconds=$(cat /proc/uptime | awk '{print int($1)}')
     
     # Process count
     local process_count=$(ps aux | wc -l)
     
     # Logged in users
-    local logged_in_users=$(who | awk '{print $1}' | sort -u | tr '\n' ',' | sed 's/,$//')
+    local logged_users=$(who | awk '{print $1}' | sort | uniq | jq -R . | jq -s .)
+    
+    # IP addresses
+    local primary_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+    local ip_address=$(ip addr show $primary_interface 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1)
     
     # Public IP
-    local public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || echo "")
+    local public_ip=$(curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || echo "")
     
     cat << EOF
 {
@@ -134,245 +184,318 @@ get_metrics() {
     "disk_free_gb": $disk_free_gb,
     "uptime_seconds": $uptime_seconds,
     "process_count": $process_count,
-    "logged_in_users": ["$logged_in_users"],
+    "logged_in_users": $logged_users,
+    "ip_address": "$ip_address",
     "public_ip": "$public_ip"
 }
 EOF
 }
 
-# Get installed software (Debian/Ubuntu)
+# Get software inventory
 get_software_inventory() {
-    echo "["
-    local first=true
+    local software="[]"
     
     if command -v dpkg &> /dev/null; then
-        dpkg-query -W -f='${Package}\t${Version}\t${Maintainer}\n' 2>/dev/null | while IFS=$'\t' read -r name version vendor; do
-            if [ "$first" = true ]; then
-                first=false
-            else
-                echo ","
-            fi
-            echo "  {\"name\": \"$name\", \"version\": \"$version\", \"vendor\": \"$vendor\"}"
-        done
+        software=$(dpkg -l | grep ^ii | awk '{print "{\"name\":\"" $2 "\",\"version\":\"" $3 "\",\"vendor\":\"\"}"}' | jq -s '.')
     elif command -v rpm &> /dev/null; then
-        rpm -qa --queryformat '%{NAME}\t%{VERSION}\t%{VENDOR}\n' 2>/dev/null | while IFS=$'\t' read -r name version vendor; do
-            if [ "$first" = true ]; then
-                first=false
-            else
-                echo ","
-            fi
-            echo "  {\"name\": \"$name\", \"version\": \"$version\", \"vendor\": \"$vendor\"}"
-        done
+        software=$(rpm -qa --queryformat '{"name":"%{NAME}","version":"%{VERSION}","vendor":"%{VENDOR}"}\n' | jq -s '.')
     fi
     
-    echo "]"
+    echo "$software"
 }
 
 # Get hardware inventory
 get_hardware_inventory() {
-    echo "["
+    local hardware="[]"
     
     # CPU
-    local cpu_model=$(grep "model name" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
-    local cpu_vendor=$(grep "vendor_id" /proc/cpuinfo | head -1 | cut -d':' -f2 | xargs)
-    local cpu_cores=$(nproc)
-    echo "  {\"component_type\": \"cpu\", \"manufacturer\": \"$cpu_vendor\", \"model\": \"$cpu_model\", \"capacity\": \"$cpu_cores Cores\"},"
+    local cpu_info=$(cat /proc/cpuinfo | grep -m1 "model name" | cut -d: -f2 | xargs)
+    local cpu_vendor=$(cat /proc/cpuinfo | grep -m1 "vendor_id" | cut -d: -f2 | xargs)
     
     # Memory
-    local mem_total=$(free -h | awk '/Mem:/ {print $2}')
-    echo "  {\"component_type\": \"memory\", \"capacity\": \"$mem_total\"},"
+    local mem_total=$(free -h | grep Mem | awk '{print $2}')
     
     # Disk
-    lsblk -d -o NAME,SIZE,MODEL,SERIAL 2>/dev/null | tail -n +2 | while read -r name size model serial; do
-        echo "  {\"component_type\": \"disk\", \"model\": \"$model\", \"serial_number\": \"$serial\", \"capacity\": \"$size\"},"
-    done
+    local disk_model=$(lsblk -d -o MODEL | tail -n +2 | head -1 | xargs)
+    local disk_size=$(lsblk -d -o SIZE | tail -n +2 | head -1 | xargs)
+    local disk_serial=$(lsblk -d -o SERIAL | tail -n +2 | head -1 | xargs 2>/dev/null || echo "")
     
     # Network
-    local net_model=$(lspci 2>/dev/null | grep -i ethernet | head -1 | cut -d':' -f3 | xargs || echo "Unknown")
-    local mac=$(ip link show | grep -A1 "state UP" | grep "ether" | head -1 | awk '{print $2}')
-    echo "  {\"component_type\": \"network\", \"model\": \"$net_model\", \"serial_number\": \"$mac\"}"
+    local net_interface=$(ip route | grep default | awk '{print $5}' | head -1)
+    local net_mac=$(ip link show $net_interface 2>/dev/null | grep ether | awk '{print $2}')
+    local net_speed=$(ethtool $net_interface 2>/dev/null | grep Speed | awk '{print $2}' || echo "Unknown")
     
-    echo "]"
-}
-
-# Make API request
-api_request() {
-    local endpoint="$1"
-    local method="$2"
-    local data="$3"
-    
-    local url="${SERVER_URL}/api${endpoint}"
-    
-    if [ "$method" = "POST" ] && [ -n "$data" ]; then
-        curl -s -X POST "$url" \
-            -H "Content-Type: application/json" \
-            -H "X-Agent-Version: $AGENT_VERSION" \
-            -d "$data" \
-            --max-time 30
-    else
-        curl -s -X GET "$url" \
-            -H "X-Agent-Version: $AGENT_VERSION" \
-            --max-time 30
-    fi
+    cat << EOF
+[
+    {"component_type": "cpu", "manufacturer": "$cpu_vendor", "model": "$cpu_info", "capacity": "$(nproc) cores"},
+    {"component_type": "memory", "model": "System Memory", "capacity": "$mem_total"},
+    {"component_type": "disk", "model": "$disk_model", "capacity": "$disk_size", "serial_number": "$disk_serial"},
+    {"component_type": "network", "model": "$net_interface", "serial_number": "$net_mac", "speed": "$net_speed"}
+]
+EOF
 }
 
 # Register agent
 register_agent() {
-    log "INFO" "Registering agent with token: $ENROLLMENT_TOKEN"
+    log "INFO" "Registering agent with token: ${ENROLLMENT_TOKEN:0:10}***"
     
     local system_info=$(get_system_info)
-    local data=$(echo "$system_info" | jq ". + {\"token\": \"$ENROLLMENT_TOKEN\"}")
+    local payload=$(echo "$system_info" | jq --arg token "$ENROLLMENT_TOKEN" '. + {token: $token}')
     
-    local result=$(api_request "/rmm/enroll" "POST" "$data")
+    local response=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "$payload" \
+        --connect-timeout 30 \
+        "$API_URL/rmm/enroll")
     
-    if echo "$result" | jq -e '.success' > /dev/null 2>&1; then
-        AGENT_ID=$(echo "$result" | jq -r '.agent_id')
-        DEVICE_ID=$(echo "$result" | jq -r '.device_id')
-        
-        # Save config
-        cat > "$CONFIG_FILE" << EOF
-{
-    "agent_id": "$AGENT_ID",
-    "device_id": "$DEVICE_ID",
-    "server_url": "$SERVER_URL",
-    "enrollment_token": "$ENROLLMENT_TOKEN",
-    "registered_at": "$(date -Iseconds)"
-}
-EOF
-        log "INFO" "Agent registered successfully. Device ID: $DEVICE_ID"
+    local success=$(echo "$response" | jq -r '.success // false')
+    
+    if [ "$success" = "true" ]; then
+        AGENT_ID=$(echo "$response" | jq -r '.agent_id')
+        DEVICE_ID=$(echo "$response" | jq -r '.device_id')
+        log "SUCCESS" "Agent registered successfully. Device ID: $DEVICE_ID, Agent ID: $AGENT_ID"
         return 0
     else
-        log "ERROR" "Failed to register agent: $result"
+        local error=$(echo "$response" | jq -r '.error // "Unknown error"')
+        log "ERROR" "Registration failed: $error"
         return 1
     fi
 }
 
 # Send heartbeat
 send_heartbeat() {
-    if [ -z "$AGENT_ID" ]; then
-        log "WARN" "Agent not registered, skipping heartbeat"
-        return
-    fi
-    
     local metrics=$(get_metrics)
-    local data=$(echo "$metrics" | jq ". + {\"agent_id\": \"$AGENT_ID\"}")
+    local payload=$(echo "$metrics" | jq --arg agent_id "$AGENT_ID" '. + {agent_id: $agent_id}')
     
-    local result=$(api_request "/rmm/heartbeat" "POST" "$data")
+    local response=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Agent-Token: $AGENT_ID" \
+        -d "$payload" \
+        --connect-timeout 30 \
+        "$API_URL/rmm/heartbeat")
     
-    if echo "$result" | jq -e '.success' > /dev/null 2>&1; then
-        local cpu=$(echo "$metrics" | jq -r '.cpu_usage')
-        local ram=$(echo "$metrics" | jq -r '.ram_usage')
-        local disk=$(echo "$metrics" | jq -r '.disk_usage')
-        log "INFO" "Heartbeat sent. CPU: ${cpu}%, RAM: ${ram}%, Disk: ${disk}%"
+    local success=$(echo "$response" | jq -r '.success // false')
+    
+    if [ "$success" = "true" ]; then
+        log "INFO" "Heartbeat sent successfully"
         
         # Check for pending jobs
-        local pending_jobs=$(echo "$result" | jq -r '.pending_jobs // []')
-        local job_count=$(echo "$pending_jobs" | jq 'length')
-        
-        if [ "$job_count" -gt 0 ]; then
-            log "INFO" "Found $job_count pending job(s)"
-            # Execute jobs (simplified)
+        local pending_jobs=$(echo "$response" | jq -r '.pending_jobs // []')
+        if [ "$pending_jobs" != "[]" ] && [ "$pending_jobs" != "null" ]; then
+            execute_jobs "$pending_jobs"
         fi
+    else
+        log "ERROR" "Heartbeat failed"
     fi
 }
 
 # Send inventory
 send_inventory() {
-    if [ -z "$AGENT_ID" ]; then
-        return
-    fi
-    
-    log "INFO" "Collecting inventory..."
+    log "INFO" "Collecting and sending inventory..."
     
     local software=$(get_software_inventory)
     local hardware=$(get_hardware_inventory)
     
-    local data=$(cat << EOF
-{
-    "agent_id": "$AGENT_ID",
-    "software": $software,
-    "hardware": $hardware
-}
-EOF
-)
+    local payload=$(jq -n \
+        --arg agent_id "$AGENT_ID" \
+        --argjson software "$software" \
+        --argjson hardware "$hardware" \
+        '{agent_id: $agent_id, software: $software, hardware: $hardware}')
     
-    local result=$(api_request "/rmm/inventory/report" "POST" "$data")
+    local response=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Agent-Token: $AGENT_ID" \
+        -d "$payload" \
+        --connect-timeout 60 \
+        "$API_URL/rmm/inventory/report")
     
-    if echo "$result" | jq -e '.success' > /dev/null 2>&1; then
-        local sw_count=$(echo "$result" | jq -r '.software_count // 0')
-        local hw_count=$(echo "$result" | jq -r '.hardware_count // 0')
-        log "INFO" "Inventory reported: $sw_count software, $hw_count hardware items"
+    local success=$(echo "$response" | jq -r '.success // false')
+    
+    if [ "$success" = "true" ]; then
+        local sw_count=$(echo "$response" | jq -r '.software_count // 0')
+        local hw_count=$(echo "$response" | jq -r '.hardware_count // 0')
+        log "SUCCESS" "Inventory sent: $sw_count software, $hw_count hardware items"
+    else
+        log "ERROR" "Inventory send failed"
     fi
 }
 
-# Install as systemd service
+# Execute pending jobs
+execute_jobs() {
+    local jobs="$1"
+    
+    echo "$jobs" | jq -c '.[]' | while read job; do
+        local job_id=$(echo "$job" | jq -r '.id')
+        local script_content=$(echo "$job" | jq -r '.deployment_jobs.script_content // ""')
+        local command=$(echo "$job" | jq -r '.deployment_jobs.command // ""')
+        
+        log "INFO" "Executing job: $job_id"
+        
+        local output=""
+        local exit_code=0
+        local status="success"
+        
+        if [ -n "$script_content" ] && [ "$script_content" != "null" ]; then
+            output=$(bash -c "$script_content" 2>&1) || exit_code=$?
+        elif [ -n "$command" ] && [ "$command" != "null" ]; then
+            output=$(bash -c "$command" 2>&1) || exit_code=$?
+        fi
+        
+        if [ $exit_code -ne 0 ]; then
+            status="failed"
+        fi
+        
+        # Report result
+        local report_payload=$(jq -n \
+            --arg exec_id "$job_id" \
+            --arg status "$status" \
+            --argjson exit_code "$exit_code" \
+            --arg output "${output:0:10000}" \
+            '{execution_id: $exec_id, status: $status, exit_code: $exit_code, output: $output}')
+        
+        curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Agent-Token: $AGENT_ID" \
+            -d "$report_payload" \
+            "$API_URL/rmm/deployment-jobs/report" > /dev/null
+        
+        log "INFO" "Job $job_id completed with status: $status"
+    done
+}
+
+# Install systemd service
 install_service() {
-    cat > /etc/systemd/system/itrex-rmm-agent.service << EOF
+    log "INFO" "Installing IT REX RMM Agent service..."
+    
+    # Create agent directory
+    mkdir -p "$AGENT_PATH"
+    
+    # Save config
+    cat > "$CONFIG_FILE" << EOF
+{
+    "api_url": "$API_URL",
+    "agent_id": "$AGENT_ID",
+    "device_id": "$DEVICE_ID",
+    "heartbeat_interval": $HEARTBEAT_INTERVAL,
+    "inventory_interval": 3600
+}
+EOF
+    
+    # Copy script
+    cp "$0" "$AGENT_PATH/agent.sh"
+    chmod +x "$AGENT_PATH/agent.sh"
+    
+    # Create systemd service
+    cat > /etc/systemd/system/itrex-rmm.service << EOF
 [Unit]
 Description=IT REX RMM Agent
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash $0 -t "$ENROLLMENT_TOKEN" -s "$SERVER_URL" -i $HEARTBEAT_INTERVAL
+ExecStart=$AGENT_PATH/agent.sh -s
 Restart=always
-RestartSec=10
+RestartSec=30
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
-
+    
     systemctl daemon-reload
-    systemctl enable itrex-rmm-agent
-    systemctl start itrex-rmm-agent
-    log "INFO" "Service installed and started"
+    systemctl enable itrex-rmm
+    systemctl start itrex-rmm
+    
+    log "SUCCESS" "Agent service installed and started"
 }
 
-# Main execution
-log "INFO" "IT REX RMM Agent v$AGENT_VERSION starting..."
-log "INFO" "Server: $SERVER_URL"
-
-# Check dependencies
-for cmd in curl jq bc; do
-    if ! command -v $cmd &> /dev/null; then
-        log "ERROR" "Required command not found: $cmd"
-        log "INFO" "Install with: apt-get install -y curl jq bc"
+# Service mode
+run_service_mode() {
+    # Load config
+    if [ ! -f "$CONFIG_FILE" ]; then
+        log "ERROR" "Config file not found"
         exit 1
     fi
-done
-
-# Load existing config or register
-if [ -f "$CONFIG_FILE" ]; then
+    
+    API_URL=$(jq -r '.api_url' "$CONFIG_FILE")
     AGENT_ID=$(jq -r '.agent_id' "$CONFIG_FILE")
     DEVICE_ID=$(jq -r '.device_id' "$CONFIG_FILE")
-    log "INFO" "Loaded existing configuration. Agent ID: $AGENT_ID"
-else
-    if [ -z "$ENROLLMENT_TOKEN" ]; then
-        log "ERROR" "No enrollment token provided and no existing config found"
-        echo "Usage: $0 -t <enrollment_token> [-s <server_url>] [-i <interval>]"
+    HEARTBEAT_INTERVAL=$(jq -r '.heartbeat_interval' "$CONFIG_FILE")
+    INVENTORY_INTERVAL=$(jq -r '.inventory_interval // 3600' "$CONFIG_FILE")
+    
+    log "INFO" "Starting IT REX RMM Agent in service mode..."
+    
+    local last_inventory=$(date +%s)
+    
+    while true; do
+        send_heartbeat
+        
+        # Send inventory every hour
+        local now=$(date +%s)
+        if [ $((now - last_inventory)) -ge $INVENTORY_INTERVAL ]; then
+            send_inventory
+            last_inventory=$now
+        fi
+        
+        sleep $HEARTBEAT_INTERVAL
+    done
+}
+
+# Main
+main() {
+    parse_args "$@"
+    
+    # Service mode
+    if [ "$SERVICE_MODE" = true ]; then
+        run_service_mode
+        exit 0
+    fi
+    
+    show_banner
+    check_root
+    
+    # Create directories
+    mkdir -p "$AGENT_PATH"
+    touch "$LOG_FILE"
+    
+    # Validate arguments
+    if [ -z "$ENROLLMENT_TOKEN" ] || [ -z "$API_URL" ]; then
+        echo -e "${RED}Usage: sudo $0 -t \"ENROLLMENT_TOKEN\" -u \"API_URL\"${NC}"
+        echo ""
+        echo "Options:"
+        echo "  -t    Enrollment token from IT REX ServiceDesk"
+        echo "  -u    API URL (e.g., https://yourservicedesk.com/api)"
+        echo "  -h    Heartbeat interval in seconds (default: 60)"
         exit 1
     fi
     
-    if ! register_agent; then
-        log "ERROR" "Registration failed. Exiting."
-        exit 1
-    fi
-fi
-
-# Initial inventory
-send_inventory
-
-# Heartbeat loop
-inventory_counter=0
-while true; do
-    send_heartbeat
+    log "INFO" "Starting IT REX RMM Agent installation..."
+    log "INFO" "API URL: $API_URL"
+    log "INFO" "Enrollment Token: ${ENROLLMENT_TOKEN:0:10}***"
     
-    # Send inventory every hour
-    ((inventory_counter++))
-    if [ $inventory_counter -ge $((3600 / HEARTBEAT_INTERVAL)) ]; then
+    install_dependencies
+    
+    if register_agent; then
+        install_service
         send_inventory
-        inventory_counter=0
+        
+        echo ""
+        echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+        echo -e "${GREEN}  IT REX RMM Agent installed successfully!${NC}"
+        echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo "  Device ID: $DEVICE_ID"
+        echo "  Agent ID:  $AGENT_ID"
+        echo "  Log file:  $LOG_FILE"
+        echo ""
+        echo "  Service status: systemctl status itrex-rmm"
+        echo ""
+    else
+        echo ""
+        echo -e "${RED}Installation failed. Please check the enrollment token and try again.${NC}"
+        echo ""
+        exit 1
     fi
-    
-    sleep $HEARTBEAT_INTERVAL
-done
+}
+
+main "$@"

@@ -13717,17 +13717,18 @@ async function handleGetDocumentationOverview(orgId) {
 async function handleGetDocScans(params) {
   try {
     const orgId = params.organization_id || params?.get?.('organization_id')
-    let query = supabaseAdmin
-      .from('doc_discovery_scans')
-      .select('*')
-      .order('created_at', { ascending: false })
-    
-    if (orgId) query = query.eq('organization_id', orgId)
-    
-    const { data, error } = await query
+    const { data, error } = await safeDocQuery('doc_discovery_scans', () => {
+      let query = supabaseAdmin
+        .from('doc_discovery_scans')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (orgId) query = query.eq('organization_id', orgId)
+      return query
+    })
     if (error) throw error
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -13747,7 +13748,12 @@ async function handleCreateDocScan(body) {
       .select()
       .single()
     
-    if (error) throw error
+    if (error) {
+      if (error.message?.includes('does not exist')) {
+        return NextResponse.json({ error: 'Bitte führen Sie zuerst schema-documentation.sql in Supabase aus' }, { status: 400 })
+      }
+      throw error
+    }
     return NextResponse.json(data)
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

@@ -1,11 +1,23 @@
+#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    IT REX RMM Agent for Windows
+    IT REX RMM Agent - Windows PowerShell Installation Script
+
 .DESCRIPTION
-    Remote Monitoring & Management Agent
-    Sends heartbeat, metrics, and inventory to IT REX ServiceDesk
+    Installs and configures the IT REX RMM Agent on Windows systems.
+    Connects to the IT REX ServiceDesk for monitoring and management.
+
+.PARAMETER EnrollmentToken
+    The enrollment token from the IT REX ServiceDesk
+
+.PARAMETER ApiUrl
+    The base URL of the IT REX ServiceDesk API
+
+.EXAMPLE
+    .\itrex-rmm-agent.ps1 -EnrollmentToken "ITREX-ABC123-XYZ" -ApiUrl "https://yourservicedesk.com/api"
+
 .NOTES
-    Version: 1.0.0
+    Version: 1.0
     Author: IT REX Solutions
 #>
 
@@ -13,147 +25,118 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$EnrollmentToken,
     
-    [Parameter(Mandatory=$false)]
-    [string]$ServerUrl = "https://your-servicedesk.domain.de",
+    [Parameter(Mandatory=$true)]
+    [string]$ApiUrl,
     
-    [Parameter(Mandatory=$false)]
-    [int]$HeartbeatInterval = 60
+    [int]$HeartbeatInterval = 60,
+    
+    [switch]$InstallRustDesk
 )
 
-# Configuration
-$AgentVersion = "1.0.0"
-$AgentId = $null
-$DeviceId = $null
-$ConfigPath = "$env:ProgramData\ITREX-RMM"
-$ConfigFile = "$ConfigPath\agent.json"
-$LogFile = "$ConfigPath\agent.log"
-
-# Create config directory
-if (!(Test-Path $ConfigPath)) {
-    New-Item -ItemType Directory -Path $ConfigPath -Force | Out-Null
-}
+$ErrorActionPreference = "Stop"
+$AgentPath = "$env:ProgramData\ITREXAgent"
+$LogFile = "$AgentPath\agent.log"
 
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $logEntry = "[$timestamp] [$Level] $Message"
-    Add-Content -Path $LogFile -Value $logEntry
-    if ($Level -eq "ERROR") {
-        Write-Host $logEntry -ForegroundColor Red
-    } else {
-        Write-Host $logEntry
+    Add-Content -Path $LogFile -Value $logEntry -ErrorAction SilentlyContinue
+    switch ($Level) {
+        "ERROR" { Write-Host $logEntry -ForegroundColor Red }
+        "WARNING" { Write-Host $logEntry -ForegroundColor Yellow }
+        "SUCCESS" { Write-Host $logEntry -ForegroundColor Green }
+        default { Write-Host $logEntry }
     }
 }
 
 function Get-SystemInfo {
+    $computerInfo = Get-ComputerInfo
     $os = Get-CimInstance Win32_OperatingSystem
-    $cs = Get-CimInstance Win32_ComputerSystem
     $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-    $network = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object -First 1
+    $network = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+    $ip = Get-NetIPAddress -InterfaceIndex $network.ifIndex -AddressFamily IPv4 | Select-Object -First 1
     
     return @{
         hostname = $env:COMPUTERNAME
-        domain = $env:USERDOMAIN
-        os_type = "windows"
+        os_type = "Windows"
         os_version = $os.Caption
         os_build = $os.BuildNumber
         cpu_model = $cpu.Name
-        cpu_cores = $cs.NumberOfLogicalProcessors
-        ram_total_gb = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
+        cpu_cores = $cpu.NumberOfCores
+        ram_total_gb = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
         disk_total_gb = [math]::Round($disk.Size / 1GB, 2)
-        disk_free_gb = [math]::Round($disk.FreeSpace / 1GB, 2)
         mac_address = $network.MacAddress
-        ip_address = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127.*" } | Select-Object -First 1).IPAddress
+        ip_address = $ip.IPAddress
     }
 }
 
 function Get-Metrics {
-    $cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+    $cpu = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
     $os = Get-CimInstance Win32_OperatingSystem
-    $ram_used = $os.TotalVisibleMemorySize - $os.FreePhysicalMemory
-    $ram_total = $os.TotalVisibleMemorySize
-    $ram_usage = [math]::Round(($ram_used / $ram_total) * 100, 2)
-    
-    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
-    $disk_used = $disk.Size - $disk.FreeSpace
-    $disk_usage = [math]::Round(($disk_used / $disk.Size) * 100, 2)
-    
-    $uptime = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+    $ramUsed = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize * 100
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object -First 1
+    $diskUsed = ($disk.Size - $disk.FreeSpace) / $disk.Size * 100
+    $uptime = (Get-Date) - $os.LastBootUpTime
     $processes = (Get-Process).Count
-    $users = (Get-CimInstance Win32_ComputerSystem).UserName
-    
-    # Get public IP
-    try {
-        $publicIp = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -TimeoutSec 5).ip
-    } catch {
-        $publicIp = $null
-    }
+    $loggedUsers = (Get-CimInstance Win32_ComputerSystem).UserName
     
     return @{
         cpu_usage = [math]::Round($cpu, 2)
-        ram_usage = $ram_usage
-        ram_used_gb = [math]::Round($ram_used / 1MB / 1024, 2)
-        disk_usage = $disk_usage
-        disk_used_gb = [math]::Round($disk_used / 1GB, 2)
+        ram_usage = [math]::Round($ramUsed, 2)
+        ram_used_gb = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2)
+        disk_usage = [math]::Round($diskUsed, 2)
+        disk_used_gb = [math]::Round(($disk.Size - $disk.FreeSpace) / 1GB, 2)
         disk_free_gb = [math]::Round($disk.FreeSpace / 1GB, 2)
         uptime_seconds = [math]::Round($uptime.TotalSeconds)
         process_count = $processes
-        logged_in_users = @($users)
-        public_ip = $publicIp
+        logged_in_users = @($loggedUsers)
+        ip_address = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" } | Select-Object -First 1).IPAddress
+        public_ip = (Invoke-RestMethod -Uri "https://api.ipify.org?format=json" -TimeoutSec 5).ip
     }
 }
 
-function Get-InstalledSoftware {
+function Get-SoftwareInventory {
     $software = @()
     
     # 64-bit software
-    $regPath64 = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    $software += Get-ItemProperty $regPath64 -ErrorAction SilentlyContinue | 
+    $software += Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName } |
-        Select-Object @{N='name';E={$_.DisplayName}}, 
-                      @{N='version';E={$_.DisplayVersion}}, 
-                      @{N='vendor';E={$_.Publisher}},
-                      @{N='install_date';E={$_.InstallDate}},
-                      @{N='install_location';E={$_.InstallLocation}}
+        Select-Object @{N="name";E={$_.DisplayName}}, @{N="version";E={$_.DisplayVersion}}, @{N="vendor";E={$_.Publisher}}, @{N="install_date";E={$_.InstallDate}}, @{N="install_location";E={$_.InstallLocation}}
     
     # 32-bit software on 64-bit Windows
-    $regPath32 = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    $software += Get-ItemProperty $regPath32 -ErrorAction SilentlyContinue | 
+    $software += Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName } |
-        Select-Object @{N='name';E={$_.DisplayName}}, 
-                      @{N='version';E={$_.DisplayVersion}}, 
-                      @{N='vendor';E={$_.Publisher}},
-                      @{N='install_date';E={$_.InstallDate}},
-                      @{N='install_location';E={$_.InstallLocation}}
+        Select-Object @{N="name";E={$_.DisplayName}}, @{N="version";E={$_.DisplayVersion}}, @{N="vendor";E={$_.Publisher}}, @{N="install_date";E={$_.InstallDate}}, @{N="install_location";E={$_.InstallLocation}}
     
-    return $software | Sort-Object name -Unique
+    return $software | Select-Object -Unique name, version, vendor, install_date, install_location
 }
 
 function Get-HardwareInventory {
     $hardware = @()
     
     # CPU
-    $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-    $hardware += @{
-        component_type = "cpu"
-        manufacturer = $cpu.Manufacturer
-        model = $cpu.Name
-        serial_number = $cpu.ProcessorId
-        speed = "$($cpu.MaxClockSpeed) MHz"
-        capacity = "$($cpu.NumberOfCores) Cores"
+    Get-CimInstance Win32_Processor | ForEach-Object {
+        $hardware += @{
+            component_type = "cpu"
+            manufacturer = $_.Manufacturer
+            model = $_.Name
+            serial_number = $_.ProcessorId
+            capacity = "$($_.MaxClockSpeed) MHz"
+            speed = "$($_.CurrentClockSpeed) MHz"
+        }
     }
     
-    # Memory
+    # RAM
     Get-CimInstance Win32_PhysicalMemory | ForEach-Object {
         $hardware += @{
             component_type = "memory"
             manufacturer = $_.Manufacturer
-            model = $_.PartNumber
-            serial_number = $_.SerialNumber
+            model = $_.PartNumber.Trim()
+            serial_number = $_.SerialNumber.Trim()
             capacity = "$([math]::Round($_.Capacity / 1GB)) GB"
             speed = "$($_.Speed) MHz"
-            interface_type = "DDR$($_.SMBIOSMemoryType)"
         }
     }
     
@@ -163,49 +146,46 @@ function Get-HardwareInventory {
             component_type = "disk"
             manufacturer = $_.Manufacturer
             model = $_.Model
-            serial_number = $_.SerialNumber
+            serial_number = $_.SerialNumber.Trim()
             capacity = "$([math]::Round($_.Size / 1GB)) GB"
             interface_type = $_.InterfaceType
         }
     }
     
     # Network Adapters
-    Get-NetAdapter | Where-Object Status -eq "Up" | ForEach-Object {
+    Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | ForEach-Object {
         $hardware += @{
             component_type = "network"
             manufacturer = $_.DriverProvider
             model = $_.InterfaceDescription
             serial_number = $_.MacAddress
-            speed = "$([math]::Round($_.LinkSpeed / 1000000)) Mbps"
+            speed = "$($_.LinkSpeed)"
         }
     }
     
     return $hardware
 }
 
-function Invoke-ApiRequest {
+function Invoke-APIRequest {
     param(
         [string]$Endpoint,
-        [string]$Method = "GET",
-        [hashtable]$Body = $null
+        [string]$Method = "POST",
+        [hashtable]$Body
     )
     
-    $uri = "$ServerUrl/api$Endpoint"
+    $uri = "$ApiUrl$Endpoint"
     $headers = @{
         "Content-Type" = "application/json"
-        "X-Agent-Version" = $AgentVersion
+        "X-Agent-Token" = $script:AgentId
     }
     
     try {
-        if ($Body) {
-            $jsonBody = $Body | ConvertTo-Json -Depth 10
-            $response = Invoke-RestMethod -Uri $uri -Method $Method -Headers $headers -Body $jsonBody -TimeoutSec 30
-        } else {
-            $response = Invoke-RestMethod -Uri $uri -Method $Method -Headers $headers -TimeoutSec 30
-        }
+        $jsonBody = $Body | ConvertTo-Json -Depth 10 -Compress
+        $response = Invoke-RestMethod -Uri $uri -Method $Method -Headers $headers -Body $jsonBody -TimeoutSec 30
         return $response
-    } catch {
-        Write-Log "API Error: $($_.Exception.Message)" "ERROR"
+    }
+    catch {
+        Write-Log "API request failed: $($_.Exception.Message)" "ERROR"
         return $null
     }
 }
@@ -218,49 +198,40 @@ function Register-Agent {
         token = $EnrollmentToken
     } + $systemInfo
     
-    $result = Invoke-ApiRequest -Endpoint "/rmm/enroll" -Method "POST" -Body $body
-    
-    if ($result -and $result.success) {
-        $script:AgentId = $result.agent_id
-        $script:DeviceId = $result.device_id
+    try {
+        $uri = "$ApiUrl/rmm/enroll"
+        $jsonBody = $body | ConvertTo-Json -Depth 10
+        $response = Invoke-RestMethod -Uri $uri -Method POST -ContentType "application/json" -Body $jsonBody -TimeoutSec 30
         
-        # Save config
-        @{
-            agent_id = $AgentId
-            device_id = $DeviceId
-            server_url = $ServerUrl
-            enrollment_token = $EnrollmentToken
-            registered_at = (Get-Date).ToString("o")
-        } | ConvertTo-Json | Set-Content -Path $ConfigFile
-        
-        Write-Log "Agent registered successfully. Device ID: $DeviceId"
-        return $true
-    } else {
-        Write-Log "Failed to register agent" "ERROR"
-        return $false
+        if ($response.success) {
+            Write-Log "Agent registered successfully. Device ID: $($response.device_id), Agent ID: $($response.agent_id)" "SUCCESS"
+            return $response
+        }
+        else {
+            Write-Log "Registration failed: $($response.error)" "ERROR"
+            return $null
+        }
+    }
+    catch {
+        Write-Log "Registration failed: $($_.Exception.Message)" "ERROR"
+        return $null
     }
 }
 
 function Send-Heartbeat {
-    if (!$AgentId) {
-        Write-Log "Agent not registered, skipping heartbeat" "WARN"
-        return
-    }
-    
     $metrics = Get-Metrics
     $body = @{
-        agent_id = $AgentId
+        agent_id = $script:AgentId
     } + $metrics
     
-    $result = Invoke-ApiRequest -Endpoint "/rmm/heartbeat" -Method "POST" -Body $body
+    $response = Invoke-APIRequest -Endpoint "/rmm/heartbeat" -Body $body
     
-    if ($result -and $result.success) {
-        Write-Log "Heartbeat sent. CPU: $($metrics.cpu_usage)%, RAM: $($metrics.ram_usage)%, Disk: $($metrics.disk_usage)%"
+    if ($response) {
+        Write-Log "Heartbeat sent successfully"
         
-        # Check for pending jobs
-        if ($result.pending_jobs -and $result.pending_jobs.Count -gt 0) {
-            Write-Log "Found $($result.pending_jobs.Count) pending job(s)"
-            foreach ($job in $result.pending_jobs) {
+        # Process pending jobs
+        if ($response.pending_jobs -and $response.pending_jobs.Count -gt 0) {
+            foreach ($job in $response.pending_jobs) {
                 Execute-Job -Job $job
             }
         }
@@ -268,23 +239,21 @@ function Send-Heartbeat {
 }
 
 function Send-Inventory {
-    if (!$AgentId) { return }
+    Write-Log "Collecting and sending inventory..."
     
-    Write-Log "Collecting inventory..."
-    
-    $software = Get-InstalledSoftware
+    $software = Get-SoftwareInventory
     $hardware = Get-HardwareInventory
     
     $body = @{
-        agent_id = $AgentId
+        agent_id = $script:AgentId
         software = $software
         hardware = $hardware
     }
     
-    $result = Invoke-ApiRequest -Endpoint "/rmm/inventory/report" -Method "POST" -Body $body
+    $response = Invoke-APIRequest -Endpoint "/rmm/inventory/report" -Body $body
     
-    if ($result -and $result.success) {
-        Write-Log "Inventory reported: $($result.software_count) software, $($result.hardware_count) hardware items"
+    if ($response -and $response.success) {
+        Write-Log "Inventory sent: $($response.software_count) software, $($response.hardware_count) hardware items" "SUCCESS"
     }
 }
 
@@ -293,72 +262,172 @@ function Execute-Job {
     
     Write-Log "Executing job: $($Job.id)"
     
-    # Report job started
-    Invoke-ApiRequest -Endpoint "/rmm/deployment-jobs/report" -Method "POST" -Body @{
-        execution_id = $Job.id
-        status = "running"
-    }
-    
     try {
-        $jobData = $Job.deployment_jobs
-        if ($jobData.script_content) {
-            $output = Invoke-Expression $jobData.script_content 2>&1 | Out-String
-            $exitCode = $LASTEXITCODE
-        } elseif ($jobData.command) {
-            $output = & cmd /c $jobData.command 2>&1 | Out-String
-            $exitCode = $LASTEXITCODE
+        $jobInfo = $Job.deployment_jobs
+        $startTime = Get-Date
+        $output = ""
+        $exitCode = 0
+        
+        if ($jobInfo.script_content) {
+            # Execute PowerShell script
+            $result = Invoke-Expression $jobInfo.script_content 2>&1
+            $output = $result | Out-String
+        }
+        elseif ($jobInfo.command) {
+            # Execute command
+            $result = Invoke-Expression $jobInfo.command 2>&1
+            $output = $result | Out-String
         }
         
-        # Report job completed
-        Invoke-ApiRequest -Endpoint "/rmm/deployment-jobs/report" -Method "POST" -Body @{
+        # Report result
+        $body = @{
             execution_id = $Job.id
-            status = if ($exitCode -eq 0) { "success" } else { "failed" }
+            status = "success"
             exit_code = $exitCode
-            output = $output
+            output = $output.Substring(0, [Math]::Min(10000, $output.Length))
         }
         
-        Write-Log "Job completed with exit code: $exitCode"
-    } catch {
-        Invoke-ApiRequest -Endpoint "/rmm/deployment-jobs/report" -Method "POST" -Body @{
+        Invoke-APIRequest -Endpoint "/rmm/deployment-jobs/report" -Body $body
+        Write-Log "Job completed: $($Job.id)" "SUCCESS"
+    }
+    catch {
+        $body = @{
             execution_id = $Job.id
             status = "failed"
+            exit_code = 1
             error_output = $_.Exception.Message
         }
-        Write-Log "Job failed: $($_.Exception.Message)" "ERROR"
+        
+        Invoke-APIRequest -Endpoint "/rmm/deployment-jobs/report" -Body $body
+        Write-Log "Job failed: $($Job.id) - $($_.Exception.Message)" "ERROR"
+    }
+}
+
+function Install-AgentService {
+    Write-Log "Installing IT REX RMM Agent service..."
+    
+    # Create agent directory
+    New-Item -ItemType Directory -Path $AgentPath -Force | Out-Null
+    
+    # Create config file
+    $config = @{
+        api_url = $ApiUrl
+        agent_id = $script:AgentId
+        device_id = $script:DeviceId
+        heartbeat_interval = $HeartbeatInterval
+        inventory_interval = 3600  # 1 hour
+    }
+    
+    $config | ConvertTo-Json | Set-Content "$AgentPath\config.json"
+    
+    # Copy script to agent directory
+    Copy-Item $PSCommandPath "$AgentPath\agent.ps1" -Force
+    
+    # Create scheduled task for heartbeat
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AgentPath\agent.ps1`" -RunService"
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    
+    Register-ScheduledTask -TaskName "ITREXRMMAgent" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force
+    
+    Write-Log "Agent service installed successfully" "SUCCESS"
+}
+
+function Start-ServiceMode {
+    # Load config
+    $configPath = "$AgentPath\config.json"
+    if (Test-Path $configPath) {
+        $config = Get-Content $configPath | ConvertFrom-Json
+        $script:ApiUrl = $config.api_url
+        $script:AgentId = $config.agent_id
+        $script:DeviceId = $config.device_id
+        $script:HeartbeatInterval = $config.heartbeat_interval
+    }
+    else {
+        Write-Log "Config file not found" "ERROR"
+        exit 1
+    }
+    
+    Write-Log "Starting IT REX RMM Agent in service mode..."
+    
+    $lastInventory = Get-Date
+    $inventoryInterval = 3600  # 1 hour
+    
+    while ($true) {
+        try {
+            Send-Heartbeat
+            
+            # Send inventory every hour
+            if ((Get-Date) -gt $lastInventory.AddSeconds($inventoryInterval)) {
+                Send-Inventory
+                $lastInventory = Get-Date
+            }
+        }
+        catch {
+            Write-Log "Error in service loop: $($_.Exception.Message)" "ERROR"
+        }
+        
+        Start-Sleep -Seconds $HeartbeatInterval
     }
 }
 
 # Main execution
-Write-Log "IT REX RMM Agent v$AgentVersion starting..."
-Write-Log "Server: $ServerUrl"
+Write-Host @"
 
-# Load existing config or register
-if (Test-Path $ConfigFile) {
-    $config = Get-Content $ConfigFile | ConvertFrom-Json
-    $AgentId = $config.agent_id
-    $DeviceId = $config.device_id
-    Write-Log "Loaded existing configuration. Agent ID: $AgentId"
-} else {
-    if (!(Register-Agent)) {
-        Write-Log "Registration failed. Exiting." "ERROR"
-        exit 1
-    }
+  ██╗████████╗    ██████╗ ███████╗██╗  ██╗
+  ██║╚══██╔══╝    ██╔══██╗██╔════╝╚██╗██╔╝
+  ██║   ██║       ██████╔╝█████╗   ╚███╔╝ 
+  ██║   ██║       ██╔══██╗██╔══╝   ██╔██╗ 
+  ██║   ██║       ██║  ██║███████╗██╔╝ ██╗
+  ╚═╝   ╚═╝       ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+                                          
+  RMM Agent Installer v1.0
+
+"@ -ForegroundColor Cyan
+
+# Create agent directory and log file
+New-Item -ItemType Directory -Path $AgentPath -Force | Out-Null
+New-Item -ItemType File -Path $LogFile -Force | Out-Null
+
+if ($PSBoundParameters.ContainsKey('RunService')) {
+    Start-ServiceMode
+    exit 0
 }
 
-# Initial inventory
-Send-Inventory
+Write-Log "Starting IT REX RMM Agent installation..."
+Write-Log "API URL: $ApiUrl"
+Write-Log "Enrollment Token: $($EnrollmentToken.Substring(0, [Math]::Min(10, $EnrollmentToken.Length)))***"
 
-# Heartbeat loop
-$inventoryCounter = 0
-while ($true) {
-    Send-Heartbeat
+# Register with ServiceDesk
+$registration = Register-Agent
+
+if ($registration -and $registration.success) {
+    $script:AgentId = $registration.agent_id
+    $script:DeviceId = $registration.device_id
     
-    # Send inventory every hour
-    $inventoryCounter++
-    if ($inventoryCounter -ge (3600 / $HeartbeatInterval)) {
-        Send-Inventory
-        $inventoryCounter = 0
-    }
+    # Install service
+    Install-AgentService
     
-    Start-Sleep -Seconds $HeartbeatInterval
+    # Send initial inventory
+    Send-Inventory
+    
+    # Start service
+    Start-ScheduledTask -TaskName "ITREXRMMAgent"
+    
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Green
+    Write-Host "  IT REX RMM Agent installed successfully!" -ForegroundColor Green
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Device ID: $script:DeviceId"
+    Write-Host "  Agent ID:  $script:AgentId"
+    Write-Host "  Log file:  $LogFile"
+    Write-Host ""
+}
+else {
+    Write-Host ""
+    Write-Host "Installation failed. Please check the enrollment token and try again." -ForegroundColor Red
+    Write-Host ""
+    exit 1
 }

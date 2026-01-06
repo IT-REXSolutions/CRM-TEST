@@ -14021,20 +14021,22 @@ async function handleGetDocADGroups(params) {
       if (domainId) {
         query = query.eq('domain_id', domainId)
       } else if (orgId) {
-      const { data: domains } = await supabaseAdmin
-        .from('doc_ad_domains')
-        .select('id')
-        .eq('organization_id', orgId)
-      
-      if (domains?.length) {
-        query = query.in('domain_id', domains.map(d => d.id))
+        const { data: domains } = await supabaseAdmin
+          .from('doc_ad_domains')
+          .select('id')
+          .eq('organization_id', orgId)
+        
+        if (domains?.length) {
+          query = query.in('domain_id', domains.map(d => d.id))
+        }
       }
-    }
+      return query.order('display_name')
+    })
     
-    const { data, error } = await query.order('display_name')
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -14043,13 +14045,16 @@ async function handleGetDocADComputers(params) {
   try {
     const domainId = params.domain_id || params?.get?.('domain_id')
     
-    let query = supabaseAdmin.from('doc_ad_computers').select('*')
-    if (domainId) query = query.eq('domain_id', domainId)
+    const { data, error } = await safeDocQuery('doc_ad_computers', () => {
+      let query = supabaseAdmin.from('doc_ad_computers').select('*')
+      if (domainId) query = query.eq('domain_id', domainId)
+      return query.order('sam_account_name')
+    })
     
-    const { data, error } = await query.order('sam_account_name')
-    if (error) throw error
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -14058,6 +14063,7 @@ async function handleGetDocADGPOs(params) {
   try {
     const domainId = params.domain_id || params?.get?.('domain_id')
     
+    const { data, error } = await safeDocQuery('doc_ad_gpos', () => {
     let query = supabaseAdmin.from('doc_ad_gpos').select('*')
     if (domainId) query = query.eq('domain_id', domainId)
     

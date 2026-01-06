@@ -15260,16 +15260,19 @@ async function handleExportDocumentationPDF(body) {
     const checksum = crypto.createHash('md5').update(JSON.stringify(exportData)).digest('hex')
     
     // Store report record if table exists
-    await supabaseAdmin
-      .from('doc_reports')
-      .insert({
-        organization_id,
-        report_type: export_type,
-        title: exportData.title,
-        data: exportData,
-        file_checksum: checksum
-      })
-      .catch(() => {}) // Ignore if table doesn't exist
+    try {
+      await supabaseAdmin
+        .from('doc_reports')
+        .insert({
+          organization_id,
+          report_type: export_type,
+          title: exportData.title,
+          data: exportData,
+          file_checksum: checksum
+        })
+    } catch (e) {
+      // Ignore if table doesn't exist
+    }
     
     return NextResponse.json({
       success: true,

@@ -14231,9 +14231,11 @@ async function handleGetDocNTFSPermissions(params) {
     if (shareId) query = query.eq('file_share_id', shareId)
     
     const { data, error } = await query
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
     if (error) throw error
     return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
@@ -14242,32 +14244,18 @@ async function handleGetDocPermissionRisks(params) {
   try {
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    // Get all permissions with risks
-    const { data, error } = await supabaseAdmin
-      .from('doc_ntfs_permissions')
-      .select(`
-        *,
-        doc_file_shares(
-          share_name,
-          share_path,
-          doc_inventory_items(organization_id, hostname)
-        )
-      `)
-      .in('risk_level', ['medium', 'high', 'critical'])
-      .order('risk_level', { ascending: false })
+    const { data, error } = await safeDocQuery('doc_ntfs_permissions', () =>
+      supabaseAdmin
+        .from('doc_ntfs_permissions')
+        .select('*')
+        .in('risk_level', ['medium', 'high', 'critical'])
+        .order('risk_level', { ascending: false })
+    )
     
-    if (error) throw error
-    
-    // Filter by org if needed
-    let result = data || []
-    if (orgId) {
-      result = result.filter(p => 
-        p.doc_file_shares?.doc_inventory_items?.organization_id === orgId
-      )
-    }
-    
-    return NextResponse.json(result)
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
+    return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

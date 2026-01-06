@@ -14200,25 +14200,14 @@ async function handleGetDocShares(params) {
   try {
     const orgId = params.organization_id || params?.get?.('organization_id')
     
-    // Get shares via inventory items
-    let query = supabaseAdmin
-      .from('doc_file_shares')
-      .select(`
-        *,
-        doc_inventory_items!inner(organization_id, hostname)
-      `)
+    const { data, error } = await safeDocQuery('doc_file_shares', () =>
+      supabaseAdmin.from('doc_file_shares').select('*')
+    )
     
-    const { data, error } = await query
-    if (error) throw error
-    
-    // Filter by org if needed
-    let result = data || []
-    if (orgId) {
-      result = result.filter(s => s.doc_inventory_items?.organization_id === orgId)
-    }
-    
-    return NextResponse.json(result)
+    if (error?.message?.includes('does not exist')) return NextResponse.json([])
+    return NextResponse.json(data || [])
   } catch (error) {
+    if (error.message?.includes('does not exist')) return NextResponse.json([])
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
